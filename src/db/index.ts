@@ -32,3 +32,13 @@ export const database = new Database({
     ActionQueueItem,
   ],
 });
+
+// Export collections for easy access to WatermelonDB collections
+export const collections = {
+  requests: database.collections.get('requests'),
+  tasks: database.collections.get('tasks'),
+  chatMessages: database.collections.get('chat_messages'),
+  usersCache: database.collections.get('users_cache'),
+  pendingReports: database.collections.get('pending_reports'),
+  actionQueue: database.collections.get('action_queue'),
+};

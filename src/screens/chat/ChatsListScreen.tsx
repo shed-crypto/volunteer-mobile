@@ -13,7 +13,7 @@ import {
   RefreshControl, StyleSheet, Modal,
   TextInput, ActivityIndicator,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { chatApi } from '../../api/chat.api';
 import { usersApi } from '../../api/users.api';
 import { Chat, ChatType, Message, User } from '../../types';
@@ -33,6 +33,7 @@ interface UserItem {
 
 export default function ChatsListScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { user } = useAuth();
 
   const [chats, setChats]           = useState<Chat[]>([]);
@@ -90,6 +91,7 @@ export default function ChatsListScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
 
   // WebSocket: нові повідомлення → збільшуємо лічильник
   useSocket({

@@ -8,6 +8,7 @@ import { io, Socket } from 'socket.io-client';
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE_URL } from '../api/axios';
 import { Message } from '../types';
+import { collections } from '../db';
 
 const WS_URL = API_BASE_URL.replace('/api', '');
 
@@ -41,7 +42,30 @@ async function getOrCreateSocket(): Promise<Socket> {
     reconnectionDelay: 2000,
   });
 
-  socket.on('new_message', (msg: Message & { senderName: string }) => {
+  socket.on('new_message', async (msg: Message & { senderName: string }) => {
+    // Save incoming message to local database for offline access
+    try {
+      // Check if message already exists in local DB
+      try {
+        await collections.chatMessages.find(msg.id);
+      } catch {
+        // Message doesn't exist, save it
+        await collections.chatMessages.create((m: any) => {
+          m.id = msg.id;
+          m.serverId = msg.id;
+          m.chatId = msg.chatId;
+          m.senderId = msg.senderId;
+          m.senderName = msg.sender?.fullName || null;
+          m.content = msg.content;
+          m.sentAt = msg.sentAt;
+          m.isSynced = true;
+          m.pendingAction = null;
+        });
+      }
+    } catch (saveError) {
+      console.log('Failed to save incoming message to local DB:', saveError);
+    }
+    
     messageListeners.forEach((fn) => fn(msg));
   });
 

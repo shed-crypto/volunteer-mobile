@@ -19,6 +19,9 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { collections } from '../../db';
+import type { TaskModel } from '../../db/models/TaskModel';
 
 type RouteParams = {
   TaskDetail: { taskId: string; requestId?: string; requestTitle?: string };
@@ -61,19 +64,69 @@ export default function TaskDetailScreen() {
   const [uploading, setUploading]             = useState(false);
   const [reports, setReports]                 = useState<any[]>([]);
 
+  const { isOnline } = useNetworkStatus();
+
   const load = useCallback(async () => {
     if (isNew) return;
+    
     try {
-      const t = await tasksApi.getOne(taskId);
-      setTask(t);
-    } catch {
-      Alert.alert('Помилка', 'Не вдалося завантажити підзадачу');
+      // First try to load from local database
+      const localTasks = await collections.tasks.query().fetch();
+      const localTask = localTasks.find((t: any) => t.id === taskId || t.serverId === taskId);
+      if (localTask) {
+        // Convert local task model to Task interface
+        const taskData: Task = {
+          id: (localTask as any).serverId || taskId,
+          title: (localTask as any).title,
+          description: (localTask as any).description || undefined,
+          status: (localTask as any).status,
+          neededPeopleCount: (localTask as any).neededPeopleCount,
+          requiredRoles: (localTask as any).requiredRoles,
+          assignments: [],
+          chatId: (localTask as any).chatId || undefined,
+          deadline: (localTask as any).deadline ? new Date((localTask as any).deadline) : undefined,
+          createdAt: (localTask as any).createdAtServer ? new Date((localTask as any).createdAtServer) : new Date(),
+          updatedAt: new Date(),
+          // Add other required fields with default values
+          assignmentsCount: (localTask as any).assignmentsCount,
+          requiredClearance: 'local',
+          category: 'other',
+          urgency: 'medium',
+          tags: [],
+          request: null,
+          creator: null,
+          isLocationHidden: false,
+          latitude: 0,
+          longitude: 0
+        };
+        setTask(taskData);
+        setLoading(false);
+        return;
+      }
+    } catch (localError) {
+      // Local DB lookup failed, continue to network approach
+      console.log('Local DB lookup failed, falling back to API:', localError);
+    }
+
+    // If not found locally and we're online, try API
+    if (isOnline) {
+      try {
+        const t = await tasksApi.getOne(taskId);
+        setTask(t);
+      } catch (apiError) {
+        Alert.alert('Помилка', 'Не вдалося завантажити підзадачу');
+        if (navigation.canGoBack()) navigation.goBack();
+        else navigation.navigate('RequestsList' as never);
+      }
+    } else {
+      // Offline and not found in local DB
+      Alert.alert('Помилка', 'Задача недоступна в офлайн-режимі');
       if (navigation.canGoBack()) navigation.goBack();
       else navigation.navigate('RequestsList' as never);
-    } finally {
-      setLoading(false);
     }
-  }, [taskId, isNew]);
+    
+    setLoading(false);
+  }, [taskId, isNew, isOnline]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -552,20 +605,20 @@ export default function TaskDetailScreen() {
         </View>
 
         {/* ── Chat link ── */}
-        {task.chatId && (
-          <View style={{ marginHorizontal: 16 }}>
-            <Button
-              title="💬 Відкрити чат задачі"
-              variant="outline"
-              onPress={() =>
-                navigation.navigate('Chats', {
-                  screen: 'ChatRoom',
-                  params: { chatId: task.chatId, chatName: `Задача: ${task.title}` },
-                })
-              }
-            />
-          </View>
-        )}
+          {task.chatId && (
+            <View style={{ marginHorizontal: 16 }}>
+              <Button
+                title="💬 Відкрити чат задачі"
+                variant="outline"
+                onPress={() =>
+                  navigation.navigate('Chats', {
+                    screen: 'ChatRoom',
+                    params: { chatId: task.chatId, chatName: `Задача: ${task.title}` },
+                  })
+                }
+              />
+            </View>
+          )}
 
         {/* ── Reports history ── */}
         {reports.length > 0 && (
