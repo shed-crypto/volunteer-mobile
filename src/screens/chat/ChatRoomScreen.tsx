@@ -7,6 +7,7 @@ import {
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { Q } from '@nozbe/watermelondb';
 import { chatApi } from '../../api/chat.api';
 import { Message, SystemRole, ClearanceLevel } from '../../types';
 import { Colors } from '../../utils/theme';
@@ -14,12 +15,12 @@ import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../hooks/useSocket';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { collections } from '../../db';
-import { SyncService } from '../../db/SyncService';
+import { database, collections } from '../../db/index';
+import { MessageStatusIcon } from '../../components/MessageStatusIcon';
+import { NetworkStatusIndicator } from '../../components/NetworkStatusIndicator';
 
 type RouteParams = { ChatRoom: { chatId: string; chatName?: string } };
 
-// Базовий URL для статичних файлів (той самий що API, але без /api)
 const STATIC_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api')
   .replace('/api', '');
 
@@ -29,22 +30,23 @@ export default function ChatRoomScreen() {
   const { chatId, chatName } = route.params;
   const { user } = useAuth();
 
-  const [messages, setMessages]     = useState<Message[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [text, setText]             = useState('');
-  const [typing, setTyping]         = useState<string | null>(null);
-  const [sending, setSending]       = useState(false);
-  const [uploading, setUploading]   = useState(false);
-  const flatRef     = useRef<FlatList>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState('');
+  const [typing, setTyping] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
 
-  // ─── WebSocket ─────────────────────────────────────────────────────────────
+  // ─── WebSocket ──────────────────────────────────────────────────────────────
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
       if (msg.chatId === chatId) {
         setMessages((prev) => {
           if (prev.find((m) => m.id === msg.id)) return prev;
-          return [...prev, msg as Message];
+          return [...prev, msg as Message]
+            .sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
         });
         setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
       }
@@ -61,98 +63,164 @@ export default function ChatRoomScreen() {
   });
 
   const { isOnline } = useNetworkStatus();
+  const isOnlineRef = useRef(isOnline);
+  useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
+
+  // Захист від подвійного запуску (React StrictMode)
+  const isLoadingRef = useRef(false);
+
+  // ─── Зберегти повідомлення в локальну БД (асинхронно, не блокуємо UI) ──────
+  const saveMessagesToDB = useCallback(async (msgs: Message[]) => {
+    if (!msgs.length) return;
+    try {
+      const existing = await collections.chatMessages
+        .query(Q.where('chat_id', chatId))
+        .fetch();
+      const existingServerIds = new Set(existing.map((m: any) => m.serverId).filter(Boolean));
+
+      const preparedOps = msgs
+        .filter((msg) => !existingServerIds.has(msg.id))
+        .map((msg) =>
+          collections.chatMessages.prepareCreate((m: any) => {
+            m.serverId = msg.id;
+            m.chatId = msg.chatId;
+            m.senderId = msg.senderId;
+            m.senderName = msg.sender?.fullName || null;
+            m.content = msg.content;
+            m.sentAt = msg.sentAt;
+            m.isSynced = true;
+            m.pendingAction = null;
+            m.messageStatus = (msg as any).messageStatus || 'sent';
+            m.readByRaw = JSON.stringify((msg as any).readBy || []);
+            m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
+            m.lastSyncedAt = Date.now();
+          })
+        );
+
+      if (preparedOps.length > 0) {
+        // ВИПРАВЛЕНО: database.batch() ОБОВ'ЯЗКОВО всередині database.write()
+        await database.write(async () => {
+          await database.batch(...preparedOps);
+        });
+      }
+    } catch (err) {
+      console.warn('[ChatRoomScreen] Помилка збереження в БД:', err);
+    }
+  }, [chatId]);
 
   // ─── Load history ──────────────────────────────────────────────────────────
   const load = useCallback(async () => {
-    if (!chatId) { setLoading(false); return; }
-    
+    if (!chatId || isLoadingRef.current) return;
+    isLoadingRef.current = true;
+    console.log(`[ChatRoomScreen] Завантаження чату: ${chatId}`);
+
     try {
-      // First try to load from local database
-      const localMessages = await collections.chatMessages.query().fetch();
-      const filteredLocalMessages = localMessages
-        .filter((m: any) => m.chatId === chatId)
-        .map((m: any) => ({
-          id: m.serverId || m.id,
-          chatId: m.chatId,
-          senderId: m.senderId,
-          content: m.content,
-          sentAt: m.sentAt,
-          // Add other required fields with minimal User info
-          messageType: 'text' as const,
-          readBy: [],
-          sender: {
-            id: m.senderId,
-            fullName: m.senderName || 'Користувач',
-            email: '',
-            systemRole: SystemRole.VOLUNTEER,
-            clearanceLevel: ClearanceLevel.LOCAL,
-            trustScore: 0,
-            isBlocked: false,
-            createdAt: new Date().toISOString()
-          }
-        }))
-        .sort((a: any, b: any) => b.sentAt - a.sentAt)
-        .slice(0, 50); // Limit to 50 most recent
-      
-      if (filteredLocalMessages.length > 0) {
-        setMessages(filteredLocalMessages);
-        setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
-        setLoading(false);
-        return;
-      }
-    } catch (localError) {
-      console.log('Local DB lookup failed:', localError);
-    }
-
-    // If not found locally and we're online, try API
-    if (isOnline) {
-      try {
+      if (isOnlineRef.current) {
+        // СТРАТЕГІЯ: Онлайн → одразу API (без очікування БД).
+        // Це виключає зависання якщо WatermelonDB-черга зайнята.
+        console.log('[ChatRoomScreen] Онлайн — завантаження з API');
         const data = await chatApi.getMessages(chatId, 50);
-        setMessages(data);
-        // Save to local database for offline access
+        const sorted = [...data].sort(
+          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+        );
+        setMessages(sorted);
+        setLoading(false);
+        setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
+
+        // Зберігаємо в БД асинхронно (не блокуємо UI)
+        saveMessagesToDB(data).catch(() => {});
+
+        chatApi.markAsRead(chatId).catch(() => {});
+      } else {
+        // Офлайн → читаємо з локальної БД
+        console.log('[ChatRoomScreen] Офлайн — завантаження з локальної БД');
         try {
-          await Promise.all(data.map(async (msg) => {
-            // Check if message already exists
-            try {
-              await collections.chatMessages.find(msg.id);
-            } catch {
-              // Message doesn't exist, save it
-              await collections.chatMessages.create((m: any) => {
-                m.id = msg.id;
-                m.serverId = msg.id;
-                m.chatId = msg.chatId;
-                m.senderId = msg.senderId;
-                m.senderName = msg.sender?.fullName || null;
-                m.content = msg.content;
-                m.sentAt = msg.sentAt;
-                m.isSynced = true;
-                m.pendingAction = null;
-              });
-            }
-          }));
-        } catch (saveError) {
-          console.log('Failed to save messages to local DB:', saveError);
+          const localMessages = await collections.chatMessages
+            .query(Q.where('chat_id', chatId))
+            .fetch();
+          console.log(`[ChatRoomScreen] Локальна БД: ${localMessages.length} повідомленнь`);
+
+          if (localMessages.length > 0) {
+            const mapped = localMessages
+              .map((m: any) => ({
+                id: m.serverId || m.id,
+                chatId: m.chatId,
+                senderId: m.senderId,
+                content: m.content,
+                sentAt: m.sentAt,
+                messageType: 'text' as const,
+                messageStatus: m.messageStatus || 'sent',
+                readBy: m.readBy || [],
+                deliveredTo: m.deliveredTo || [],
+                sender: {
+                  id: m.senderId,
+                  fullName: m.senderName || 'Користувач',
+                  email: '',
+                  systemRole: SystemRole.VOLUNTEER,
+                  clearanceLevel: ClearanceLevel.LOCAL,
+                  trustScore: 0,
+                  isBlocked: false,
+                  createdAt: new Date().toISOString(),
+                },
+              }))
+              .sort((a: any, b: any) => a.sentAt - b.sentAt);
+
+            setMessages(mapped);
+            setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
+          } else {
+            setMessages([]);
+          }
+        } catch (dbErr) {
+          console.warn('[ChatRoomScreen] Помилка читання з БД:', dbErr);
+          setMessages([]);
         }
-      } catch (error: any) {
-        console.error('Failed to load messages:', error);
-        setMessages([]);
-      } finally {
         setLoading(false);
       }
-      chatApi.markAsRead(chatId).catch(() => {});
-    } else {
-      // Offline and no local messages
-      setMessages([]);
-      setLoading(false);
-    }
-  }, [chatId, isOnline]);
-
-  useEffect(() => { 
-    load(); 
-    return () => {
-      if (typingTimer.current) {
-        clearTimeout(typingTimer.current);
+    } catch (error: any) {
+      console.error('[ChatRoomScreen] Помилка завантаження:', error);
+      // API впав — спробуємо локальну БД як fallback
+      try {
+        const localMessages = await collections.chatMessages
+          .query(Q.where('chat_id', chatId))
+          .fetch();
+        if (localMessages.length > 0) {
+          setMessages(localMessages.map((m: any) => ({
+            id: m.serverId || m.id,
+            chatId: m.chatId,
+            senderId: m.senderId,
+            content: m.content,
+            sentAt: m.sentAt,
+            messageType: 'text' as const,
+            messageStatus: m.messageStatus || 'sent',
+            readBy: [],
+            deliveredTo: [],
+            sender: {
+              id: m.senderId,
+              fullName: m.senderName || 'Користувач',
+              email: '',
+              systemRole: SystemRole.VOLUNTEER,
+              clearanceLevel: ClearanceLevel.LOCAL,
+              trustScore: 0,
+              isBlocked: false,
+              createdAt: new Date().toISOString(),
+            },
+          })).sort((a: any, b: any) => a.sentAt - b.sentAt));
+        } else {
+          setMessages([]);
+        }
+      } catch {
+        setMessages([]);
       }
+      setLoading(false);
+    } finally {
+      isLoadingRef.current = false;
+    }
+  }, [chatId, saveMessagesToDB]);
+
+  useEffect(() => {
+    load();
+    return () => {
+      if (typingTimer.current) clearTimeout(typingTimer.current);
     };
   }, [load]);
 
@@ -162,19 +230,20 @@ export default function ChatRoomScreen() {
     if (!content || sending) return;
     setText('');
     sendTyping(chatId, false);
-    
-    // Save message offline first
+
     try {
-      await SyncService.saveMessageOffline({
-        chatId,
-        senderId: user?.id || '',
-        senderName: user?.fullName,
-        content,
-      });
+      await import('../../db/SyncService').then((module) =>
+        module.SyncService.saveMessageOffline({
+          chatId,
+          senderId: user?.id || '',
+          senderName: user?.fullName,
+          content,
+        })
+      );
     } catch (saveError) {
       console.log('Failed to save message offline:', saveError);
     }
-    
+
     sendMessage(chatId, content);
   };
 
@@ -183,26 +252,18 @@ export default function ChatRoomScreen() {
     sendTyping(chatId, val.length > 0);
   };
 
-  // ─── Завантажити файл і надіслати як повідомлення ─────────────────────────
-  const uploadAndSend = async (
-    uri: string,
-    name: string,
-    type: string,
-  ) => {
+  const uploadAndSend = async (uri: string, name: string, type: string) => {
     setUploading(true);
     try {
       const result = await chatApi.sendFile(chatId, { uri, name, type });
-      // Надсилаємо через WebSocket з attachmentUrl
-      sendMessage(chatId, name, result.url);
-    } catch (e) {
-      Alert.alert('Помилка', 'Не вдалося відправити файл');
-      console.error('Upload error:', e);
+      sendMessage(chatId, result.url, result.url);
+    } catch (e: any) {
+      Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
       setUploading(false);
     }
   };
 
-  // ─── Вибір медіа з галереї ─────────────────────────────────────────────────
   const handlePickMedia = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -217,21 +278,16 @@ export default function ChatRoomScreen() {
     if (result.canceled || !result.assets?.length) return;
     const asset = result.assets[0];
     const fileName = asset.fileName || asset.uri.split('/').pop() || `media_${Date.now()}`;
-    const mimeType = asset.mimeType || 'image/jpeg';
-    await uploadAndSend(asset.uri, fileName, mimeType);
+    await uploadAndSend(asset.uri, fileName, asset.mimeType || 'image/jpeg');
   };
 
-  // ─── Вибір документа ──────────────────────────────────────────────────────
   const handlePickDocument = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
-        copyToCacheDirectory: true,
-      });
+      const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
       await uploadAndSend(asset.uri, asset.name, asset.mimeType ?? 'application/octet-stream');
-    } catch (e) {
+    } catch {
       Alert.alert('Помилка', 'Не вдалося відкрити документ');
     }
   };
@@ -239,7 +295,7 @@ export default function ChatRoomScreen() {
   if (loading) {
     return (
       <View style={{ flex: 1, backgroundColor: Colors.background }}>
-        <ScreenHeader title={chatName ?? 'Чат'} onBack={() => navigation.goBack()} />
+        <ScreenHeader title={chatName ?? 'Чат'} onBack={() => navigation.navigate('ChatsList')} />
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator color={Colors.primary} />
         </View>
@@ -249,7 +305,7 @@ export default function ChatRoomScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      <ScreenHeader title={chatName ?? 'Чат'} onBack={() => navigation.goBack()} />
+      <ScreenHeader title={chatName ?? 'Чат'} onBack={() => navigation.navigate('ChatsList')} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -284,26 +340,13 @@ export default function ChatRoomScreen() {
           </View>
         )}
 
-        {/* Рядок вводу */}
         <View style={styles.inputRow}>
-          {/* Кнопка медіа */}
-          <TouchableOpacity
-            style={styles.attachBtn}
-            onPress={handlePickMedia}
-            disabled={uploading}
-          >
+          <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploading}>
             <Text style={{ fontSize: 20 }}>🖼</Text>
           </TouchableOpacity>
-
-          {/* Кнопка файлу */}
-          <TouchableOpacity
-            style={styles.attachBtn}
-            onPress={handlePickDocument}
-            disabled={uploading}
-          >
+          <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument} disabled={uploading}>
             <Text style={{ fontSize: 20 }}>📎</Text>
           </TouchableOpacity>
-
           <TextInput
             style={styles.input}
             value={text}
@@ -315,7 +358,6 @@ export default function ChatRoomScreen() {
             returnKeyType="send"
             onSubmitEditing={handleSend}
           />
-
           {uploading ? (
             <ActivityIndicator color={Colors.primary} style={styles.sendBtn} />
           ) : (
@@ -336,10 +378,7 @@ export default function ChatRoomScreen() {
 // ─── MessageBubble ─────────────────────────────────────────────────────────────
 
 function MessageBubble({
-  message,
-  isMine,
-  staticBase,
-  onAvatarPress,
+  message, isMine, staticBase, onAvatarPress,
 }: {
   message: Message;
   isMine: boolean;
@@ -347,7 +386,6 @@ function MessageBubble({
   onAvatarPress?: (userId: string) => void;
 }) {
   const isSystem = message.messageType === 'system';
-
   if (isSystem) {
     return (
       <View style={styles.systemMsg}>
@@ -356,24 +394,15 @@ function MessageBubble({
     );
   }
 
-  const time = new Date(message.sentAt).toLocaleTimeString('uk-UA', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
+  const time = new Date(message.sentAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
   const hasAttachment = !!message.attachmentUrl;
   const attachUrl = hasAttachment
     ? message.attachmentUrl!.startsWith('http')
       ? message.attachmentUrl!
       : `${staticBase}${message.attachmentUrl}`
     : null;
-
-  const isImage = attachUrl
-    ? /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i.test(attachUrl)
-    : false;
-  const isVideo = attachUrl
-    ? /\.(mp4|mov|avi|mkv|m4v)$/i.test(attachUrl)
-    : false;
+  const isImage = attachUrl ? /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i.test(attachUrl) : false;
+  const isVideo = attachUrl ? /\.(mp4|mov|avi|mkv|m4v)$/i.test(attachUrl) : false;
 
   return (
     <View style={[styles.bubbleWrapper, isMine && styles.bubbleWrapperMine]}>
@@ -388,112 +417,65 @@ function MessageBubble({
           </Text>
         </TouchableOpacity>
       )}
-
       <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
         {!isMine && message.sender && (
           <Text style={styles.senderName}>{message.sender.fullName}</Text>
         )}
-
-        {/* Зображення */}
         {isImage && attachUrl && (
-          <Image
-            source={{ uri: attachUrl }}
-            style={styles.attachImage}
-            resizeMode="cover"
-          />
+          <Image source={{ uri: attachUrl }} style={styles.attachImage} resizeMode="cover" />
         )}
-
-        {/* Відео / документ — плейсхолдер з іменем */}
         {!isImage && hasAttachment && attachUrl && (
           <View style={styles.attachFile}>
             <Text style={styles.attachFileIcon}>{isVideo ? '🎥' : '📄'}</Text>
-            <Text style={styles.attachFileName} numberOfLines={2}>
-              {message.content}
-            </Text>
+            <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
           </View>
         )}
-
-        {/* Текст — показуємо тільки якщо немає вкладення */}
         {!hasAttachment && (
-          <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>
-            {message.content}
-          </Text>
+          <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
         )}
-
-        <Text style={[styles.bubbleTime, isMine && { color: 'rgba(255,255,255,0.65)' }]}>
-          {time}
-        </Text>
+        <Text style={[styles.bubbleTime, isMine && { color: 'rgba(255,255,255,0.65)' }]}>{time}</Text>
+        {(message.messageStatus || message.readBy || message.deliveredTo) && (
+          <MessageStatusIcon
+            status={(message.messageStatus || 'sent') as any}
+            readBy={message.readBy || []}
+            deliveredTo={message.deliveredTo || []}
+          />
+        )}
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  typingBar:    { paddingHorizontal: 16, paddingVertical: 4 },
-  typingText:   { fontSize: 12, color: Colors.textMuted, fontStyle: 'italic' },
-
+  typingBar: { paddingHorizontal: 16, paddingVertical: 4 },
+  typingText: { fontSize: 12, color: Colors.textMuted, fontStyle: 'italic' },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 6,
     padding: 10, backgroundColor: Colors.surface,
     borderTopWidth: 1, borderTopColor: Colors.border,
   },
-  attachBtn: {
-    width: 40, height: 40,
-    alignItems: 'center', justifyContent: 'center',
-    borderRadius: 20,
-  },
+  attachBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
   input: {
     flex: 1, borderWidth: 1.5, borderColor: Colors.border,
     borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10,
-    fontSize: 15, maxHeight: 120, backgroundColor: Colors.surface,
-    color: '#000000',
+    fontSize: 15, maxHeight: 120, backgroundColor: Colors.surface, color: '#000000',
   },
-  sendBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { backgroundColor: Colors.borderLight },
-
-  // Bubbles
-  bubbleWrapper:     { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 8, gap: 6 },
+  bubbleWrapper: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 8, gap: 6 },
   bubbleWrapperMine: { flexDirection: 'row-reverse' },
-  senderAvatar: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
-  },
-  bubble: {
-    maxWidth: '75%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8,
-    overflow: 'hidden',
-  },
-  bubbleMine:  { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
-  bubbleOther: {
-    backgroundColor: Colors.surface, borderBottomLeftRadius: 4,
-    borderWidth: 1, borderColor: Colors.borderLight,
-  },
-  senderName:     { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 3 },
-  bubbleText:     { fontSize: 15, color: Colors.text, lineHeight: 20 },
+  senderAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  bubble: { maxWidth: '75%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, overflow: 'hidden' },
+  bubbleMine: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
+  bubbleOther: { backgroundColor: Colors.surface, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: Colors.borderLight },
+  senderName: { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 3 },
+  bubbleText: { fontSize: 15, color: Colors.text, lineHeight: 20 },
   bubbleTextMine: { color: '#fff' },
-  bubbleTime:     { fontSize: 10, color: Colors.textMuted, marginTop: 4, textAlign: 'right' },
-
-  // Attachment — image
-  attachImage: {
-    width: 220, height: 160, borderRadius: 10, marginBottom: 6,
-  },
-
-  // Attachment — file/video
-  attachFile: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 8, marginBottom: 6,
-  },
+  bubbleTime: { fontSize: 10, color: Colors.textMuted, marginTop: 4, textAlign: 'right' },
+  attachImage: { width: 220, height: 160, borderRadius: 10, marginBottom: 6 },
+  attachFile: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },
   attachFileName: { flex: 1, fontSize: 13, color: Colors.text },
-
-  // System
-  systemMsg: {
-    alignSelf: 'center', backgroundColor: Colors.borderLight,
-    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8,
-  },
+  systemMsg: { alignSelf: 'center', backgroundColor: Colors.borderLight, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   systemMsgText: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center' },
 });

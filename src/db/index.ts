@@ -4,8 +4,10 @@
 import { Database } from '@nozbe/watermelondb';
 import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
 import { dbSchema } from './schema';
+import { dbMigrations } from './migrations';
 import { RequestModel } from './models/RequestModel';
 import { TaskModel } from './models/TaskModel';
+import { TaskAssignmentModel } from './models/TaskAssignmentModel';
 import { ChatMessageModel } from './models/ChatMessageModel';
 import { UserCacheModel } from './models/UserCacheModel';
 import { PendingReport } from './models/PendingReport';
@@ -13,8 +15,8 @@ import { ActionQueueItem } from './models/ActionQueueItem';
 
 const adapter = new SQLiteAdapter({
   schema: dbSchema,
+  migrations: dbMigrations,
   dbName: 'volunteer_help',
-  // migrations: migrations, // підключати при оновленні схеми
   jsi: false,
   onSetUpError: (error) => {
     console.error('[WatermelonDB] Setup error:', error);
@@ -26,6 +28,7 @@ export const database = new Database({
   modelClasses: [
     RequestModel,
     TaskModel,
+    TaskAssignmentModel,
     ChatMessageModel,
     UserCacheModel,
     PendingReport,
@@ -37,6 +40,7 @@ export const database = new Database({
 export const collections = {
   requests: database.collections.get('requests'),
   tasks: database.collections.get('tasks'),
+  taskAssignments: database.collections.get('task_assignments'),
   chatMessages: database.collections.get('chat_messages'),
   usersCache: database.collections.get('users_cache'),
   pendingReports: database.collections.get('pending_reports'),

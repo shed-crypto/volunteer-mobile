@@ -133,6 +133,9 @@ export interface Task {
   assignedCount?: number;
   isFull?: boolean;
   createdAt: string;
+  // Додано для офлайн-архітектури
+  isSynced?: boolean;
+  lastSyncedAt?: number;
 }
 
 export interface TaskAssignment {
@@ -165,6 +168,9 @@ export interface Message {
   readBy: string[];
   messageType: 'text' | 'attachment' | 'system';
   attachmentUrl?: string;
+  // Додано для офлайн-архітектури
+  messageStatus?: string; // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
+  deliveredTo?: string[];
 }
 
 export interface Organization {

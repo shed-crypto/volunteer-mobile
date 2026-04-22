@@ -18,6 +18,7 @@ import {
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { collections } from '../../db/index';
+import { database } from '../../db/index';
 
 type RouteParams = { RequestDetail: { requestId: string } };
 
@@ -39,18 +40,92 @@ export default function RequestDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // ─── Load tasks ────────────────────────────────────────────────────────────
+  const loadTasks = useCallback(async (requestId: string) => {
+    // Спочатку шукаємо в локальній БД
+    try {
+      const localTasks = await collections.tasks.query().fetch();
+      const requestTasks = localTasks.filter((t: any) => t.requestId === requestId || t.requestServerId === requestId);
+      
+      if (requestTasks.length > 0) {
+        return requestTasks.map((t: any) => ({
+          id: t.serverId || t.id,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          neededPeopleCount: t.neededPeopleCount,
+          requiredRoles: t.requiredRoles,
+          assignedCount: t.assignedCount,
+          priority: t.priority,
+          createdAt: t.createdAt,
+          requestId: t.requestId || t.requestServerId,
+        }));
+      }
+    } catch (localError) {
+      console.log('Local DB lookup failed:', localError);
+    }
+
+    // Якщо немає локальних даних - повертаємо порожній масив
+    return [];
+  }, []);
+
   const load = useCallback(async () => {
     try {
-      const [req, tks] = await Promise.all([
-        requestsApi.getOne(requestId),
-        tasksApi.getByRequest(requestId),
-      ]);
+      const req = await requestsApi.getOne(requestId);
       setRequest(req);
-      setTasks(tks);
-    } catch {
+      
+      // Завантажуємо задачі з сервера
+      try {
+        const serverTasks = await tasksApi.getByRequest(requestId);
+        setTasks(serverTasks);
+        
+        // Зберігаємо завантажені задачі в локальну БД
+        try {
+          await database.write(async () => {
+            await Promise.all(serverTasks.map(async (task) => {
+              try {
+                // Перевіряємо чи задача вже існує
+                await collections.tasks.find(task.id);
+              } catch {
+                // Якщо не існує - створюємо
+                await collections.tasks.create((t: any) => {
+                  t.serverId = task.id;
+                  t.requestId = requestId;
+                  t.requestServerId = requestId;
+                  t.title = task.title;
+                  t.description = task.description ?? null;
+                  t.status = task.status;
+                  t.neededPeopleCount = task.neededPeopleCount ?? 1;
+                  t.requiredRolesRaw = JSON.stringify(task.requiredRoles ?? []);
+                  t.assignedCount = task.assignments?.filter(
+                    (a: any) => a.status !== 'withdrawn'
+                  ).length ?? 0;
+                  t.priority = task.priority ?? 0;
+                  t.isSynced = true;
+                  t.pendingAction = null;
+                });
+              }
+            }));
+          });
+        } catch (saveError) {
+          console.log('Failed to save tasks to local DB:', saveError);
+        }
+      } catch (serverError) {
+        console.error('Failed to load tasks from server:', serverError);
+        // Якщо не вдалося завантажити з сервера, спробуємо з локальної БД
+        const localTasks = await loadTasks(requestId);
+        setTasks(localTasks);
+      }
+    } catch (error) {
       // Спробуємо завантажити з локальної БД (offline fallback)
       try {
-        const localReqs = await collections.requests.query().fetch();
+        // Add timeout to prevent infinite loading
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Database query timeout')), 5000)
+        );
+        
+        const localReqsPromise = collections.requests.query().fetch();
+        const localReqs = await Promise.race([localReqsPromise, timeoutPromise]) as any[];
         const local = localReqs.find((r: any) => r.serverId === requestId || r.id === requestId);
         if (local) {
           setRequest({
@@ -68,13 +143,17 @@ export default function RequestDetailScreen() {
             creatorId: local.creatorId ?? '',
             createdAt: local.createdAtServer ? new Date(local.createdAtServer).toISOString() : '',
           } as any);
+          
+          // Завантажуємо задачі з локальної БД
+          const localTasks = await loadTasks(requestId);
+          setTasks(localTasks);
         } else {
           Alert.alert('Помилка', 'Не вдалося завантажити заявку');
           if (navigation.canGoBack()) navigation.goBack();
           else navigation.navigate('RequestsList' as never);
         }
-      } catch {
-        Alert.alert('Помилка', 'Не вдалося завантажити заявку');
+      } catch (dbError) {
+        Alert.alert('Помилка', 'Не вдалося завантажити заявку: ' + (dbError as Error).message);
         if (navigation.canGoBack()) navigation.goBack();
         else navigation.navigate('RequestsList' as never);
       }
@@ -82,7 +161,7 @@ export default function RequestDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [requestId]);
+  }, [requestId, loadTasks, navigation]);
 
   useEffect(() => { load(); }, [load]);
 

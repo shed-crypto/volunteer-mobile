@@ -1,20 +1,21 @@
 import { database, collections } from './index';
-import type { RequestModel }     from './models/RequestModel';
-import type { ChatMessageModel } from './models/ChatMessageModel';
-import { requestsApi }  from '../api/requests.api';
-import { tasksApi }     from '../api/tasks.api';
-import api              from '../api/axios';
+import { RequestModel } from './models/RequestModel';
+import { TaskModel } from './models/TaskModel';
+import { ChatMessageModel } from './models/ChatMessageModel';
+import { requestsApi } from '../api/requests.api';
+import { tasksApi } from '../api/tasks.api';
+import { chatApi } from '../api/chat.api';
+import api from '../api/axios';
 
 /**
  * SyncService — Offline-First архітектура (NFR-03).
  *
- * БАГ-ФІКс: pull() тепер також синхронізує TASKS.
- * Раніше tasks ніколи не завантажувались в локальну БД,
- * тому при відкритті заявки офлайн підзадачі були відсутні.
+ * ВИПРАВЛЕННЯ ДЕДЛОКУ push():
+ * record.update() — це обгортка над database.write().
+ * Виклик database.write() всередині database.write() блокує чергу WatermelonDB назавжди.
  *
- * Стратегія:
- * 1. PUSH — локальні зміни (is_synced=false) → сервер
- * 2. PULL — сервер → локальна БД (requests + tasks + messages)
+ * ПРАВИЛО: всі записи через prepareUpdate/prepareCreate + database.batch().
+ * Ніколи не викликати record.update() / record.create() всередині database.write().
  */
 export class SyncService {
   private static isSyncing = false;
@@ -39,88 +40,127 @@ export class SyncService {
   }
 
   // ── PUSH: локальні зміни → сервер ─────────────────────────────────────────
+  // ВИПРАВЛЕНО: використовуємо prepareUpdate + database.batch()
+  // замість record.update() всередині database.write() (дедлок!).
 
   private static async push(): Promise<number> {
     let count = 0;
+    const preparedOps: any[] = [];
 
     // 1. Нові заявки (created offline)
-    const pendingRequests = await collections.requests
-      .query()
-      .fetch()
-      .then((all) => all.filter((r) => !r.isSynced && r.pendingAction === 'create'));
+    try {
+      const allRequests = await collections.requests.query().fetch();
+      const filteredRequests = allRequests.filter(
+        (r: any) => !r.isSynced && r.pendingAction === 'create'
+      );
 
-    for (const req of pendingRequests) {
-      try {
-        const created = await requestsApi.create({
-          title:             req.title,
-          description:       req.description ?? undefined,
-          category:          req.category as any,
-          urgency:           req.urgency as any,
-          requiredClearance: req.requiredClearance as any,
-          latitude:          req.latitude ?? undefined,
-          longitude:         req.longitude ?? undefined,
-          isLocationHidden:  req.isLocationHidden,
-          tags:              req.tags,
-        });
-        await database.write(async () => {
-          await req.update((r) => {
-            r.serverId      = created.id;
-            r.isSynced      = true;
-            r.pendingAction = null;
+      for (const req of filteredRequests) {
+        try {
+          const created = await requestsApi.create({
+            title: (req as any).title,
+            description: (req as any).description ?? undefined,
+            category: (req as any).category,
+            urgency: (req as any).urgency,
+            requiredClearance: (req as any).requiredClearance,
+            latitude: (req as any).latitude ?? undefined,
+            longitude: (req as any).longitude ?? undefined,
+            isLocationHidden: (req as any).isLocationHidden ?? false,
+            tags: (req as any).tags ?? [],
           });
-        });
-        count++;
-      } catch (err) {
-        console.warn(`[SyncService] Не вдалося push заявку "${req.title}":`, err);
+
+          // prepareUpdate() — синхронний, без database.write()!
+          preparedOps.push(
+            req.prepareUpdate((r: any) => {
+              r.serverId = created.id;
+              r.isSynced = true;
+              r.pendingAction = null;
+            })
+          );
+          count++;
+        } catch (err) {
+          console.warn(
+            `[SyncService] Не вдалося push заявку "${(req as any).title}":`,
+            err
+          );
+        }
       }
+    } catch (err) {
+      console.warn('[SyncService] Помилка отримання заявок для синхронізації:', err);
     }
 
     // 2. Нові задачі (created offline)
-    const pendingTasks = await collections.tasks
-      .query()
-      .fetch()
-      .then((all) => all.filter((t) => !t.isSynced && t.pendingAction === 'create'));
+    try {
+      const allTasks = await collections.tasks.query().fetch();
+      const pendingTasks = allTasks.filter(
+        (t: any) => !t.isSynced && t.pendingAction === 'create'
+      );
 
-    for (const task of pendingTasks) {
-      if (!task.requestServerId) continue;
-      try {
-        const created = await tasksApi.create(task.requestServerId, {
-          title:             task.title,
-          description:       task.description ?? undefined,
-          neededPeopleCount: task.neededPeopleCount,
-          requiredRoles:     task.requiredRoles,
-        });
-        await database.write(async () => {
-          await task.update((t) => {
-            t.serverId      = created.id;
-            t.isSynced      = true;
-            t.pendingAction = null;
+      for (const task of pendingTasks) {
+        if (!(task as any).requestServerId) continue;
+        try {
+          const created = await tasksApi.create((task as any).requestServerId, {
+            title: (task as any).title,
+            description: (task as any).description ?? undefined,
+            neededPeopleCount: (task as any).neededPeopleCount,
+            requiredRoles: (task as any).requiredRoles,
           });
-        });
-        count++;
-      } catch (err) {
-        console.warn(`[SyncService] Не вдалося push задачу "${task.title}":`, err);
+
+          preparedOps.push(
+            task.prepareUpdate((t: any) => {
+              t.serverId = created.id;
+              t.isSynced = true;
+              t.pendingAction = null;
+            })
+          );
+          count++;
+        } catch (err) {
+          console.warn(
+            `[SyncService] Не вдалося push задачу "${(task as any).title}":`,
+            err
+          );
+        }
       }
+    } catch (err) {
+      console.warn('[SyncService] Помилка отримання задач для синхронізації:', err);
     }
 
     // 3. Повідомлення чату в черзі (sent offline)
-    const pendingMessages = await collections.chatMessages
-      .query()
-      .fetch()
-      .then((all) => all.filter((m) => !m.isSynced && m.pendingAction === 'send'));
+    try {
+      const allMessages = await collections.chatMessages.query().fetch();
+      const pendingMessages = allMessages.filter(
+        (m: any) => !m.isSynced && m.pendingAction === 'send'
+      );
 
-    for (const msg of pendingMessages) {
-      try {
-        await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
-        await database.write(async () => {
-          await msg.update((m) => {
-            m.isSynced      = true;
-            m.pendingAction = null;
+      for (const msg of pendingMessages) {
+        try {
+          await api.post(`/chats/${(msg as any).chatId}/messages`, {
+            content: (msg as any).content,
           });
+
+          preparedOps.push(
+            msg.prepareUpdate((m: any) => {
+              m.isSynced = true;
+              m.pendingAction = null;
+            })
+          );
+          count++;
+        } catch (err) {
+          console.warn('[SyncService] Не вдалося надіслати повідомлення:', err);
+        }
+      }
+    } catch (err) {
+      console.warn('[SyncService] Помилка отримання повідомлень для синхронізації:', err);
+    }
+
+    // Один batch — без вкладених database.write()
+    if (preparedOps.length > 0) {
+      try {
+        await database.write(async () => {
+          await database.batch(...preparedOps);
         });
-        count++;
+        console.log(`[SyncService.push] Виконано ${preparedOps.length} операцій`);
       } catch (err) {
-        console.warn(`[SyncService] Не вдалося надіслати повідомлення:`, err);
+        console.warn('[SyncService] Помилка виконання batch оновлень:', err);
       }
     }
 
@@ -130,118 +170,207 @@ export class SyncService {
   // ── PULL: сервер → локальна БД ────────────────────────────────────────────
 
   private static async pull(): Promise<number> {
+    console.log('[SyncService.pull] Початок синхронізації');
     let count = 0;
 
-    // 1. Завантажуємо заявки
+    // 1. Завантажуємо ВСІ заявки з сервера
+    let serverRequests: any[] = [];
     try {
-      const serverRequests = await requestsApi.getAll({ limit: 200, offset: 0 });
+      serverRequests = await requestsApi.getAll({ limit: 200, offset: 0 });
+      console.log(`[SyncService.pull] Отримано ${serverRequests.length} заявок з сервера`);
+    } catch (err) {
+      console.error('[SyncService.pull] Помилка при отриманні заявок:', err);
+      return count;
+    }
 
-      await database.write(async () => {
-        for (const sr of serverRequests) {
-          const existing = await collections.requests
-            .query()
-            .fetch()
-            .then((all) => all.find((r) => r.serverId === sr.id));
+    // 2. Зчитуємо ВСІ локальні заявки ОДИН РАЗ
+    let localRequests: any[] = [];
+    try {
+      localRequests = await collections.requests.query().fetch();
+    } catch (err) {
+      console.error('[SyncService.pull] Помилка при зчитуванні локальних заявок:', err);
+      return count;
+    }
 
-          if (existing) {
-            if (existing.isSynced) {
-              await existing.update((r) => {
-                r.status    = sr.status;
-                r.title     = sr.title;
-                r.tagsRaw   = JSON.stringify(sr.tags ?? []);
-                r.latitude  = sr.latitude  ?? null;
-                r.longitude = sr.longitude ?? null;
-              });
+    const localRequestsMap = new Map(localRequests.map((r) => [r.serverId, r]));
+    const preparedOperations: any[] = [];
+
+    // 3. Підготовка операцій для заявок
+    for (const sr of serverRequests) {
+      const existing = localRequestsMap.get(sr.id);
+      if (existing) {
+        if (existing.isSynced) {
+          preparedOperations.push(
+            existing.prepareUpdate((r: any) => {
+              r.status = sr.status;
+              r.title = sr.title;
+              r.tagsRaw = JSON.stringify(sr.tags ?? []);
+              r.latitude = sr.latitude ?? null;
+              r.longitude = sr.longitude ?? null;
+              r.lastSyncedAt = Date.now();
+            })
+          );
+          count++;
+        }
+      } else {
+        preparedOperations.push(
+          collections.requests.prepareCreate((r: any) => {
+            r.serverId = sr.id;
+            r.title = sr.title;
+            r.description = sr.description ?? null;
+            r.category = sr.category;
+            r.urgency = sr.urgency;
+            r.status = sr.status;
+            r.requiredClearance = sr.requiredClearance ?? 'local';
+            r.creatorId = sr.creatorId ?? null;
+            r.creatorName = sr.creator?.fullName ?? null;
+            r.latitude = sr.latitude ?? null;
+            r.longitude = sr.longitude ?? null;
+            r.isLocationHidden = sr.isLocationHidden ?? false;
+            r.tagsRaw = JSON.stringify(sr.tags ?? []);
+            r.createdAtServer = sr.createdAt ? new Date(sr.createdAt).getTime() : null;
+            r.isSynced = true;
+            r.pendingAction = null;
+            r.lastSyncedAt = Date.now();
+          })
+        );
+        count++;
+      }
+    }
+
+    // 4. Зчитуємо ВСІ локальні задачі ОДИН РАЗ
+    let localTasks: any[] = [];
+    try {
+      localTasks = await collections.tasks.query().fetch();
+    } catch (err) {
+      console.error('[SyncService.pull] Помилка при зчитуванні задач:', err);
+    }
+    const localTasksMap = new Map(localTasks.map((t) => [t.serverId, t]));
+
+    // 5. Задачі для synced заявок (HTTP поза database.write())
+    const syncedRequests = localRequests.filter((r: any) => r.serverId && r.isSynced);
+    for (const req of syncedRequests.slice(0, 50)) {
+      try {
+        const serverTasks = await tasksApi.getByRequest((req as any).serverId);
+        for (const st of serverTasks) {
+          const existingTask = localTasksMap.get(st.id);
+          if (existingTask) {
+            if (existingTask.isSynced) {
+              preparedOperations.push(
+                existingTask.prepareUpdate((t: any) => {
+                  t.status = st.status;
+                  t.neededPeopleCount = st.neededPeopleCount;
+                  t.requiredRolesRaw = JSON.stringify(st.requiredRoles ?? []);
+                  t.assignedCount =
+                    st.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+                  t.lastSyncedAt = Date.now();
+                })
+              );
               count++;
             }
           } else {
-            await collections.requests.create((r) => {
-              r.serverId          = sr.id;
-              r.title             = sr.title;
-              r.description       = sr.description ?? null;
-              r.category          = sr.category;
-              r.urgency           = sr.urgency;
-              r.status            = sr.status;
-              r.requiredClearance = sr.requiredClearance ?? 'local';
-              r.creatorId         = sr.creatorId ?? null;
-              r.creatorName       = sr.creator?.fullName ?? null;
-              r.latitude          = sr.latitude  ?? null;
-              r.longitude         = sr.longitude ?? null;
-              r.isLocationHidden  = sr.isLocationHidden ?? false;
-              r.tagsRaw           = JSON.stringify(sr.tags ?? []);
-              r.createdAtServer   = sr.createdAt ? new Date(sr.createdAt).getTime() : null;
-              r.isSynced          = true;
-              r.pendingAction     = null;
-            });
+            preparedOperations.push(
+              collections.tasks.prepareCreate((t: any) => {
+                t.serverId = st.id;
+                t.requestServerId = (req as any).serverId;
+                t.title = st.title;
+                t.description = st.description ?? null;
+                t.status = st.status;
+                t.neededPeopleCount = st.neededPeopleCount ?? 1;
+                t.requiredRolesRaw = JSON.stringify(st.requiredRoles ?? []);
+                t.assignedCount =
+                  st.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+                t.priority = st.priority ?? 0;
+                t.deadline = st.deadline ?? null;
+                t.isSynced = true;
+                t.pendingAction = null;
+                t.lastSyncedAt = Date.now();
+              })
+            );
             count++;
           }
         }
-      });
-    } catch (err) {
-      console.warn('[SyncService] Pull заявок завершився помилкою:', err);
+      } catch (err) {
+        console.warn(`[SyncService.pull] Помилка для заявки ${req.serverId}:`, err);
+      }
     }
 
-    // 2. БАГ-ФІКс: Завантажуємо TASKS для кожної заявки
-    // Це виправляє: при відкритті заявки офлайн — підзадачі були відсутні
+    // 6. Синхронізація повідомлень чатів
     try {
-      const allRequests = await collections.requests.query().fetch();
-      const syncedRequests = allRequests.filter((r) => r.serverId && r.isSynced);
+      const serverChats = await chatApi.getMyChats();
+      let localMessages: any[] = [];
+      try {
+        localMessages = await collections.chatMessages.query().fetch();
+      } catch (err) {
+        console.error('[SyncService.pull] Помилка при зчитуванні повідомлень:', err);
+      }
+      const localMessagesMap = new Map(localMessages.map((m) => [m.serverId, m]));
 
-      // Беремо лише перші 50 (найновіші) щоб не перевантажувати
-      const toSync = syncedRequests.slice(0, 50);
-
-      for (const req of toSync) {
-        if (!req.serverId) continue;
+      for (const chat of serverChats) {
         try {
-          const serverTasks = await tasksApi.getByRequest(req.serverId);
+          const response = await api.get(`/chats/${chat.id}/messages?limit=20`);
+          const serverMessages = response.data;
 
-          await database.write(async () => {
-            for (const st of serverTasks) {
-              const existingTask = await collections.tasks
-                .query()
-                .fetch()
-                .then((all) => all.find((t) => t.serverId === st.id));
-
-              if (existingTask) {
-                if (existingTask.isSynced) {
-                  await existingTask.update((t) => {
-                    t.status             = st.status;
-                    t.neededPeopleCount  = st.neededPeopleCount;
-                    t.requiredRolesRaw   = JSON.stringify(st.requiredRoles ?? []);
-                    t.assignedCount      = st.assignments?.filter(
-                      (a: any) => a.status !== 'withdrawn'
-                    ).length ?? 0;
-                  });
-                  count++;
-                }
-              } else {
-                await collections.tasks.create((t) => {
-                  t.serverId           = st.id;
-                  t.requestServerId    = req.serverId;
-                  t.title              = st.title;
-                  t.description        = st.description ?? null;
-                  t.status             = st.status;
-                  t.neededPeopleCount  = st.neededPeopleCount ?? 1;
-                  t.requiredRolesRaw   = JSON.stringify(st.requiredRoles ?? []);
-                  t.assignedCount      = st.assignments?.filter(
-                    (a: any) => a.status !== 'withdrawn'
-                  ).length ?? 0;
-                  t.priority           = st.priority ?? 0;
-                  t.isSynced           = true;
-                  t.pendingAction      = null;
-                });
+          for (const sm of serverMessages) {
+            const existingMsg = localMessagesMap.get(sm.id);
+            if (existingMsg) {
+              if (existingMsg.isSynced) {
+                preparedOperations.push(
+                  existingMsg.prepareUpdate((m: any) => {
+                    m.content = sm.content;
+                    m.sentAt = sm.sentAt;
+                    m.messageStatus = sm.messageStatus || 'sent';
+                    m.readByRaw = JSON.stringify(sm.readBy || []);
+                    m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
+                    m.lastSyncedAt = Date.now();
+                  })
+                );
                 count++;
               }
+            } else {
+              preparedOperations.push(
+                collections.chatMessages.prepareCreate((m: any) => {
+                  m.serverId = sm.id;
+                  m.chatId = sm.chatId;
+                  m.senderId = sm.senderId;
+                  m.senderName = sm.sender?.fullName || null;
+                  m.content = sm.content;
+                  m.sentAt = sm.sentAt;
+                  m.isSynced = true;
+                  m.pendingAction = null;
+                  m.messageStatus = sm.messageStatus || 'sent';
+                  m.readByRaw = JSON.stringify(sm.readBy || []);
+                  m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
+                  m.lastSyncedAt = Date.now();
+                })
+              );
+              count++;
             }
-          });
-        } catch {
-          // Конкретна заявка могла бути видалена — ігноруємо
+          }
+        } catch (err) {
+          console.warn(`[SyncService.pull] Помилка для чату ${chat.id}:`, err);
         }
       }
     } catch (err) {
-      console.warn('[SyncService] Pull задач завершився помилкою:', err);
+      console.warn('[SyncService.pull] Помилка при синхронізації чатів:', err);
     }
 
+    // 7. Один database.batch() — атомарно, без вкладених write
+    if (preparedOperations.length > 0) {
+      console.log(
+        `[SyncService.pull] Виконання ${preparedOperations.length} операцій через batch...`
+      );
+      try {
+        await database.write(async () => {
+          await database.batch(...preparedOperations);
+        });
+        console.log('[SyncService.pull] Усі операції виконано успішно');
+      } catch (err) {
+        console.error('[SyncService.pull] Помилка виконання batch операцій:', err);
+      }
+    }
+
+    console.log(`[SyncService.pull] Завершено, оброблено ${count} записів`);
     return count;
   }
 
@@ -258,22 +387,24 @@ export class SyncService {
     isLocationHidden?: boolean;
   }): Promise<RequestModel> {
     return database.write(async () => {
-      return collections.requests.create((r) => {
-        r.serverId          = null;
-        r.title             = data.title;
-        r.description       = data.description ?? null;
-        r.category          = data.category;
-        r.urgency           = data.urgency;
-        r.status            = 'open';
+      const req = await collections.requests.create((r: any) => {
+        r.serverId = null;
+        r.title = data.title;
+        r.description = data.description ?? null;
+        r.category = data.category;
+        r.urgency = data.urgency;
+        r.status = 'open';
         r.requiredClearance = data.requiredClearance;
-        r.latitude          = data.latitude  ?? null;
-        r.longitude         = data.longitude ?? null;
-        r.isLocationHidden  = data.isLocationHidden ?? false;
-        r.tagsRaw           = '[]';
-        r.isSynced          = false;
-        r.pendingAction     = 'create';
-        r.createdAtServer   = Date.now();
+        r.latitude = data.latitude ?? null;
+        r.longitude = data.longitude ?? null;
+        r.isLocationHidden = data.isLocationHidden ?? false;
+        r.tagsRaw = '[]';
+        r.isSynced = false;
+        r.pendingAction = 'create';
+        r.createdAtServer = Date.now();
+        r.lastSyncedAt = null;
       });
+      return req as unknown as RequestModel;
     });
   }
 
@@ -286,16 +417,56 @@ export class SyncService {
     content: string;
   }): Promise<ChatMessageModel> {
     return database.write(async () => {
-      return collections.chatMessages.create((m) => {
-        m.serverId      = null;
-        m.chatId        = data.chatId;
-        m.senderId      = data.senderId;
-        m.senderName    = data.senderName ?? null;
-        m.content       = data.content;
-        m.sentAt        = Date.now();
-        m.isSynced      = false;
+      const msg = await collections.chatMessages.create((m: any) => {
+        m.serverId = null;
+        m.chatId = data.chatId;
+        m.senderId = data.senderId;
+        m.senderName = data.senderName ?? null;
+        m.content = data.content;
+        m.sentAt = Date.now();
+        m.isSynced = false;
         m.pendingAction = 'send';
+        m.messageStatus = 'pending';
+        m.readByRaw = '[]';
+        m.deliveredToRaw = '[]';
+        m.lastSyncedAt = null;
       });
+      return msg as unknown as ChatMessageModel;
+    });
+  }
+
+  // ── Зберегти задачу офлайн ────────────────────────────────────────────────
+
+  static async saveTaskOffline(data: {
+    requestId: string;
+    requestServerId: string | null;
+    title: string;
+    description?: string;
+    neededPeopleCount: number;
+    requiredRoles: string[];
+    priority?: number;
+    deadline?: number | null;
+  }): Promise<TaskModel> {
+    return database.write(async () => {
+      const task = await collections.tasks.create((t: any) => {
+        t.serverId = null;
+        t.requestId = data.requestId;
+        t.requestServerId = data.requestServerId;
+        t.title = data.title;
+        t.description = data.description ?? null;
+        t.status = 'open';
+        t.neededPeopleCount = data.neededPeopleCount;
+        t.requiredRolesRaw = JSON.stringify(data.requiredRoles);
+        t.assignedCount = 0;
+        t.chatId = null;
+        t.priority = data.priority || 0;
+        t.deadline = data.deadline ?? null;
+        t.createdAtServer = Date.now();
+        t.isSynced = false;
+        t.pendingAction = 'create';
+        t.lastSyncedAt = null;
+      });
+      return task as unknown as TaskModel;
     });
   }
 }

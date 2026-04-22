@@ -1,23 +1,29 @@
 /**
  * Singleton WebSocket — одне з'єднання на весь додаток.
- * Виправляє баг 5.2.2: раніше кожен ChatRoomScreen створював окремий
- * socket та відключав його при виході, що призводило до втрати підписок.
+ *
+ * ВИПРАВЛЕННЯ: прибрано collections.chatMessages.find(msg.id) + database.write()
+ * з обробника 'new_message'. Проблема: find() шукав за WatermelonDB internal ID,
+ * а msg.id — серверний UUID → завжди throw → database.write() для кожного
+ * повідомлення → черга WatermelonDB флудилась writes → ChatRoomScreen.fetch()
+ * зависав назавжди.
+ *
+ * Збереження повідомлень в локальну БД відбувається в ChatRoomScreen.load()
+ * та SyncService.pull() — не в сокет-хендлері.
  */
 import { useEffect, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE_URL } from '../api/axios';
 import { Message } from '../types';
-import { collections } from '../db';
 
 const WS_URL = API_BASE_URL.replace('/api', '');
 
 // ─── Глобальний singleton ─────────────────────────────────────────────────────
 let globalSocket: Socket | null = null;
 let listenerCount = 0;
-type MessageHandler = (msg: Message & { senderName: string }) => void;
-type TypingHandler  = (data: { userId: string; name: string; isTyping: boolean }) => void;
-type NewChatHandler = (data: { chatId: string; chatName: string }) => void;
+type MessageHandler  = (msg: Message & { senderName: string }) => void;
+type TypingHandler   = (data: { userId: string; name: string; isTyping: boolean }) => void;
+type NewChatHandler  = (data: { chatId: string; chatName: string }) => void;
 
 const messageListeners = new Set<MessageHandler>();
 const typingListeners  = new Set<TypingHandler>();
@@ -42,30 +48,10 @@ async function getOrCreateSocket(): Promise<Socket> {
     reconnectionDelay: 2000,
   });
 
-  socket.on('new_message', async (msg: Message & { senderName: string }) => {
-    // Save incoming message to local database for offline access
-    try {
-      // Check if message already exists in local DB
-      try {
-        await collections.chatMessages.find(msg.id);
-      } catch {
-        // Message doesn't exist, save it
-        await collections.chatMessages.create((m: any) => {
-          m.id = msg.id;
-          m.serverId = msg.id;
-          m.chatId = msg.chatId;
-          m.senderId = msg.senderId;
-          m.senderName = msg.sender?.fullName || null;
-          m.content = msg.content;
-          m.sentAt = msg.sentAt;
-          m.isSynced = true;
-          m.pendingAction = null;
-        });
-      }
-    } catch (saveError) {
-      console.log('Failed to save incoming message to local DB:', saveError);
-    }
-    
+  socket.on('new_message', (msg: Message & { senderName: string }) => {
+    // ВИПРАВЛЕНО: НЕ робимо жодних DB-операцій тут.
+    // Раніше тут був find() + database.write() — це флудило WatermelonDB-чергу.
+    // Збереження в БД відбувається в ChatRoomScreen.load() після отримання з API.
     messageListeners.forEach((fn) => fn(msg));
   });
 
@@ -73,7 +59,6 @@ async function getOrCreateSocket(): Promise<Socket> {
     typingListeners.forEach((fn) => fn(data));
   });
 
-  // FR-10e fix: сервер повідомляє про нову кімнату
   socket.on('new_chat_joined', (data: { chatId: string; chatName: string }) => {
     newChatListeners.forEach((fn) => fn(data));
   });
@@ -85,8 +70,8 @@ async function getOrCreateSocket(): Promise<Socket> {
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 interface UseSocketOptions {
-  onNewMessage?:   MessageHandler;
-  onTyping?:       TypingHandler;
+  onNewMessage?:    MessageHandler;
+  onTyping?:        TypingHandler;
   onNewChatJoined?: NewChatHandler;
 }
 
@@ -98,10 +83,9 @@ export function useSocket(options: UseSocketOptions = {}) {
   useEffect(() => {
     listenerCount++;
 
-    // Реєструємо обробники
-    const msgHandler: MessageHandler = (msg) => optionsRef.current.onNewMessage?.(msg);
-    const typHandler: TypingHandler  = (d)   => optionsRef.current.onTyping?.(d);
-    const chatHandler: NewChatHandler = (d)  => optionsRef.current.onNewChatJoined?.(d);
+    const msgHandler:  MessageHandler  = (msg) => optionsRef.current.onNewMessage?.(msg);
+    const typHandler:  TypingHandler   = (d)   => optionsRef.current.onTyping?.(d);
+    const chatHandler: NewChatHandler  = (d)   => optionsRef.current.onNewChatJoined?.(d);
 
     if (options.onNewMessage)    messageListeners.add(msgHandler);
     if (options.onTyping)        typingListeners.add(typHandler);
@@ -115,7 +99,6 @@ export function useSocket(options: UseSocketOptions = {}) {
       typingListeners.delete(typHandler);
       newChatListeners.delete(chatHandler);
 
-      // Відключаємо глобальний сокет лише коли жодного підписника немає
       if (listenerCount === 0) {
         globalSocket?.disconnect();
         globalSocket = null;

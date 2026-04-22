@@ -18,20 +18,51 @@ export const chatApi = {
    * Завантажує файл у чат і повертає URL збереженого файлу.
    * URL потім передається в sendMessage як контент (або окреме поле).
    */
-  sendFile: (
+  sendFile: async (
     chatId: string,
     file: { uri: string; name: string; type: string },
   ): Promise<{ url: string; name: string; mimeType: string }> => {
     const formData = new FormData();
-    // @ts-ignore: React Native FormData приймає { uri, name, type }
-    formData.append('file', { uri: file.uri, name: file.name, type: file.type });
+    
+    // Для React Native потрібно використовувати правильний формат
+    if (file.uri.startsWith('file://') || file.uri.startsWith('content://')) {
+      // Для файлів з файлової системи
+      formData.append('file', {
+        uri: file.uri,
+        name: file.name,
+        type: file.type,
+      } as any);
+    } else if (file.uri.startsWith('data:')) {
+      // Для base64 даних
+      const base64Data = file.uri.split(',')[1];
+      const byteString = atob(base64Data);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      const blob = new Blob([ab], { type: file.type });
+      formData.append('file', blob, file.name);
+    } else {
+      // Для інших випадків
+      formData.append('file', {
+        uri: file.uri,
+        name: file.name,
+        type: file.type,
+      } as any);
+    }
 
-    return api
-      .post(`/chats/${chatId}/files`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        transformRequest: [(data) => data],
-      })
-      .then((r) => r.data);
+    try {
+      const response = await api.post(`/chats/${chatId}/files`, formData, {
+        headers: { 
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('File upload error:', error);
+      throw error;
+    }
   },
 
   markAsRead: (chatId: string): Promise<void> =>

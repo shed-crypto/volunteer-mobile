@@ -108,9 +108,11 @@ export default function ChatsListScreen() {
   const handleOpenChat = (chat: Chat) => {
     setUnreadMap((prev) => ({ ...prev, [chat.id]: 0 }));
     chatApi.markAsRead(chat.id).catch(() => {});
+    
+    // Відкриваємо чат простим переходом
     navigation.navigate('ChatRoom', {
-      chatId:   chat.id,
-      chatName: getChatName(chat),
+      chatId: chat.id,
+      chatName: getChatName(chat)
     });
   };
 

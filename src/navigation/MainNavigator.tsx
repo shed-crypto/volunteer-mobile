@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -132,11 +132,38 @@ export default function MainNavigator() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  // Стан для відстеження активної вкладки
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+
+  const handleTabPress = (tabName: string, navigation: any) => {
+    // Якщо користувач натискає на вже активну вкладку - скидаємо фільтри
+    if (activeTab === tabName) {
+      // Скидаємо фільтри для кожної вкладки
+      if (tabName === 'Requests') {
+        // Скидання фільтрів для заявок
+        navigation.navigate('Requests', { screen: 'RequestsList' });
+      } else if (tabName === 'Map') {
+        // Скидання фільтрів для мапи
+        navigation.navigate('Map', { screen: 'MapMain' });
+      } else if (tabName === 'Chats') {
+        // Скидання фільтрів для чатів
+        navigation.navigate('Chats', { screen: 'ChatsList' });
+      } else if (tabName === 'Profile') {
+        // Скидання фільтрів для профілю
+        navigation.navigate('Profile', { screen: 'ProfileMain' });
+      } else if (tabName === 'Admin' && isAdmin) {
+        // Скидання фільтрів для адміна
+        navigation.navigate('Admin', { screen: 'AdminMain' });
+      }
+    }
+    setActiveTab(tabName);
+  };
+
   return (
     <View style={{ flex: 1 }}>
       <OfflineBanner />
       <Tab.Navigator
-        screenOptions={({ route }) => ({
+        screenOptions={({ route, navigation }) => ({
           headerShown: false,
           tabBarActiveTintColor:   Colors.primary,
           tabBarInactiveTintColor: Colors.textMuted,
@@ -160,6 +187,18 @@ export default function MainNavigator() {
               );
             }
             return <Ionicons name={(focused ? active : inactive) as any} size={size} color={color} />;
+          },
+          // Додаємо обробник натискання на вкладку
+          tabBarButton: (props: any) => {
+            return (
+              <TouchableOpacity
+                {...props}
+                onPress={() => {
+                  handleTabPress(route.name, navigation);
+                  props.onPress();
+                }}
+              />
+            );
           },
         })}
       >
