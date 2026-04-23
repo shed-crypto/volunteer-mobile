@@ -110,9 +110,15 @@ export function useSocket(options: UseSocketOptions = {}) {
     globalSocket?.emit('send_message', { chatId, content, attachmentUrl });
   }, []);
 
-  const sendTyping = useCallback((chatId: string, isTyping: boolean) => {
-    globalSocket?.emit('typing', { chatId, isTyping });
-  }, []);
+const sendTyping = useCallback((chatId: string, isTyping: boolean) => {
+  globalSocket?.emit('typing', { chatId, isTyping });
+}, []);
 
   return { sendMessage, sendTyping, socket: socketRef };
+}
+
+// Додано: публічна функція для безпечної відправки через WebSocket
+export async function emitWhenReady(event: string, data: object): Promise<void> {
+  const socket = await getOrCreateSocket();
+  socket.emit(event, data);
 }

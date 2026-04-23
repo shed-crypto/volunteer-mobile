@@ -1,4 +1,5 @@
-import api from './axios';
+import api, { API_BASE_URL } from './axios';
+import * as SecureStore from 'expo-secure-store';
 import { Chat, Message } from '../types';
 
 export const chatApi = {
@@ -16,49 +17,39 @@ export const chatApi = {
 
   /**
    * Завантажує файл у чат і повертає URL збереженого файлу.
-   * URL потім передається в sendMessage як контент (або окреме поле).
+   * Використовує нативний fetch() замість Axios, щоб уникнути конфліктів
+   * з Content-Type заголовком (React Native сам генерує boundary для FormData).
    */
   sendFile: async (
     chatId: string,
     file: { uri: string; name: string; type: string },
   ): Promise<{ url: string; name: string; mimeType: string }> => {
     const formData = new FormData();
-    
-    // Для React Native потрібно використовувати правильний формат
-    if (file.uri.startsWith('file://') || file.uri.startsWith('content://')) {
-      // Для файлів з файлової системи
-      formData.append('file', {
-        uri: file.uri,
-        name: file.name,
-        type: file.type,
-      } as any);
-    } else if (file.uri.startsWith('data:')) {
-      // Для base64 даних
-      const base64Data = file.uri.split(',')[1];
-      const byteString = atob(base64Data);
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
-      const blob = new Blob([ab], { type: file.type });
-      formData.append('file', blob, file.name);
-    } else {
-      // Для інших випадків
-      formData.append('file', {
-        uri: file.uri,
-        name: file.name,
-        type: file.type,
-      } as any);
+    formData.append('file', {
+      uri: file.uri,
+      name: file.name,
+      type: file.type,
+    } as any);
+
+    const token = await SecureStore.getItemAsync('accessToken');
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     try {
-      const response = await api.post(`/chats/${chatId}/files`, formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data',
-        },
+      const response = await fetch(`${API_BASE_URL}/chats/${chatId}/files`, {
+        method: 'POST',
+        body: formData,
+        headers,
       });
-      return response.data;
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(`Upload failed: ${response.status} ${text}`);
+      }
+
+      return await response.json();
     } catch (error) {
       console.error('File upload error:', error);
       throw error;

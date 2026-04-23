@@ -387,7 +387,7 @@ export class SyncService {
     isLocationHidden?: boolean;
   }): Promise<RequestModel> {
     return database.write(async () => {
-      const req = await collections.requests.create((r: any) => {
+      const req = collections.requests.prepareCreate((r: any) => {
         r.serverId = null;
         r.title = data.title;
         r.description = data.description ?? null;
@@ -404,6 +404,7 @@ export class SyncService {
         r.createdAtServer = Date.now();
         r.lastSyncedAt = null;
       });
+      await database.batch(req);
       return req as unknown as RequestModel;
     });
   }
@@ -417,7 +418,7 @@ export class SyncService {
     content: string;
   }): Promise<ChatMessageModel> {
     return database.write(async () => {
-      const msg = await collections.chatMessages.create((m: any) => {
+      const msg = collections.chatMessages.prepareCreate((m: any) => {
         m.serverId = null;
         m.chatId = data.chatId;
         m.senderId = data.senderId;
@@ -431,6 +432,7 @@ export class SyncService {
         m.deliveredToRaw = '[]';
         m.lastSyncedAt = null;
       });
+      await database.batch(msg);
       return msg as unknown as ChatMessageModel;
     });
   }
@@ -448,7 +450,7 @@ export class SyncService {
     deadline?: number | null;
   }): Promise<TaskModel> {
     return database.write(async () => {
-      const task = await collections.tasks.create((t: any) => {
+      const task = collections.tasks.prepareCreate((t: any) => {
         t.serverId = null;
         t.requestId = data.requestId;
         t.requestServerId = data.requestServerId;
@@ -466,6 +468,7 @@ export class SyncService {
         t.pendingAction = 'create';
         t.lastSyncedAt = null;
       });
+      await database.batch(task);
       return task as unknown as TaskModel;
     });
   }

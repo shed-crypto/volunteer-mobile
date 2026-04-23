@@ -13,7 +13,7 @@ import { Message, SystemRole, ClearanceLevel } from '../../types';
 import { Colors } from '../../utils/theme';
 import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
-import { useSocket } from '../../hooks/useSocket';
+import { useSocket, emitWhenReady } from '../../hooks/useSocket';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { database, collections } from '../../db/index';
 import { MessageStatusIcon } from '../../components/MessageStatusIcon';
@@ -228,23 +228,27 @@ export default function ChatRoomScreen() {
   const handleSend = async () => {
     const content = text.trim();
     if (!content || sending) return;
+
+    setSending(true);
     setText('');
     sendTyping(chatId, false);
 
-    try {
-      await import('../../db/SyncService').then((module) =>
+    // 1. Надсилаємо ОДРАЗУ через WebSocket — не чекаємо БД
+    sendMessage(chatId, content);
+
+    // 2. Зберігаємо в локальну БД асинхронно (офлайн-резерв)
+    import('../../db/SyncService')
+      .then((module) =>
         module.SyncService.saveMessageOffline({
           chatId,
           senderId: user?.id || '',
           senderName: user?.fullName,
           content,
         })
-      );
-    } catch (saveError) {
-      console.log('Failed to save message offline:', saveError);
-    }
+      )
+      .catch((err) => console.warn('[handleSend] saveOffline failed:', err));
 
-    sendMessage(chatId, content);
+    setSending(false);
   };
 
   const handleTyping = (val: string) => {
@@ -256,7 +260,8 @@ export default function ChatRoomScreen() {
     setUploading(true);
     try {
       const result = await chatApi.sendFile(chatId, { uri, name, type });
-      sendMessage(chatId, result.url, result.url);
+      // Чекаємо на готовий сокет перед відправкою
+      await emitWhenReady('send_message', { chatId, content: result.name, attachmentUrl: result.url });
     } catch (e: any) {
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {

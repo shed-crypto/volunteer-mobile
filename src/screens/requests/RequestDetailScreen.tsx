@@ -79,37 +79,7 @@ export default function RequestDetailScreen() {
         const serverTasks = await tasksApi.getByRequest(requestId);
         setTasks(serverTasks);
         
-        // Зберігаємо завантажені задачі в локальну БД
-        try {
-          await database.write(async () => {
-            await Promise.all(serverTasks.map(async (task) => {
-              try {
-                // Перевіряємо чи задача вже існує
-                await collections.tasks.find(task.id);
-              } catch {
-                // Якщо не існує - створюємо
-                await collections.tasks.create((t: any) => {
-                  t.serverId = task.id;
-                  t.requestId = requestId;
-                  t.requestServerId = requestId;
-                  t.title = task.title;
-                  t.description = task.description ?? null;
-                  t.status = task.status;
-                  t.neededPeopleCount = task.neededPeopleCount ?? 1;
-                  t.requiredRolesRaw = JSON.stringify(task.requiredRoles ?? []);
-                  t.assignedCount = task.assignments?.filter(
-                    (a: any) => a.status !== 'withdrawn'
-                  ).length ?? 0;
-                  t.priority = task.priority ?? 0;
-                  t.isSynced = true;
-                  t.pendingAction = null;
-                });
-              }
-            }));
-          });
-        } catch (saveError) {
-          console.log('Failed to save tasks to local DB:', saveError);
-        }
+      // WatermelonDB-кеш оновить SyncService у фоні — не блокуємо UI тут
       } catch (serverError) {
         console.error('Failed to load tasks from server:', serverError);
         // Якщо не вдалося завантажити з сервера, спробуємо з локальної БД
