@@ -271,6 +271,12 @@ export default function AdminScreen() {
           placeholder="Пошук за ім'ям або email..."
           placeholderTextColor="#AAA"
         />
+        <TouchableOpacity
+          style={styles.devBtn}
+          onPress={() => navigation.navigate('DevDBInspector' as never)}
+        >
+          <Text style={styles.devBtnText}>🗄️ База даних</Text>
+        </TouchableOpacity>
       </View>
 
       <Text style={styles.countText}>
@@ -310,6 +316,11 @@ const styles = StyleSheet.create({
   },
   countText: { fontSize: 13, color: '#888', paddingHorizontal: 14, marginBottom: 4 },
   list: { padding: 12 },
+  devBtn: {
+    backgroundColor: '#333', borderRadius: 8,
+    padding: 10, marginTop: 8, alignItems: 'center',
+  },
+  devBtnText: { color: 'white', fontWeight: '700', fontSize: 14 },
 
   userCard: {
     backgroundColor: 'white', borderRadius: 12, padding: 12,

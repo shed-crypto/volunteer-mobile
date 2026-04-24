@@ -21,6 +21,10 @@ import { Colors, urgencyColors, statusColors, categoryLabels } from '../../utils
 import { Badge, Card, EmptyState, LoadingScreen, ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { SystemRole } from '../../types';
+import { collections } from '../../db/index';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+// import { isServerReachable } from '../../api/axios';
+const isServerReachable = true; // Placeholder: fix this logic based on your network status check
 
 const STATUS_FILTERS = [
   { value: undefined,                  label: 'Всі' },
@@ -72,18 +76,72 @@ export default function RequestsListScreen() {
   const load = useCallback(async () => {
     setHasError(false);
     try {
-      const data = await requestsApi.getAll({
-        search: search || undefined,
-        status: statusFilter,
-        urgency: urgencyFilter,
-        category: categoryFilter,
-        limit: 50,
-      });
-      setRequests(data);
-    } catch {
+      if (isServerReachable) {
+        const data = await requestsApi.getAll({
+          search: search || undefined,
+          status: statusFilter,
+          urgency: urgencyFilter,
+          category: categoryFilter,
+          limit: 50,
+        });
+        setRequests(data);
+      } else {
+        // Офлайн → читаємо з локальної WatermelonDB (заповнюється SyncService.sync() після логіну)
+        const localReqs = await collections.requests.query().fetch();
+        if (localReqs.length > 0) {
+          const mapped = localReqs.map((r: any) => ({
+            id: r.serverId || r.id,
+            title: r.title,
+            description: r.description ?? '',
+            category: r.category,
+            urgency: r.urgency,
+            status: r.status,
+            requiredClearance: r.requiredClearance,
+            latitude: r.latitude ?? undefined,
+            longitude: r.longitude ?? undefined,
+            isLocationHidden: r.isLocationHidden ?? false,
+            tags: r.tags ?? [],
+            creatorId: r.creatorId ?? '',
+            createdAt: r.createdAtServer
+              ? new Date(r.createdAtServer).toISOString()
+              : new Date().toISOString(),
+          }));
+          // Фільтруємо локально якщо є фільтри
+          const filtered = mapped.filter((r: any) => {
+            if (statusFilter && r.status !== statusFilter) return false;
+            if (urgencyFilter && r.urgency !== urgencyFilter) return false;
+            if (categoryFilter && r.category !== categoryFilter) return false;
+            if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
+            return true;
+          });
+          setRequests(filtered as any);
+        }
+      }
+    } catch (error) {
       setHasError(true);
-      // БАГ-ФІКс: НЕ очищуємо список якщо вже є дані
-      // setRequests([]); ← видалено, щоб не "зникали" заявки при помилці мережі
+      // Якщо API вернув помилку — все одно пробуємо БД
+      if (!isServerReachable) {
+        const localReqs = await collections.requests.query().fetch();
+        if (localReqs.length > 0) {
+          setRequests(localReqs.map((r: any) => ({
+            id: r.serverId || r.id,
+            title: r.title,
+            description: r.description ?? '',
+            category: r.category,
+            urgency: r.urgency,
+            status: r.status,
+            requiredClearance: r.requiredClearance,
+            latitude: r.latitude ?? undefined,
+            longitude: r.longitude ?? undefined,
+            isLocationHidden: r.isLocationHidden ?? false,
+            tags: r.tags ?? [],
+            creatorId: r.creatorId ?? '',
+            createdAt: r.createdAtServer
+              ? new Date(r.createdAtServer).toISOString()
+              : new Date().toISOString(),
+          })) as any);
+        }
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
