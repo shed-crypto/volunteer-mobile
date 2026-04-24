@@ -14,7 +14,6 @@ import {
   TextInput, ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { chatApi } from '../../api/chat.api';
 import { usersApi } from '../../api/users.api';
 import { Chat, ChatType, Message, User } from '../../types';
@@ -37,15 +36,15 @@ export default function ChatsListScreen() {
   const route = useRoute<any>();
   const { user } = useAuth();
 
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [chats, setChats]           = useState<Chat[]>([]);
+  const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
+  const [unreadMap, setUnreadMap]   = useState<Record<string, number>>({});
 
   // New chat modal
-  const [showNewChat, setShowNewChat] = useState(false);
-  const [userSearch, setUserSearch] = useState('');
-  const [allUsers, setAllUsers] = useState<UserItem[]>([]);
+  const [showNewChat, setShowNewChat]   = useState(false);
+  const [userSearch, setUserSearch]     = useState('');
+  const [allUsers, setAllUsers]         = useState<UserItem[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [creatingChat, setCreatingChat] = useState<string | null>(null);
 
@@ -79,31 +78,17 @@ export default function ChatsListScreen() {
     return () => clearTimeout(delayDebounceFn);
   }, [userSearch, user?.id]);
 
-  const CHATS_CACHE_KEY = 'cached_chats_v1';
-
   const load = useCallback(async () => {
     try {
       const data = await chatApi.getMyChats();
       setChats(data);
-      // ВИПРАВЛЕННЯ: зберігаємо в AsyncStorage для офлайн-доступу
-      AsyncStorage.setItem(CHATS_CACHE_KEY, JSON.stringify(data)).catch(() => {});
     } catch {
-      // ВИПРАВЛЕННЯ: при помилці API — читаємо з кешу
-      if (chats.length === 0) {
-        try {
-          const cached = await AsyncStorage.getItem(CHATS_CACHE_KEY);
-          if (cached) {
-            setChats(JSON.parse(cached));
-          }
-        } catch (cacheErr) {
-          console.warn('[ChatsListScreen] Помилка читання кешу:', cacheErr);
-        }
-      }
+      // залишаємо старі дані
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [chats.length]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -123,7 +108,7 @@ export default function ChatsListScreen() {
   const handleOpenChat = (chat: Chat) => {
     setUnreadMap((prev) => ({ ...prev, [chat.id]: 0 }));
     chatApi.markAsRead(chat.id).catch(() => {});
-
+    
     // Відкриваємо чат простим переходом
     navigation.navigate('ChatRoom', {
       chatId: chat.id,
@@ -131,7 +116,7 @@ export default function ChatsListScreen() {
     });
   };
 
-  // ─── Пошук юзерів для нового чату ─────────────────────────────────────────
+  // ─── Пошук юзерів для нового чату ────────────────────────────────────────
 
   const openNewChatModal = () => {
     setShowNewChat(true);
@@ -146,7 +131,7 @@ export default function ChatsListScreen() {
       setShowNewChat(false);
       await load();
       navigation.navigate('ChatRoom', {
-        chatId: chat.id,
+        chatId:   chat.id,
         chatName: targetUser.fullName,
       });
     } catch {
@@ -174,13 +159,13 @@ export default function ChatsListScreen() {
 
   const getChatIcon = (chat: Chat) => {
     if (chat.type === ChatType.TASK_CHAT) return '📌';
-    if (chat.type === ChatType.ORG_CHAT) return '🏢';
+    if (chat.type === ChatType.ORG_CHAT)  return '🏢';
     return '💬';
   };
 
   const getChatColor = (chat: Chat) => {
     if (chat.type === ChatType.TASK_CHAT) return '#E3F2FD';
-    if (chat.type === ChatType.ORG_CHAT) return '#E8F5E9';
+    if (chat.type === ChatType.ORG_CHAT)  return '#E8F5E9';
     return Colors.primaryLight;
   };
 
@@ -243,10 +228,10 @@ export default function ChatsListScreen() {
                   </Text>
                 </View>
                 <Text style={styles.chatSub} numberOfLines={1}>
-                  {chat.type === ChatType.DIRECT ? 'Особистий чат'
-                    : chat.type === ChatType.TASK_CHAT ? '📌 Чат задачі'
-                    : chat.type === ChatType.ORG_CHAT ? '🏢 Чат організації'
-                    : `${chat.participants?.length ?? 0} учасників`}
+                  {chat.type === ChatType.DIRECT   ? 'Особистий чат'
+                   : chat.type === ChatType.TASK_CHAT ? '📌 Чат задачі'
+                   : chat.type === ChatType.ORG_CHAT  ? '🏢 Чат організації'
+                   : `${chat.participants?.length ?? 0} учасників`}
                 </Text>
               </View>
 
@@ -293,7 +278,7 @@ export default function ChatsListScreen() {
             </View>
           ) : (
             <FlatList
-              data={filteredUsers}
+              data={allUsers}
               keyExtractor={(u) => u.id}
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
               ListEmptyComponent={
@@ -349,13 +334,13 @@ const styles = StyleSheet.create({
     width: 50, height: 50, borderRadius: 25,
     alignItems: 'center', justifyContent: 'center',
   },
-  chatInfo: { flex: 1 },
-  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  chatName: { flex: 1, fontSize: 15, fontWeight: '600', color: Colors.text },
+  chatInfo:       { flex: 1 },
+  chatHeader:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  chatName:       { flex: 1, fontSize: 15, fontWeight: '600', color: Colors.text },
   chatNameUnread: { fontWeight: '800' },
-  chatTime: { fontSize: 12, color: Colors.textMuted },
-  chatSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 3 },
-  divider: { height: 1, backgroundColor: Colors.borderLight, marginLeft: 78 },
+  chatTime:       { fontSize: 12, color: Colors.textMuted },
+  chatSub:        { fontSize: 13, color: Colors.textSecondary, marginTop: 3 },
+  divider:        { height: 1, backgroundColor: Colors.borderLight, marginLeft: 78 },
   unreadBadge: {
     minWidth: 22, height: 22, borderRadius: 11,
     backgroundColor: Colors.primary,
@@ -389,7 +374,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
   },
   userAvatarText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  userName: { fontSize: 15, fontWeight: '600', color: Colors.text },
-  userEmail: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  chatArrow: { fontSize: 20 },
+  userName:       { fontSize: 15, fontWeight: '600', color: Colors.text },
+  userEmail:      { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  chatArrow:      { fontSize: 20 },
 });

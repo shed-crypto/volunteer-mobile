@@ -4,7 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../utils/theme';
 import { Card, Button, ScreenHeader } from '../../components/ui';
 import { collections, database } from '../../db/index';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { API_BASE_URL } from '../../api/axios';
 import { isServerReachable } from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
@@ -31,7 +32,7 @@ export default function DevDBInspector() {
     { key: 'requests', name: 'requests', display: 'Заявки' },
     { key: 'tasks', name: 'tasks', display: 'Задачі' },
     { key: 'chatMessages', name: 'chatMessages', display: 'Чат-повідомлення' },
-    { key: 'users', name: 'users', display: 'Користувачі' },
+    { key: 'usersCache', name: 'usersCache', display: 'Користувачі' },
     { key: 'pendingReports', name: 'pendingReports', display: 'Відкладені звіти' },
     { key: 'actionQueue', name: 'actionQueue', display: 'Черга дій' },
     { key: 'taskAssignments', name: 'taskAssignments', display: 'Призначення задач' },
@@ -70,9 +71,9 @@ export default function DevDBInspector() {
   const manualSync = async () => {
     setIsSyncing(true);
     try {
-      // Тут можна викликати SyncService.sync()
-      const { SyncService } = await import('../db/SyncService');
-      await SyncService.sync();
+      const { SyncService } = await import('../../db/SyncService');
+      const result = await SyncService.sync();
+      console.log(`[DevDBInspector] Sync done — pushed: ${result.pushed}, pulled: ${result.pulled}`);
       setLastSync(new Date());
       await loadAllTables();
     } catch (error) {
@@ -97,7 +98,7 @@ export default function DevDBInspector() {
               });
               setTables([]);
               Alert.alert('✓', 'База очищена');
-            } catch (e) {
+            } catch (e: any) {
               Alert.alert('✗', 'Помилка очистки: ' + e.message);
             }
           },
@@ -122,11 +123,25 @@ export default function DevDBInspector() {
       };
       
       const fileName = `db-export-${Date.now()}.json`;
+      const path = FileSystem.documentDirectory + fileName;
       await FileSystem.writeAsStringAsync(
-        FileSystem.documentDirectory + fileName,
+        path,
         JSON.stringify(exportData, null, 2)
       );
-      Alert.alert('✓', `Експорт збережено: ${fileName}`);
+      
+      Alert.alert('✓', 'Експорт збережено', [
+        { text: 'ОК' },
+        { 
+          text: 'Поділитися', 
+          onPress: async () => {
+            if (await Sharing.isAvailableAsync()) {
+              await Sharing.shareAsync(path);
+            } else {
+              Alert.alert('Помилка', 'Функція обміну недоступна');
+            }
+          }
+        }
+      ]);
     } catch (error) {
       console.warn('[DevDBInspector] Помилка експорту:', error);
     }
@@ -215,7 +230,7 @@ export default function DevDBInspector() {
                   {collectionNames.find(c => c.key === table.name)?.display || table.name}
                 </Text>
                 <Text style={{ fontSize: 14, color: Colors.primary }}>
-                  {table.count} записів
+                  {table.count} записів ▾
                 </Text>
               </View>
               

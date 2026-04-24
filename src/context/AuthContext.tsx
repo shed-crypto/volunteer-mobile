@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import * as SecureStore from 'expo-secure-store';
 import { authApi } from '../api/auth.api';
 import { User, SystemRole, ClearanceLevel } from '../types';
-import { SyncService } from '../db/SyncService';
 
 interface AuthState {
   user: User | null;
@@ -56,11 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             isAuthenticated: true,
             emailVerified: verified === 'true',
           });
-          // ВИПРАВЛЕННЯ: запускаємо sync після успішного bootstrap
-          // щоб локальна БД заповнилась актуальними даними
-          SyncService.sync().catch((err) =>
-            console.warn('[AuthContext] Bootstrap sync failed:', err)
-          );
         } else {
           setState((s) => ({ ...s, isLoading: false }));
         }
@@ -87,17 +81,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: true,
       emailVerified: response.emailVerified ?? false,
     });
-    // ВИПРАВЛЕННЯ: запускаємо sync після логіну, не блокуємо UI
-    SyncService.sync().catch((err) =>
-      console.warn('[AuthContext] Login sync failed:', err)
-    );
   }, []);
 
   const register = useCallback(async (data: RegisterData) => {
-    const response = await authApi.register(data);
+    const response = await authApi.register(data); // тепер передає systemRole
     await SecureStore.setItemAsync('accessToken', response.accessToken);
     await SecureStore.setItemAsync('refreshToken', response.refreshToken);
-    await SecureStore.setItemAsync('emailVerified', 'false');
+    await SecureStore.setItemAsync('emailVerified', 'false'); // нова реєстрація = не підтверджено
     const user = response.user as unknown as User;
     setState({
       user,
@@ -106,8 +96,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: true,
       emailVerified: false,
     });
-    // ВИПРАВЛЕННЯ: sync після реєстрації
-    SyncService.sync().catch(() => {});
   }, []);
 
   const logout = useCallback(async () => {

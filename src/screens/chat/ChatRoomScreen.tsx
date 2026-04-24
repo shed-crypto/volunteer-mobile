@@ -14,8 +14,8 @@ import { Colors } from '../../utils/theme';
 import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket, emitWhenReady } from '../../hooks/useSocket';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { database, collections } from '../../db/index';
-import { isServerReachable } from '../../api/axios';
 import { MessageStatusIcon } from '../../components/MessageStatusIcon';
 import { NetworkStatusIndicator } from '../../components/NetworkStatusIndicator';
 
@@ -62,10 +62,14 @@ export default function ChatRoomScreen() {
     },
   });
 
+  const { isOnline } = useNetworkStatus();
+  const isOnlineRef = useRef(isOnline);
+  useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
+
   // Захист від подвійного запуску (React StrictMode)
   const isLoadingRef = useRef(false);
 
-  // ─── Зберегти повідомлення в локальну БД (асинхронно, не блокуємо UI) ───────
+  // ─── Зберегти повідомлення в локальну БД (асинхронно, не блокуємо UI) ──────
   const saveMessagesToDB = useCallback(async (msgs: Message[]) => {
     if (!msgs.length) return;
     try {
@@ -111,7 +115,7 @@ export default function ChatRoomScreen() {
     console.log(`[ChatRoomScreen] Завантаження чату: ${chatId}`);
 
     try {
-      if (isServerReachable) {
+      if (isOnlineRef.current) {
         // СТРАТЕГІЯ: Онлайн → одразу API (без очікування БД).
         // Це виключає зависання якщо WatermelonDB-черга зайнята.
         console.log('[ChatRoomScreen] Онлайн — завантаження з API');
