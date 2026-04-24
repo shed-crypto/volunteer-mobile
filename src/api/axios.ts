@@ -5,16 +5,16 @@ import * as SecureStore from 'expo-secure-store';
  * Базова URL бекенду.
  *
  * Налаштовується через .env файл у корені проєкту:
- *   EXPO_PUBLIC_API_URL=http://192.168.x.x:3000/api
+ * EXPO_PUBLIC_API_URL=http://192.168.x.x:3000/api
  *
  * Пріоритет:
- *   1. EXPO_PUBLIC_API_URL із .env  ← рекомендований спосіб
- *   2. Fallback на localhost        ← працює в емуляторі Android
+ * 1. EXPO_PUBLIC_API_URL із .env ← рекомендований спосіб
+ * 2. Fallback на localhost ← працює в емуляторі Android
  *
  * Для реального пристрою в одній мережі Wi-Fi:
- *   EXPO_PUBLIC_API_URL=http://192.168.1.XX:3000/api
+ * EXPO_PUBLIC_API_URL=http://192.168.1.XX:3000/api
  * Для Android-емулятора:
- *   EXPO_PUBLIC_API_URL=http://10.0.2.2:3000/api
+ * EXPO_PUBLIC_API_URL=http://10.0.2.2:3000/api
  */
 export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api';
@@ -23,7 +23,7 @@ console.log('[Axios] API_BASE_URL:', API_BASE_URL);
 
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 4000, // 4s → швидкий fallback до офлайн-БД
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -53,9 +53,21 @@ const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue = [];
 };
 
+// ─── Глобальний прапор доступності сервера ───────────────────────────────
+// NetInfo перевіряє Google, а не наш сервер. isServerReachable відстежує
+// реальний стан бекенду через результати наших API-запитів.
+export let isServerReachable = true;
+
 api.interceptors.response.use(
-  (response: AxiosResponse) => response,
+  (response: AxiosResponse) => {
+    isServerReachable = true; // будь-яка успішна відповідь = сервер живий
+    return response;
+  },
   async (error) => {
+    if (!error.response) {
+      // Network Error або timeout — сервер недоступний (не просто інтернет)
+      isServerReachable = false;
+    }
     const originalRequest = error.config;
 
     if (error.response?.status === 401 && !originalRequest._retry) {
@@ -97,5 +109,8 @@ api.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+// Іменований експорт (для сумісності з sync.service.ts)
+export const axiosInstance = api;
 
 export default api;

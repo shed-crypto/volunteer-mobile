@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet, Modal, FlatList } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { tasksApi } from '../../api/tasks.api';
+import { collections } from '../../db/index';
 import { orgsApi } from '../../api/orgs.api';
 import { API_BASE_URL } from '../../api/axios';
 import { Task, TaskStatus, AssignmentStatus, SystemRole, Organization } from '../../types';
@@ -10,6 +11,7 @@ import { Badge, Card, Button, LoadingScreen, ScreenHeader, Input, ProgressBar } 
 import { useAuth } from '../../context/AuthContext';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
+import { isServerReachable } from '../../api/axios';
 
 type RouteParams = {
   TaskDetail: { taskId: string; requestId?: string; requestTitle?: string };
@@ -50,13 +52,44 @@ export default function TaskDetailScreen() {
       const t = await tasksApi.getOne(taskId);
       setTask(t);
     } catch {
-      Alert.alert('Помилка', 'Не вдалося завантажити підзадачу');
-      if (navigation.canGoBack()) navigation.goBack();
-      else navigation.navigate('RequestsList' as never);
+      // ВИПРАВЛЕННЯ: офлайн-фолбек — читаємо задачу з локальної WatermelonDB
+      try {
+        const localTasks = await collections.tasks.query().fetch();
+        const local = localTasks.find(
+          (t: any) => t.serverId === taskId || t.id === taskId
+        );
+        if (local) {
+          setTask({
+            id: (local as any).serverId || (local as any).id,
+            title: (local as any).title,
+            description: (local as any).description ?? '',
+            status: (local as any).status,
+            neededPeopleCount: (local as any).neededPeopleCount,
+            requiredRoles: (local as any).requiredRoles ?? [],
+            assignedCount: (local as any).assignedCount ?? 0,
+            priority: (local as any).priority ?? 0,
+            deadline: (local as any).deadline ?? undefined,
+            createdAt: (local as any).createdAtServer
+              ? new Date((local as any).createdAtServer).toISOString()
+              : new Date().toISOString(),
+            requestId: (local as any).requestServerId || (local as any).requestId || requestId || '',
+            assignments: [],
+          } as any);
+        } else {
+          Alert.alert('Помилка', 'Задача недоступна офлайн');
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate('RequestsList' as never);
+        }
+      } catch (dbErr) {
+        console.warn('[TaskDetailScreen] Помилка читання з БД:', dbErr);
+        Alert.alert('Помилка', 'Не вдалося завантажити підзадачу');
+        if (navigation.canGoBack()) navigation.goBack();
+        else navigation.navigate('RequestsList' as never);
+      }
     } finally {
       setLoading(false);
     }
-  }, [taskId, isNew]);
+  }, [taskId, isNew, requestId, navigation]);
 
   useEffect(() => {
     load();
@@ -288,17 +321,17 @@ export default function TaskDetailScreen() {
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;
   const isVolunteer = user?.systemRole === SystemRole.VOLUNTEER;
   const isCoordOrAdmin = isCoord || isAdmin;
-const statusLabels: Record<string, string> = {
-  en_route: 'В дорозі',
-  on_site: 'На місці',
-  accepted: 'Прийнято',
-  rejected: 'Відхилено',
-  withdrawn: 'Відкликав',
-  completed: 'Виконано',
-  applied: 'Подано',
-};
+  const statusLabels: Record<string, string> = {
+    en_route: 'В дорозі',
+    on_site: 'На місці',
+    accepted: 'Прийнято',
+    rejected: 'Відхилено',
+    withdrawn: 'Відкликав',
+    completed: 'Виконано',
+    applied: 'Подано',
+  };
 
-const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status === TaskStatus.PENDING_REVIEW);
+  const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status === TaskStatus.PENDING_REVIEW);
 
   return (
     <View style={{ flex: 1 }}>
@@ -373,9 +406,9 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                     <Text style={{ fontSize: 15, fontWeight: '600', color: Colors.text }}>
                       {a.user?.fullName || 'Користувач'}
                     </Text>
-                  <Text style={{ fontSize: 13, color: Colors.textSecondary }}>
-                    Статус: {statusLabels[a.status] || a.status || 'Невідомо'}
-                  </Text>
+                    <Text style={{ fontSize: 13, color: Colors.textSecondary }}>
+                      Статус: {statusLabels[a.status] || a.status || 'Невідомо'}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               )}
@@ -535,48 +568,39 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                 )}
               </View>
             ))}
-          </Card>
-        )}
-      </ScrollView>
+        </Card>
+      )}
+    </ScrollView>
 
-      {/* Delegate modal */}
-      <Modal visible={showDelegateModal} animationType="slide" onRequestClose={() => setShowDelegateModal(false)}>
-        <View style={{ flex: 1, backgroundColor: Colors.background }}>
-          <ScreenHeader title="Делегувати задачу" onBack={() => setShowDelegateModal(false)} />
-          <FlatList
-            data={orgs}
-            keyExtractor={o => o.id}
-            contentContainerStyle={{ padding: 16 }}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => handleDelegate(item.id, item.name)}
-                activeOpacity={0.8}
-              >
-                <Card style={{ padding: 12, marginBottom: 8 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text }}>{item.name}</Text>
-                  {item.description && (
-                    <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 3 }}>
-                      {item.description}
-                    </Text>
-                  )}
-                </Card>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </Modal>
+    {/* Delegate modal */}
+    <Modal visible={showDelegateModal} animationType="slide" onRequestClose={() => setShowDelegateModal(false)}>
+      <View style={{ flex: 1, backgroundColor: Colors.background }}>
+        <ScreenHeader title="Делегувати задачу" onBack={() => setShowDelegateModal(false)} />
+        <FlatList
+          data={orgs}
+          keyExtractor={o => o.id}
+          contentContainerStyle={{ padding: 16 }}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              onPress={() => handleDelegate(item.id, item.name)}
+              activeOpacity={0.8}
+            >
+              <Card style={{ padding: 12, marginBottom: 8 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text }}>{item.name}</Text>
+                {item.description && (
+                  <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 3 }}>
+                    {item.description}
+                  </Text>
+                )}
+              </Card>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
+    </Modal>
 
-      {/* Report modal */}
-      <TaskReportModal visible={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={handleReportSubmit} loading={uploading} />
-    </View>
+    {/* Report modal */}
+    <TaskReportModal visible={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={handleReportSubmit} loading={uploading} />
+  </View>
   );
 }
-
-const styles = StyleSheet.create({
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-});

@@ -1,12 +1,12 @@
-/**
+/** 
  * RequestsListScreen.tsx
- *
+ * 
  * БАГ-ФІКси:
  * 1. Заявки зникали при перезаході: catch → setRequests([]) очищував список
- *    навіть якщо вже були завантажені дані. Тепер зберігаємо старі дані при помилці.
+ * навіть якщо вже були завантажені дані. Тепер зберігаємо старі дані при помилці.
  * 2. Волонтер не може подати заявку: додано VOLUNTEER до canCreate з поясненням.
- *    Логіка: волонтер теж може потребувати допомоги (наприклад, зламалось авто
- *    на місії). Подавши заявку він стає "requester" по суті цієї заявки.
+ * Логіка: волонтер теж може потребувати допомоги (наприклад, зламалось авто
+ * на місії). Подавши заявку він стає "requester" по суті цієї заявки.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import * as Location from 'expo-location';
@@ -21,28 +21,31 @@ import { Colors, urgencyColors, statusColors, categoryLabels } from '../../utils
 import { Badge, Card, EmptyState, LoadingScreen, ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { SystemRole } from '../../types';
+import { collections } from '../../db/index';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { isServerReachable } from '../../api/axios';
 
 const STATUS_FILTERS = [
-  { value: undefined,                  label: 'Всі' },
-  { value: RequestStatus.OPEN,         label: 'Відкриті' },
-  { value: RequestStatus.IN_PROGRESS,  label: 'Виконуються' },
-  { value: RequestStatus.COMPLETED,    label: 'Завершені' },
+  { value: undefined, label: 'Всі' },
+  { value: RequestStatus.OPEN, label: 'Відкриті' },
+  { value: RequestStatus.IN_PROGRESS, label: 'Виконуються' },
+  { value: RequestStatus.COMPLETED, label: 'Завершені' },
 ];
 
 const URGENCY_FILTERS = [
   { value: RequestUrgency.CRITICAL, label: '🚨 Критична' },
-  { value: RequestUrgency.HIGH,     label: '⚠️ Висока' },
-  { value: RequestUrgency.MEDIUM,   label: '📋 Середня' },
-  { value: RequestUrgency.LOW,      label: '📌 Низька' },
+  { value: RequestUrgency.HIGH, label: '⚠️ Висока' },
+  { value: RequestUrgency.MEDIUM, label: '📋 Середня' },
+  { value: RequestUrgency.LOW, label: '📌 Низька' },
 ];
 
 const CATEGORY_FILTERS = [
-  { value: RequestCategory.MEDICAL,       label: '🏥 Медична' },
-  { value: RequestCategory.EVACUATION,    label: '🚗 Евакуація' },
-  { value: RequestCategory.LOGISTICS,     label: '📦 Логістика' },
-  { value: RequestCategory.MILITARY,      label: '🪖 Військова' },
-  { value: RequestCategory.HUMANITARIAN,  label: '🤝 Гуманітарна' },
-  { value: RequestCategory.SHELTER,       label: '🏠 Притулок' },
+  { value: RequestCategory.MEDICAL, label: '🏥 Медична' },
+  { value: RequestCategory.EVACUATION, label: '🚗 Евакуація' },
+  { value: RequestCategory.LOGISTICS, label: '📦 Логістика' },
+  { value: RequestCategory.MILITARY, label: '🪖 Військова' },
+  { value: RequestCategory.HUMANITARIAN, label: '🤝 Гуманітарна' },
+  { value: RequestCategory.SHELTER, label: '🏠 Притулок' },
   { value: RequestCategory.PSYCHOLOGICAL, label: '🧠 Психологічна' },
 ];
 
@@ -51,39 +54,93 @@ export default function RequestsListScreen() {
   const { user } = useAuth();
 
   const [requests, setRequests] = useState<Request[]>([]);
-  const [loading, setLoading]   = useState(true);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [hasError, setHasError] = useState(false);
-  const [search, setSearch]     = useState('');
-  const [statusFilter, setStatusFilter]     = useState<RequestStatus | undefined>();
-  const [urgencyFilter, setUrgencyFilter]   = useState<RequestUrgency | undefined>();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RequestStatus | undefined>();
+  const [urgencyFilter, setUrgencyFilter] = useState<RequestUrgency | undefined>();
   const [categoryFilter, setCategoryFilter] = useState<RequestCategory | undefined>();
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [regionSearch, setRegionSearch] = useState('');
   const [filteredRequests, setFilteredRequests] = useState<Request[]>([]);
-  
+
   // Reverse geocoding state for location names
   const [locationName, setLocationName] = useState<string | null>(null);
   const [geocodingLoading, setGeocodingLoading] = useState(false);
-  const [geocodingError, setGeocodingError]   = useState<string | null>(null);
+  const [geocodingError, setGeocodingError] = useState<string | null>(null);
 
   const activeFiltersCount = [urgencyFilter, categoryFilter, regionSearch].filter(Boolean).length;
-
+  
   const load = useCallback(async () => {
     setHasError(false);
     try {
-      const data = await requestsApi.getAll({
-        search: search || undefined,
-        status: statusFilter,
-        urgency: urgencyFilter,
-        category: categoryFilter,
-        limit: 50,
-      });
-      setRequests(data);
-    } catch {
+      if (isServerReachable) {
+        const data = await requestsApi.getAll({
+          search: search || undefined,
+          status: statusFilter,
+          urgency: urgencyFilter,
+          category: categoryFilter,
+          limit: 50,
+        });
+        setRequests(data);
+      } else {
+        // Офлайн → читаємо з локальної WatermelonDB (заповнюється SyncService.sync() після логіну)
+        const localReqs = await collections.requests.query().fetch();
+        if (localReqs.length > 0) {
+          const mapped = localReqs.map((r: any) => ({
+            id: r.serverId || r.id,
+            title: r.title,
+            description: r.description ?? '',
+            category: r.category,
+            urgency: r.urgency,
+            status: r.status,
+            requiredClearance: r.requiredClearance,
+            latitude: r.latitude ?? undefined,
+            longitude: r.longitude ?? undefined,
+            isLocationHidden: r.isLocationHidden ?? false,
+            tags: r.tags ?? [],
+            creatorId: r.creatorId ?? '',
+            createdAt: r.createdAtServer
+              ? new Date(r.createdAtServer).toISOString()
+              : new Date().toISOString(),
+          }));
+          // Фільтруємо локально якщо є фільтри
+          const filtered = mapped.filter((r: any) => {
+            if (statusFilter && r.status !== statusFilter) return false;
+            if (urgencyFilter && r.urgency !== urgencyFilter) return false;
+            if (categoryFilter && r.category !== categoryFilter) return false;
+            if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
+            return true;
+          });
+          setRequests(filtered as any);
+        }
+      }
+    } catch (error) {
       setHasError(true);
-      // БАГ-ФІКс: НЕ очищуємо список якщо вже є дані
-      // setRequests([]); ← видалено, щоб не "зникали" заявки при помилці мережі
+      // Якщо API вернув помилку — все одно пробуємо БД
+      if (!isServerReachable) {
+        const localReqs = await collections.requests.query().fetch();
+        if (localReqs.length > 0) {
+          setRequests(localReqs.map((r: any) => ({
+            id: r.serverId || r.id,
+            title: r.title,
+            description: r.description ?? '',
+            category: r.category,
+            urgency: r.urgency,
+            status: r.status,
+            requiredClearance: r.requiredClearance,
+            latitude: r.latitude ?? undefined,
+            longitude: r.longitude ?? undefined,
+            isLocationHidden: r.isLocationHidden ?? false,
+            tags: r.tags ?? [],
+            creatorId: r.creatorId ?? '',
+            createdAt: r.createdAtServer
+              ? new Date(r.createdAtServer).toISOString()
+              : new Date().toISOString(),
+          })) as any);
+        }
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -110,7 +167,7 @@ export default function RequestsListScreen() {
                 Math.pow(req.longitude - longitude, 2)
               );
               // Simple distance check (e.g., within 0.5 degrees lat/lon)
-              return distance < 0.5; 
+              return distance < 0.5;
             }
             return false;
           });
@@ -152,7 +209,7 @@ export default function RequestsListScreen() {
         if (address.region) parts.push(address.region);
         if (address.postalCode) parts.push(address.postalCode);
         if (address.country) parts.push(address.country);
-        
+
         const formattedName = parts.filter(Boolean).join(', ');
         setLocationName(formattedName || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
       } else {
@@ -210,7 +267,7 @@ export default function RequestsListScreen() {
       <View style={styles.searchRow}>
         <TextInput
           style={styles.searchInput}
-          placeholder="🔍  Пошук за назвою..."
+          placeholder="🔍 Пошук за назвою..."
           placeholderTextColor={Colors.textMuted}
           value={search}
           onChangeText={setSearch}
@@ -340,29 +397,29 @@ export default function RequestsListScreen() {
 
 function RequestCard({ request, onPress }: { request: Request; onPress: () => void }) {
   const urgency = urgencyColors[request.urgency];
-  const status  = statusColors[request.status];
-  
+  const status = statusColors[request.status];
+
   // Location state for this specific request card
   const [requestLocationName, setRequestLocationName] = useState<string | null>(null);
   const [requestGeocodingLoading, setRequestGeocodingLoading] = useState(false);
-  const [requestGeocodingError, setRequestGeocodingError]   = useState<string | null>(null);
+  const [requestGeocodingError, setRequestGeocodingError] = useState<string | null>(null);
 
   // Fetch location name when request coordinates change
   useEffect(() => {
     // Only attempt geocoding if we have valid numeric coordinates
     const lat = request.latitude;
     const lng = request.longitude;
-    if (lat !== undefined && 
-        lng !== undefined && 
-        typeof lat === 'number' && 
-        typeof lng === 'number') {
+    if (lat !== undefined &&
+      lng !== undefined &&
+      typeof lat === 'number' &&
+      typeof lng === 'number') {
       const fetchName = async () => {
         setRequestGeocodingLoading(true);
         setRequestGeocodingError(null);
         try {
-          const addresses = await Location.reverseGeocodeAsync({ 
-            latitude: lat, 
-            longitude: lng 
+          const addresses = await Location.reverseGeocodeAsync({
+            latitude: lat,
+            longitude: lng
           });
           if (addresses.length > 0) {
             const address = addresses[0];
@@ -372,21 +429,21 @@ function RequestCard({ request, onPress }: { request: Request; onPress: () => vo
             if (address.region && address.region !== address.city) parts.push(address.region); // Avoid duplication
             if (!request.isLocationHidden && address.street) parts.push(address.street);
             if (!request.isLocationHidden && address.name && address.name !== address.street && address.name !== address.city) parts.push(address.name); // Avoid duplication
-            
+
             const formattedName = parts.filter(Boolean).join(', ');
-            setRequestLocationName(formattedName || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+            setRequestLocationName(formattedName || `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`);
           } else {
-            setRequestLocationName(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+            setRequestLocationName(`${latitude.toFixed(3)}, ${longitude.toFixed(3)}`);
           }
         } catch (error) {
           console.error('Reverse geocoding error:', error);
           setRequestGeocodingError('Не вдалося визначити місце');
-          setRequestLocationName(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+          setRequestLocationName(`${latitude.toFixed(3)}, ${longitude.toFixed(3)}`);
         } finally {
           setRequestGeocodingLoading(false);
         }
       };
-      
+
       fetchName();
     } else {
       setRequestLocationName(null);
@@ -404,7 +461,7 @@ function RequestCard({ request, onPress }: { request: Request; onPress: () => vo
           </View>
           <View style={{ gap: 4, alignItems: 'flex-end' }}>
             <Badge label={urgency?.label ?? request.urgency} colorScheme="urgency" value={request.urgency} size="sm" />
-            <Badge label={status?.label ?? request.status}   colorScheme="status"  value={request.status}  size="sm" />
+            <Badge label={status?.label ?? request.status} colorScheme="status" value={request.status} size="sm" />
           </View>
         </View>
         {request.description ? (
