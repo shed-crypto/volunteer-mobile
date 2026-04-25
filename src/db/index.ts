@@ -17,7 +17,7 @@ import { ActionQueueItem } from './models/ActionQueueItem';
 const adapter = new SQLiteAdapter({
   schema: dbSchema,
   migrations: dbMigrations,
-  dbName: 'volunteer_help',
+  dbName: 'volunteer_help_v10',
   jsi: false,
   onSetUpError: (error) => {
     console.error('[WatermelonDB] Setup error:', error);

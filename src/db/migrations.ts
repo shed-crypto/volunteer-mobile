@@ -90,6 +90,11 @@ export const dbMigrations = schemaMigrations({
     {
       toVersion: 9,
       steps: []
+    },
+    // Міграція для версії 10 - оновлення схеми (вже в схемі, тому порожня)
+    {
+      toVersion: 10,
+      steps: []
     }
   ]
 });

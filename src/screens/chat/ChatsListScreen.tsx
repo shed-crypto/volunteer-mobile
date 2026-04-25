@@ -88,7 +88,16 @@ export default function ChatsListScreen() {
   // ─── Load chats from local DB ────────────────────────────────────────────
   const loadChatsLocal = useCallback(async (): Promise<Chat[]> => {
     try {
-      const localChats = await collections.chats.query().fetch();
+      let localChats: any[] = [];
+      try {
+        localChats = await collections.chats.query().fetch();
+      } catch (dbErr: any) {
+        if (dbErr.message?.includes('no such table')) {
+          OfflineLogger.cache('ChatsList: chats table not found (migration pending)');
+          return [];
+        }
+        throw dbErr;
+      }
       if (localChats.length === 0) return [];
       
       const mapped = localChats.map((c: any) => ({

@@ -4,7 +4,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const dbSchema = appSchema({
-  version: 9,
+  version: 10,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({

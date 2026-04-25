@@ -147,7 +147,7 @@ export default function TaskDetailScreen() {
             }));
           } else {
             ops.push(collections.taskAssignments.prepareCreate((ea: any) => {
-              ea.taskId = a.taskId;
+              ea.taskId = a.taskId || taskId;
               ea.userId = a.userId;
               ea.status = a.status;
               ea.fulfilledRole = a.fulfilledRole ?? null;
@@ -191,13 +191,17 @@ export default function TaskDetailScreen() {
       if (!isOffline) {
         try {
           const t = await tasksApi.getOne(taskId);
+          // Обчислюємо assignedCount якщо сервер не повертає
+          if (t.assignments && !t.assignedCount) {
+            t.assignedCount = t.assignments.filter((a: any) => a.status !== 'withdrawn').length;
+          }
           setTask(t);
           await saveTaskToDB(t);
           
           // Load reports
           try {
             const { taskReportsApi } = await import('../../api/task-reports.api');
-            const reps = await taskReportsApi.getAll(task.id);
+            const reps = await taskReportsApi.getAll(taskId);
             setReports(reps);
           } catch {
             // ignore reports error
@@ -376,7 +380,8 @@ export default function TaskDetailScreen() {
 
   const handleUpdateStatus = (newStatus: AssignmentStatus) => {
     if (!task) return;
-    const labels: Record<AssignmentStatus, string> = {
+    const labels: Record<string, string> = {
+      assigned: 'Призначено',
       applied: 'Подано заявку',
       accepted: 'Прийнято',
       rejected: 'Відхилено',

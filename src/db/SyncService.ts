@@ -335,7 +335,6 @@ export class SyncService {
               } else {
                 preparedOperations.push(
                   collections.taskAssignments.prepareCreate((a: any) => {
-                    a.id = sa.id;
                     a.taskId = st.id;
                     a.userId = sa.userId;
                     a.status = sa.status;
