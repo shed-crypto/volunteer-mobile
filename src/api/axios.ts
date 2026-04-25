@@ -1,5 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import NetInfo from '@react-native-community/netinfo';
+import { OfflineLogger } from '../utils/offlineLogger';
 
 /**
  * Базова URL бекенду.
@@ -23,11 +25,64 @@ console.log('[Axios] API_BASE_URL:', API_BASE_URL);
 
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 15000, // 15s → збільшено для стабільності
   headers: { 'Content-Type': 'application/json' },
 });
 
 console.log('[Axios] Axios instance created:', !!api);
+
+// ─── Server reachability tracking ──────────────────────────────────────────
+let _serverReachable = true;
+let _lastCheck = 0;
+const CHECK_INTERVAL = 10000; // 10 секунд між перевірками
+
+/**
+ * Перевіряє доступність сервера через /health/ping
+ */
+export async function checkServerReachable(): Promise<boolean> {
+  const now = Date.now();
+  if (now - _lastCheck < CHECK_INTERVAL) {
+    return _serverReachable; // Повертаємо кеш якщо перевіряли недавно
+  }
+
+  _lastCheck = now;
+
+  try {
+    const netState = await NetInfo.fetch();
+    if (!netState.isConnected) {
+      _serverReachable = false;
+      OfflineLogger.network('No network connection');
+      return false;
+    }
+
+    // Пінгуємо сервер — URL без /api префіксу
+    const pingUrl = API_BASE_URL.replace('/api', '') + '/health/ping';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(pingUrl, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    _serverReachable = response.status === 200;
+    OfflineLogger.network(`Server ping: ${_serverReachable ? 'OK' : 'FAIL'}`, { status: response.status });
+    return _serverReachable;
+  } catch (e) {
+    _serverReachable = false;
+    OfflineLogger.network('Server ping failed', { error: String(e) });
+    return false;
+  }
+}
+
+export function getServerReachable(): boolean {
+  return _serverReachable;
+}
+
+export function setServerReachable(value: boolean): void {
+  _serverReachable = value;
+}
 
 // ─── Request interceptor: attach Bearer token ──────────────────────────────
 api.interceptors.request.use(
@@ -54,11 +109,36 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 api.interceptors.response.use(
-  (response: AxiosResponse) => response,
+  (response: AxiosResponse) => {
+    OfflineLogger.network('Response OK', { url: response.config.url, status: response.status });
+    _serverReachable = true;
+    return response;
+  },
   async (error) => {
+    OfflineLogger.network('Response error', {
+      url: error.config?.url,
+      status: error.response?.status,
+      message: error.message,
+    });
+
+    // КРИТИЧНО: Якщо немає відповіді від сервера — це офлайн, НЕ редіректити на login
+    if (!error.response) {
+      OfflineLogger.network('No response from server — offline mode, skip auth redirect');
+      _serverReachable = false;
+      return Promise.reject(error);
+    }
+
     const originalRequest = error.config;
 
+    // Тільки якщо є реальна 401 відповідь від сервера — обробляти
     if (error.response?.status === 401 && !originalRequest._retry) {
+      // Перевірити чи є мережа взагалі
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+        OfflineLogger.auth('401 but no network — staying offline, skip redirect');
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
