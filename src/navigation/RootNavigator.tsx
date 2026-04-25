@@ -16,7 +16,7 @@ export type RootStackParamList = {
   CreateRequest: undefined;
   ChatRoom: { chatId: string; chatName?: string };
   UserProfile: { userId: string };
-  TaskDetail: { taskId: string; requestTitle?: string };
+  TaskDetail: { taskId: string; requestId?: string; requestTitle?: string };
   Organizations: undefined;
   OrgDetail: { orgId: string };
 };

@@ -21,6 +21,9 @@ import { Colors } from '../../utils/theme';
 import { EmptyState, LoadingScreen, ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../hooks/useSocket';
+import { useNetwork } from '../../context/NetworkContext';
+import { OfflineLogger } from '../../utils/offlineLogger';
+import { collections, database } from '../../db/index';
 import { formatDistanceToNow } from 'date-fns';
 import { uk } from 'date-fns/locale';
 
@@ -40,6 +43,8 @@ export default function ChatsListScreen() {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [unreadMap, setUnreadMap]   = useState<Record<string, number>>({});
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   // New chat modal
   const [showNewChat, setShowNewChat]   = useState(false);
@@ -78,20 +83,131 @@ export default function ChatsListScreen() {
     return () => clearTimeout(delayDebounceFn);
   }, [userSearch, user?.id]);
 
-  const load = useCallback(async () => {
+  const { isOffline } = useNetwork();
+
+  // ─── Load chats from local DB ────────────────────────────────────────────
+  const loadChatsLocal = useCallback(async (): Promise<Chat[]> => {
     try {
-      const data = await chatApi.getMyChats();
-      setChats(data);
-    } catch {
-      // залишаємо старі дані
+      const localChats = await collections.chats.query().fetch();
+      if (localChats.length === 0) return [];
+      
+      const mapped = localChats.map((c: any) => ({
+        id: c.serverId,
+        name: c.name,
+        type: c.type as ChatType,
+        participants: c.participants,
+        lastMessage: c.lastMessage,
+        unreadCount: c.unreadCount,
+        updatedAt: c.updatedAt ? new Date(c.updatedAt).toISOString() : undefined,
+        createdAt: c.createdAt ? new Date(c.createdAt).toISOString() : undefined,
+      })) as Chat[];
+      
+      OfflineLogger.cache(`ChatsList: loaded ${mapped.length} chats from DB`);
+      return mapped;
+    } catch (e) {
+      OfflineLogger.cache('ChatsList: local DB load failed', e);
+      return [];
+    }
+  }, []);
+
+  // ─── Save chats to local DB ──────────────────────────────────────────────
+  const saveChatsToDB = useCallback(async (chatsData: Chat[]) => {
+    try {
+      const existing = await collections.chats.query().fetch();
+      const existingMap = new Map(existing.map((c: any) => [c.serverId, c]));
+      const operations: any[] = [];
+
+      for (const chat of chatsData) {
+        const existingChat = existingMap.get(chat.id);
+        if (existingChat) {
+          operations.push(
+            existingChat.prepareUpdate((c: any) => {
+              c.name = chat.name ?? null;
+              c.type = chat.type;
+              c.participantsRaw = JSON.stringify(chat.participants ?? []);
+              c.lastMessageRaw = chat.lastMessage ? JSON.stringify(chat.lastMessage) : null;
+              c.unreadCount = chat.unreadCount ?? 0;
+              c.updatedAt = chat.updatedAt ? new Date(chat.updatedAt).getTime() : Date.now();
+              c.isSynced = true;
+              c.lastSyncedAt = Date.now();
+            })
+          );
+        } else {
+          operations.push(
+            collections.chats.prepareCreate((c: any) => {
+              c.serverId = chat.id;
+              c.name = chat.name ?? null;
+              c.type = chat.type;
+              c.participantsRaw = JSON.stringify(chat.participants ?? []);
+              c.lastMessageRaw = chat.lastMessage ? JSON.stringify(chat.lastMessage) : null;
+              c.unreadCount = chat.unreadCount ?? 0;
+              c.updatedAt = chat.updatedAt ? new Date(chat.updatedAt).getTime() : Date.now();
+              c.isSynced = true;
+              c.lastSyncedAt = Date.now();
+            })
+          );
+        }
+      }
+
+      if (operations.length > 0) {
+        await database.write(async () => {
+          await database.batch(...operations);
+        });
+        OfflineLogger.cache(`ChatsList: saved ${operations.length} chats to DB`);
+      }
+    } catch (e) {
+      OfflineLogger.cache('ChatsList: save to DB failed', e);
+    }
+  }, []);
+
+  const load = useCallback(async () => {
+    setHasError(false);
+    OfflineLogger.nav('ChatsListScreen.load() called');
+
+    try {
+      // КРОК 1: Load from local DB first (with ADAPTIVE timeout)
+      const timeout = isOffline ? 10000 : 300;
+      const localData = await Promise.race([
+        loadChatsLocal(),
+        new Promise<Chat[]>((resolve) => setTimeout(() => {
+          OfflineLogger.cache(`ChatsList: local DB timeout (${timeout}ms)`);
+          resolve([]);
+        }, timeout))
+      ]);
+      
+      if (localData.length > 0) {
+        OfflineLogger.nav('ChatsList: showing local data first');
+        setChats(localData);
+      }
+
+      // КРОК 2: If online, update from server AND save to DB
+      if (!isOffline) {
+        try {
+          const data = await chatApi.getMyChats();
+          setChats(data);
+          setIsOfflineMode(false);
+          OfflineLogger.nav(`ChatsList: loaded ${data.length} from server`);
+          
+          // ЗБЕРЕГТИ в БД для офлайн-роботи
+          await saveChatsToDB(data);
+        } catch (error) {
+          OfflineLogger.network('ChatsList: server load failed, keeping local data');
+          setHasError(true);
+        }
+      } else {
+        setIsOfflineMode(true);
+        OfflineLogger.nav('ChatsList: offline — showing cached data');
+      }
+    } catch (e) {
+      OfflineLogger.nav('ChatsList: unexpected error', e);
+      setHasError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [isOffline, loadChatsLocal, saveChatsToDB]);
 
   useEffect(() => { load(); }, [load]);
-
 
   // WebSocket: нові повідомлення → збільшуємо лічильник
   useSocket({

@@ -156,6 +156,8 @@ export interface Chat {
   relatedRequestId?: string;
   participants: User[];
   updatedAt: string;
+  lastMessage?: Message;
+  unreadCount?: number;
 }
 
 export interface Message {

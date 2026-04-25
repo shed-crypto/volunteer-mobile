@@ -57,17 +57,19 @@ export const dbMigrations = schemaMigrations({
       steps: [
         {
           type: 'create_table',
-          name: 'task_assignments',
-          columns: [
-            { name: 'task_id', type: 'string', isIndexed: true },
-            { name: 'user_id', type: 'string', isIndexed: true },
-            { name: 'status', type: 'string' },
-            { name: 'fulfilled_role', type: 'string', isOptional: true },
-            { name: 'assigned_at', type: 'number' },
-            { name: 'is_synced', type: 'boolean' },
-            { name: 'pending_action', type: 'string', isOptional: true },
-            { name: 'last_synced_at', type: 'number', isOptional: true }
-          ]
+          schema: {
+            name: 'task_assignments',
+            columns: [
+              { name: 'task_id', type: 'string', isIndexed: true },
+              { name: 'user_id', type: 'string', isIndexed: true },
+              { name: 'status', type: 'string' },
+              { name: 'fulfilled_role', type: 'string', isOptional: true },
+              { name: 'assigned_at', type: 'number' },
+              { name: 'is_synced', type: 'boolean' },
+              { name: 'pending_action', type: 'string', isOptional: true },
+              { name: 'last_synced_at', type: 'number', isOptional: true }
+            ]
+          }
         }
       ]
     },
@@ -83,6 +85,11 @@ export const dbMigrations = schemaMigrations({
           ]
         }
       ]
+    },
+    // Міграція для версії 9 - додавання таблиці chats (вже в схемі, тому порожня)
+    {
+      toVersion: 9,
+      steps: []
     }
   ]
 });

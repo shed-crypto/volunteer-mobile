@@ -1,19 +1,33 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '../utils/theme';
+import { useNetwork } from '../context/NetworkContext';
 
-interface NetworkStatusIndicatorProps {
-  isOnline: boolean;
-}
+export const NetworkStatusIndicator: React.FC = () => {
+  const { isConnected, isServerReachable } = useNetwork();
+  
+  // isConnected = є мережа (WiFi/мобільна)
+  // isServerReachable = сервер відповідає на ping
+  const isFullyOnline = isConnected && isServerReachable;
+  
+  // Якщо є мережа але сервер недоступний — жовтий індикатор
+  const indicatorColor = isFullyOnline 
+    ? Colors.success 
+    : isConnected 
+      ? Colors.warning  // Сервер недоступний, але є мережа
+      : Colors.error;   // Немає мережі
+      
+  const statusText = isFullyOnline 
+    ? 'Онлайн' 
+    : isConnected 
+      ? 'Сервер недоступний' 
+      : 'Офлайн';
 
-export const NetworkStatusIndicator: React.FC<NetworkStatusIndicatorProps> = ({ 
-  isOnline
-}) => {
   return (
     <View style={styles.container}>
-      <View style={[styles.indicator, { backgroundColor: isOnline ? Colors.success : Colors.error }]} />
-      <Text style={styles.statusText}>
-        {isOnline ? 'Онлайн' : 'Офлайн'}
+      <View style={[styles.indicator, { backgroundColor: indicatorColor }]} />
+      <Text style={[styles.statusText, { color: indicatorColor }]}>
+        {statusText}
       </Text>
     </View>
   );

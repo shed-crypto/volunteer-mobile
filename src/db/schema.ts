@@ -4,7 +4,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const dbSchema = appSchema({
-  version: 8,
+  version: 9,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -112,6 +112,22 @@ export const dbSchema = appSchema({
         { name: 'photo_uris', type: 'string', isOptional: true }, // JSON array
         { name: 'created_at', type: 'number' },
         { name: 'is_sent', type: 'boolean' },
+      ],
+    }),
+
+    // ─── Чати (кеш для списку чатів) ─────────────────────────────────────────
+    tableSchema({
+      name: 'chats',
+      columns: [
+        { name: 'server_id', type: 'string', isIndexed: true },
+        { name: 'name', type: 'string', isOptional: true },
+        { name: 'type', type: 'string' },
+        { name: 'participants_raw', type: 'string', isOptional: true }, // JSON array
+        { name: 'last_message_raw', type: 'string', isOptional: true }, // JSON object
+        { name: 'unread_count', type: 'number' },
+        { name: 'updated_at', type: 'number' },
+        { name: 'is_synced', type: 'boolean' },
+        { name: 'last_synced_at', type: 'number', isOptional: true },
       ],
     }),
 

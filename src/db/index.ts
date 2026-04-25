@@ -9,6 +9,7 @@ import { RequestModel } from './models/RequestModel';
 import { TaskModel } from './models/TaskModel';
 import { TaskAssignmentModel } from './models/TaskAssignmentModel';
 import { ChatMessageModel } from './models/ChatMessageModel';
+import { ChatModel } from './models/ChatModel';
 import { UserCacheModel } from './models/UserCacheModel';
 import { PendingReport } from './models/PendingReport';
 import { ActionQueueItem } from './models/ActionQueueItem';
@@ -30,6 +31,7 @@ export const database = new Database({
     TaskModel,
     TaskAssignmentModel,
     ChatMessageModel,
+    ChatModel,
     UserCacheModel,
     PendingReport,
     ActionQueueItem,
@@ -42,6 +44,7 @@ export const collections = {
   tasks: database.collections.get('tasks'),
   taskAssignments: database.collections.get('task_assignments'),
   chatMessages: database.collections.get('chat_messages'),
+  chats: database.collections.get('chats'),
   usersCache: database.collections.get('users_cache'),
   pendingReports: database.collections.get('pending_reports'),
   actionQueue: database.collections.get('action_queue'),

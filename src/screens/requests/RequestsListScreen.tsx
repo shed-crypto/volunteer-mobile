@@ -20,11 +20,12 @@ import { Request, RequestStatus, RequestCategory, RequestUrgency } from '../../t
 import { Colors, urgencyColors, statusColors, categoryLabels } from '../../utils/theme';
 import { Badge, Card, EmptyState, LoadingScreen, ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
+import { useNetwork } from '../../context/NetworkContext';
+import { OfflineLogger } from '../../utils/offlineLogger';
 import { SystemRole } from '../../types';
-import { collections } from '../../db/index';
-import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-// import { isServerReachable } from '../../api/axios';
-const isServerReachable = true; // Placeholder: fix this logic based on your network status check
+  import { collections } from '../../db/index';
+  import { SyncService } from '../../db/SyncService';
+  import { database } from '../../db/index';
 
 const STATUS_FILTERS = [
   { value: undefined,                  label: 'Всі' },
@@ -65,6 +66,7 @@ export default function RequestsListScreen() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [regionSearch, setRegionSearch] = useState('');
   const [filteredRequests, setFilteredRequests] = useState<Request[]>([]);
+  const { isOffline } = useNetwork();
   
   // Reverse geocoding state for location names
   const [locationName, setLocationName] = useState<string | null>(null);
@@ -73,80 +75,168 @@ export default function RequestsListScreen() {
 
   const activeFiltersCount = [urgencyFilter, categoryFilter, regionSearch].filter(Boolean).length;
 
+  // ─── Load from local DB helper ───────────────────────────────────────────
+  const loadFromLocalDB = useCallback(async (): Promise<Request[]> => {
+    try {
+      const localReqs = await collections.requests.query().fetch();
+      if (localReqs.length === 0) return [];
+      
+      const mapped = localReqs.map((r: any) => ({
+        id: r.serverId || r.id,
+        title: r.title,
+        description: r.description ?? '',
+        category: r.category,
+        urgency: r.urgency,
+        status: r.status,
+        requiredClearance: r.requiredClearance,
+        latitude: r.latitude ?? undefined,
+        longitude: r.longitude ?? undefined,
+        isLocationHidden: r.isLocationHidden ?? false,
+        tags: r.tags ?? [],
+        creatorId: r.creatorId ?? '',
+        createdAt: r.createdAtServer
+          ? new Date(r.createdAtServer).toISOString()
+          : new Date().toISOString(),
+      }));
+      
+      // Apply filters locally
+      return mapped.filter((r: any) => {
+        if (statusFilter && r.status !== statusFilter) return false;
+        if (urgencyFilter && r.urgency !== urgencyFilter) return false;
+        if (categoryFilter && r.category !== categoryFilter) return false;
+        if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
+        return true;
+      }) as Request[];
+    } catch (e) {
+      OfflineLogger.cache('RequestsList: local DB load failed', e);
+      return [];
+    }
+  }, [search, statusFilter, urgencyFilter, categoryFilter]);
+
+  // ─── Helper: save server data to local DB ───────────────────────────────
+  const saveRequestsToLocalDB = useCallback(async (requestsData: Request[]) => {
+    try {
+      OfflineLogger.cache(`RequestsList: saving ${requestsData.length} requests to DB`);
+      const existing = await collections.requests.query().fetch();
+      const existingMap = new Map(existing.map((r: any) => [r.serverId, r]));
+      const operations: any[] = [];
+
+      for (const req of requestsData) {
+        const existingReq = existingMap.get(req.id);
+        if (existingReq) {
+          operations.push(
+            existingReq.prepareUpdate((r: any) => {
+              r.title = req.title;
+              r.description = req.description ?? null;
+              r.category = req.category;
+              r.urgency = req.urgency;
+              r.status = req.status;
+              r.requiredClearance = req.requiredClearance ?? 'local';
+              r.latitude = req.latitude ?? null;
+              r.longitude = req.longitude ?? null;
+              r.isLocationHidden = req.isLocationHidden ?? false;
+              r.tagsRaw = JSON.stringify(req.tags ?? []);
+              r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
+              r.isSynced = true;
+              r.pendingAction = null;
+              r.lastSyncedAt = Date.now();
+            })
+          );
+        } else {
+          operations.push(
+            collections.requests.prepareCreate((r: any) => {
+              r.serverId = req.id;
+              r.title = req.title;
+              r.description = req.description ?? null;
+              r.category = req.category;
+              r.urgency = req.urgency;
+              r.status = req.status;
+              r.requiredClearance = req.requiredClearance ?? 'local';
+              r.creatorId = req.creatorId ?? null;
+              r.latitude = req.latitude ?? null;
+              r.longitude = req.longitude ?? null;
+              r.isLocationHidden = req.isLocationHidden ?? false;
+              r.tagsRaw = JSON.stringify(req.tags ?? []);
+              r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
+              r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
+              r.isSynced = true;
+              r.pendingAction = null;
+              r.lastSyncedAt = Date.now();
+            })
+          );
+        }
+      }
+
+      if (operations.length > 0) {
+        await database.write(async () => {
+          await database.batch(...operations);
+        });
+        OfflineLogger.cache(`RequestsList: saved ${operations.length} operations to DB`);
+      }
+    } catch (e) {
+      OfflineLogger.cache('RequestsList: save to DB failed', e);
+    }
+  }, []);
+
+  // ─── Helper: load from local DB with ADAPTIVE timeout ────────────────────
+  // ОНЛАЙН: 300мс (швидкий fallback, дані є — покажемо, немає — йдемо на сервер)
+  // ОФЛАЙН: 10000мс (чекаємо доки БД буде готова)
+  const loadFromLocalDBWithTimeout = useCallback(async (): Promise<Request[]> => {
+    const timeout = isOffline ? 10000 : 300;
+    return Promise.race([
+      loadFromLocalDB(),
+      new Promise<Request[]>((resolve) => setTimeout(() => {
+        OfflineLogger.cache(`RequestsList: local DB timeout (${timeout}ms, ${isOffline ? 'offline' : 'online'})`);
+        resolve([]);
+      }, timeout))
+    ]);
+  }, [loadFromLocalDB, isOffline]);
+
+  // ─── Main load: OFFLINE-FIRST ────────────────────────────────────────────
   const load = useCallback(async () => {
     setHasError(false);
+    OfflineLogger.nav('RequestsListScreen.load() called');
+
     try {
-      if (isServerReachable) {
-        const data = await requestsApi.getAll({
-          search: search || undefined,
-          status: statusFilter,
-          urgency: urgencyFilter,
-          category: categoryFilter,
-          limit: 50,
-        });
-        setRequests(data);
-      } else {
-        // Офлайн → читаємо з локальної WatermelonDB (заповнюється SyncService.sync() після логіну)
-        const localReqs = await collections.requests.query().fetch();
-        if (localReqs.length > 0) {
-          const mapped = localReqs.map((r: any) => ({
-            id: r.serverId || r.id,
-            title: r.title,
-            description: r.description ?? '',
-            category: r.category,
-            urgency: r.urgency,
-            status: r.status,
-            requiredClearance: r.requiredClearance,
-            latitude: r.latitude ?? undefined,
-            longitude: r.longitude ?? undefined,
-            isLocationHidden: r.isLocationHidden ?? false,
-            tags: r.tags ?? [],
-            creatorId: r.creatorId ?? '',
-            createdAt: r.createdAtServer
-              ? new Date(r.createdAtServer).toISOString()
-              : new Date().toISOString(),
-          }));
-          // Фільтруємо локально якщо є фільтри
-          const filtered = mapped.filter((r: any) => {
-            if (statusFilter && r.status !== statusFilter) return false;
-            if (urgencyFilter && r.urgency !== urgencyFilter) return false;
-            if (categoryFilter && r.category !== categoryFilter) return false;
-            if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
-            return true;
+      // КРОК 1: Load from local DB first (with ADAPTIVE timeout)
+      const localData = await loadFromLocalDBWithTimeout();
+      if (localData.length > 0) {
+        OfflineLogger.nav('RequestsList: showing local data first');
+        setRequests(localData);
+      }
+
+      // КРОК 2: If online, update from server AND save to DB
+      if (!isOffline) {
+        try {
+          const data = await requestsApi.getAll({
+            search: search || undefined,
+            status: statusFilter,
+            urgency: urgencyFilter,
+            category: categoryFilter,
+            limit: 50,
           });
-          setRequests(filtered as any);
+          setRequests(data);
+          OfflineLogger.nav(`RequestsList: loaded ${data.length} from server`);
+          
+          // ЗБЕРЕГТИ в БД для офлайн-роботи
+          await saveRequestsToLocalDB(data);
+        } catch (error) {
+          OfflineLogger.network('RequestsList: server load failed, keeping local data');
+          setHasError(true);
+          // Local data already shown, no need to clear
         }
+      } else {
+        OfflineLogger.nav('RequestsList: offline — showing cached data');
       }
-    } catch (error) {
+    } catch (e) {
+      OfflineLogger.nav('RequestsList: unexpected error', e);
       setHasError(true);
-      // Якщо API вернув помилку — все одно пробуємо БД
-      if (!isServerReachable) {
-        const localReqs = await collections.requests.query().fetch();
-        if (localReqs.length > 0) {
-          setRequests(localReqs.map((r: any) => ({
-            id: r.serverId || r.id,
-            title: r.title,
-            description: r.description ?? '',
-            category: r.category,
-            urgency: r.urgency,
-            status: r.status,
-            requiredClearance: r.requiredClearance,
-            latitude: r.latitude ?? undefined,
-            longitude: r.longitude ?? undefined,
-            isLocationHidden: r.isLocationHidden ?? false,
-            tags: r.tags ?? [],
-            creatorId: r.creatorId ?? '',
-            createdAt: r.createdAtServer
-              ? new Date(r.createdAtServer).toISOString()
-              : new Date().toISOString(),
-          })) as any);
-        }
-      }
     } finally {
+      // КРИТИЧНО: завжди знімати loading, навіть якщо БД зависла
       setLoading(false);
       setRefreshing(false);
     }
-  }, [search, statusFilter, urgencyFilter, categoryFilter]);
+  }, [search, statusFilter, urgencyFilter, categoryFilter, isOffline, loadFromLocalDBWithTimeout, saveRequestsToLocalDB]);
 
   useEffect(() => { load(); }, [load]);
 

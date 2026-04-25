@@ -6,6 +6,8 @@ import { requestsApi } from '../api/requests.api';
 import { tasksApi } from '../api/tasks.api';
 import { chatApi } from '../api/chat.api';
 import api from '../api/axios';
+import { getServerReachable } from '../api/axios';
+import { OfflineLogger } from '../utils/offlineLogger';
 
 /**
  * SyncService — Offline-First архітектура (NFR-03).
@@ -21,8 +23,19 @@ export class SyncService {
   private static isSyncing = false;
 
   static async sync(): Promise<{ pushed: number; pulled: number }> {
-    if (this.isSyncing) return { pushed: 0, pulled: 0 };
+    if (this.isSyncing) {
+      OfflineLogger.sync('Sync already in progress, skipping');
+      return { pushed: 0, pulled: 0 };
+    }
+
+    // Перевірити чи сервер доступний
+    if (!getServerReachable()) {
+      OfflineLogger.sync('Server unreachable, skipping sync');
+      return { pushed: 0, pulled: 0 };
+    }
+
     this.isSyncing = true;
+    OfflineLogger.sync('Starting sync...');
 
     let pushed = 0;
     let pulled = 0;
@@ -30,8 +43,9 @@ export class SyncService {
     try {
       pushed = await this.push();
       pulled = await this.pull();
+      OfflineLogger.sync(`Sync completed: pushed=${pushed}, pulled=${pulled}`);
     } catch (err) {
-      console.warn('[SyncService] Помилка синхронізації:', err);
+      OfflineLogger.sync('Sync error:', err);
     } finally {
       this.isSyncing = false;
     }
@@ -46,6 +60,12 @@ export class SyncService {
   private static async push(): Promise<number> {
     let count = 0;
     const preparedOps: any[] = [];
+
+    // Перевірити сервер перед push
+    if (!getServerReachable()) {
+      OfflineLogger.sync('Push skipped — server unreachable');
+      return 0;
+    }
 
     // 1. Нові заявки (created offline)
     try {
@@ -78,10 +98,7 @@ export class SyncService {
           );
           count++;
         } catch (err) {
-          console.warn(
-            `[SyncService] Не вдалося push заявку "${(req as any).title}":`,
-            err
-          );
+          OfflineLogger.sync(`Push request failed: ${(req as any).title}`, err);
         }
       }
     } catch (err) {
@@ -114,10 +131,7 @@ export class SyncService {
           );
           count++;
         } catch (err) {
-          console.warn(
-            `[SyncService] Не вдалося push задачу "${(task as any).title}":`,
-            err
-          );
+          OfflineLogger.sync(`Push task failed: ${(task as any).title}`, err);
         }
       }
     } catch (err) {
@@ -145,7 +159,7 @@ export class SyncService {
           );
           count++;
         } catch (err) {
-          console.warn('[SyncService] Не вдалося надіслати повідомлення:', err);
+          OfflineLogger.sync('Push message failed:', err);
         }
       }
     } catch (err) {
@@ -158,9 +172,9 @@ export class SyncService {
         await database.write(async () => {
           await database.batch(...preparedOps);
         });
-        console.log(`[SyncService.push] Виконано ${preparedOps.length} операцій`);
+        OfflineLogger.sync(`Push completed: ${preparedOps.length} operations`);
       } catch (err) {
-        console.warn('[SyncService] Помилка виконання batch оновлень:', err);
+        OfflineLogger.sync('Push batch error:', err);
       }
     }
 
@@ -170,16 +184,22 @@ export class SyncService {
   // ── PULL: сервер → локальна БД ────────────────────────────────────────────
 
   private static async pull(): Promise<number> {
-    console.log('[SyncService.pull] Початок синхронізації');
+    OfflineLogger.sync('Pull starting...');
     let count = 0;
+
+    // Перевірити сервер перед pull
+    if (!getServerReachable()) {
+      OfflineLogger.sync('Pull skipped — server unreachable');
+      return 0;
+    }
 
     // 1. Завантажуємо ВСІ заявки з сервера
     let serverRequests: any[] = [];
     try {
       serverRequests = await requestsApi.getAll({ limit: 200, offset: 0 });
-      console.log(`[SyncService.pull] Отримано ${serverRequests.length} заявок з сервера`);
+      OfflineLogger.sync(`Pull: got ${serverRequests.length} requests from server`);
     } catch (err) {
-      console.error('[SyncService.pull] Помилка при отриманні заявок:', err);
+      OfflineLogger.sync('Pull requests error:', err);
       return count;
     }
 
@@ -188,7 +208,7 @@ export class SyncService {
     try {
       localRequests = await collections.requests.query().fetch();
     } catch (err) {
-      console.error('[SyncService.pull] Помилка при зчитуванні локальних заявок:', err);
+      OfflineLogger.sync('Pull local requests error:', err);
       return count;
     }
 
@@ -243,7 +263,7 @@ export class SyncService {
     try {
       localTasks = await collections.tasks.query().fetch();
     } catch (err) {
-      console.error('[SyncService.pull] Помилка при зчитуванні задач:', err);
+      OfflineLogger.sync('Pull local tasks error:', err);
     }
     const localTasksMap = new Map(localTasks.map((t) => [t.serverId, t]));
 
@@ -291,7 +311,7 @@ export class SyncService {
           }
         }
       } catch (err) {
-        console.warn(`[SyncService.pull] Помилка для заявки ${req.serverId}:`, err);
+        OfflineLogger.sync(`Pull tasks error for request ${req.serverId}:`, err);
       }
     }
 
@@ -302,7 +322,7 @@ export class SyncService {
       try {
         localMessages = await collections.chatMessages.query().fetch();
       } catch (err) {
-        console.error('[SyncService.pull] Помилка при зчитуванні повідомлень:', err);
+        OfflineLogger.sync('Pull local messages error:', err);
       }
       const localMessagesMap = new Map(localMessages.map((m) => [m.serverId, m]));
 
@@ -348,7 +368,7 @@ export class SyncService {
             }
           }
         } catch (err) {
-          console.warn(`[SyncService.pull] Помилка для чату ${chat.id}:`, err);
+          OfflineLogger.sync(`Pull chat error ${chat.id}:`, err);
         }
       }
     } catch (err) {
@@ -357,20 +377,18 @@ export class SyncService {
 
     // 7. Один database.batch() — атомарно, без вкладених write
     if (preparedOperations.length > 0) {
-      console.log(
-        `[SyncService.pull] Виконання ${preparedOperations.length} операцій через batch...`
-      );
+      OfflineLogger.sync(`Pull: executing ${preparedOperations.length} batch operations...`);
       try {
         await database.write(async () => {
           await database.batch(...preparedOperations);
         });
-        console.log('[SyncService.pull] Усі операції виконано успішно');
+        OfflineLogger.sync('Pull batch completed successfully');
       } catch (err) {
-        console.error('[SyncService.pull] Помилка виконання batch операцій:', err);
+        OfflineLogger.sync('Pull batch error:', err);
       }
     }
 
-    console.log(`[SyncService.pull] Завершено, оброблено ${count} записів`);
+    OfflineLogger.sync(`Pull completed: ${count} records processed`);
     return count;
   }
 

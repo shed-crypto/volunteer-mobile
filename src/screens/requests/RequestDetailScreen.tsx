@@ -17,6 +17,8 @@ import {
   LoadingScreen, ScreenHeader, ProgressBar,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
+import { useNetwork } from '../../context/NetworkContext';
+import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections } from '../../db/index';
 import { database } from '../../db/index';
 
@@ -39,10 +41,11 @@ export default function RequestDetailScreen() {
   const [tasks, setTasks]     = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const { isOffline } = useNetwork();
 
-  // ─── Load tasks ────────────────────────────────────────────────────────────
-  const loadTasks = useCallback(async (requestId: string) => {
-    // Спочатку шукаємо в локальній БД
+  // ─── Load tasks from local DB ────────────────────────────────────────────
+  const loadTasksLocal = useCallback(async (requestId: string): Promise<Task[]> => {
     try {
       const localTasks = await collections.tasks.query().fetch();
       const requestTasks = localTasks.filter((t: any) => t.requestId === requestId || t.requestServerId === requestId);
@@ -62,76 +65,230 @@ export default function RequestDetailScreen() {
         }));
       }
     } catch (localError) {
-      console.log('Local DB lookup failed:', localError);
+      OfflineLogger.cache('Local tasks load failed:', localError);
     }
-
-    // Якщо немає локальних даних - повертаємо порожній масив
     return [];
   }, []);
 
-  const load = useCallback(async () => {
+  // ─── Load request from local DB ────────────────────────────────────────────
+  const loadRequestLocal = useCallback(async (requestId: string): Promise<Request | null> => {
     try {
-      const req = await requestsApi.getOne(requestId);
-      setRequest(req);
+      const localReqs = await collections.requests.query().fetch();
+      const local = localReqs.find((r: any) => r.serverId === requestId || r.id === requestId);
+      if (local) {
+        OfflineLogger.cache('Loaded request from local DB', { id: local.serverId || local.id });
+        return {
+          id: local.serverId ?? local.id,
+          title: local.title,
+          description: local.description ?? '',
+          category: local.category as any,
+          urgency: local.urgency as any,
+          status: local.status as any,
+          requiredClearance: local.requiredClearance as any,
+          latitude: local.latitude ?? undefined,
+          longitude: local.longitude ?? undefined,
+          isLocationHidden: local.isLocationHidden,
+          tags: local.tags,
+          creatorId: local.creatorId ?? '',
+          createdAt: local.createdAtServer ? new Date(local.createdAtServer).toISOString() : '',
+        } as any;
+      }
+    } catch (e) {
+      OfflineLogger.cache('Local request load failed:', e);
+    }
+    return null;
+  }, []);
+
+  // ─── Helper: load from local DB with timeout (migration may block query) ──
+  const loadLocalWithTimeout = useCallback(async () => {
+    return Promise.race([
+      Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
+      new Promise<[Request | null, Task[]]>((resolve) => 
+        setTimeout(() => {
+          OfflineLogger.cache('RequestDetail: local DB timeout (migration?)');
+          resolve([null, []]);
+        }, 2000)
+      )
+    ]);
+  }, [requestId, loadRequestLocal, loadTasksLocal]);
+
+  // ─── Helper: save request to local DB ────────────────────────────────────
+  const saveRequestToDB = useCallback(async (req: Request) => {
+    try {
+      const existing = await collections.requests.query().fetch();
+      const existingReq = existing.find((r: any) => r.serverId === req.id);
       
-      // Завантажуємо задачі з сервера
-      try {
-        const serverTasks = await tasksApi.getByRequest(requestId);
-        setTasks(serverTasks);
-        
-      // WatermelonDB-кеш оновить SyncService у фоні — не блокуємо UI тут
-      } catch (serverError) {
-        console.error('Failed to load tasks from server:', serverError);
-        // Якщо не вдалося завантажити з сервера, спробуємо з локальної БД
-        const localTasks = await loadTasks(requestId);
-        setTasks(localTasks);
+      if (existingReq) {
+        await database.write(async () => {
+          await existingReq.update((r: any) => {
+            r.title = req.title;
+            r.description = req.description ?? null;
+            r.category = req.category;
+            r.urgency = req.urgency;
+            r.status = req.status;
+            r.requiredClearance = req.requiredClearance ?? 'local';
+            r.latitude = req.latitude ?? null;
+            r.longitude = req.longitude ?? null;
+            r.isLocationHidden = req.isLocationHidden ?? false;
+            r.tagsRaw = JSON.stringify(req.tags ?? []);
+            r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
+            r.isSynced = true;
+            r.pendingAction = null;
+            r.lastSyncedAt = Date.now();
+          });
+        });
+      } else {
+        await database.write(async () => {
+          await collections.requests.create((r: any) => {
+            r.serverId = req.id;
+            r.title = req.title;
+            r.description = req.description ?? null;
+            r.category = req.category;
+            r.urgency = req.urgency;
+            r.status = req.status;
+            r.requiredClearance = req.requiredClearance ?? 'local';
+            r.creatorId = req.creatorId ?? null;
+            r.latitude = req.latitude ?? null;
+            r.longitude = req.longitude ?? null;
+            r.isLocationHidden = req.isLocationHidden ?? false;
+            r.tagsRaw = JSON.stringify(req.tags ?? []);
+            r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
+            r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
+            r.isSynced = true;
+            r.pendingAction = null;
+            r.lastSyncedAt = Date.now();
+          });
+        });
       }
-    } catch (error) {
-      // Спробуємо завантажити з локальної БД (offline fallback)
-      try {
-        // Add timeout to prevent infinite loading
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Database query timeout')), 5000)
-        );
-        
-        const localReqsPromise = collections.requests.query().fetch();
-        const localReqs = await Promise.race([localReqsPromise, timeoutPromise]) as any[];
-        const local = localReqs.find((r: any) => r.serverId === requestId || r.id === requestId);
-        if (local) {
-          setRequest({
-            id: local.serverId ?? local.id,
-            title: local.title,
-            description: local.description ?? '',
-            category: local.category as any,
-            urgency: local.urgency as any,
-            status: local.status as any,
-            requiredClearance: local.requiredClearance as any,
-            latitude: local.latitude ?? undefined,
-            longitude: local.longitude ?? undefined,
-            isLocationHidden: local.isLocationHidden,
-            tags: local.tags,
-            creatorId: local.creatorId ?? '',
-            createdAt: local.createdAtServer ? new Date(local.createdAtServer).toISOString() : '',
-          } as any);
-          
-          // Завантажуємо задачі з локальної БД
-          const localTasks = await loadTasks(requestId);
-          setTasks(localTasks);
+      OfflineLogger.cache(`RequestDetail: saved request ${req.id} to DB`);
+    } catch (e) {
+      OfflineLogger.cache('RequestDetail: save request to DB failed', e);
+    }
+  }, []);
+
+  // ─── Helper: save tasks to local DB ──────────────────────────────────────
+  const saveTasksToDB = useCallback(async (taskList: Task[]) => {
+    try {
+      const existing = await collections.tasks.query().fetch();
+      const existingMap = new Map(existing.map((t: any) => [t.serverId, t]));
+      const operations: any[] = [];
+
+      for (const task of taskList) {
+        const existingTask = existingMap.get(task.id);
+        if (existingTask) {
+          operations.push(
+            existingTask.prepareUpdate((t: any) => {
+              t.title = task.title;
+              t.description = task.description ?? null;
+              t.status = task.status;
+              t.neededPeopleCount = task.neededPeopleCount;
+              t.requiredRolesRaw = JSON.stringify(task.requiredRoles ?? []);
+              t.assignedCount = task.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+              t.priority = task.priority ?? 0;
+              t.deadline = task.deadline ? new Date(task.deadline).getTime() : null;
+              t.isSynced = true;
+              t.pendingAction = null;
+              t.lastSyncedAt = Date.now();
+            })
+          );
         } else {
-          Alert.alert('Помилка', 'Не вдалося завантажити заявку');
-          if (navigation.canGoBack()) navigation.goBack();
-          else navigation.navigate('RequestsList' as never);
+          operations.push(
+            collections.tasks.prepareCreate((t: any) => {
+              t.serverId = task.id;
+              t.requestServerId = requestId;
+              t.title = task.title;
+              t.description = task.description ?? null;
+              t.status = task.status;
+              t.neededPeopleCount = task.neededPeopleCount ?? 1;
+              t.requiredRolesRaw = JSON.stringify(task.requiredRoles ?? []);
+              t.assignedCount = task.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+              t.priority = task.priority ?? 0;
+              t.deadline = task.deadline ? new Date(task.deadline).getTime() : null;
+              t.isSynced = true;
+              t.pendingAction = null;
+              t.lastSyncedAt = Date.now();
+            })
+          );
         }
-      } catch (dbError) {
-        Alert.alert('Помилка', 'Не вдалося завантажити заявку: ' + (dbError as Error).message);
-        if (navigation.canGoBack()) navigation.goBack();
-        else navigation.navigate('RequestsList' as never);
       }
+
+      if (operations.length > 0) {
+        await database.write(async () => {
+          await database.batch(...operations);
+        });
+        OfflineLogger.cache(`RequestDetail: saved ${operations.length} tasks to DB`);
+      }
+    } catch (e) {
+      OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
+    }
+  }, [requestId]);
+
+  // ─── Main load: OFFLINE-FIRST ────────────────────────────────────────────
+  const load = useCallback(async () => {
+    OfflineLogger.nav(`RequestDetailScreen.load() called, requestId=${requestId}`);
+    
+    try {
+      // КРОК 1: Завантажити з локальної БД (з АДАПТИВНИМ таймаутом)
+      // Онлайн: 300мс, Офлайн: 10000мс
+      const timeout = isOffline ? 10000 : 300;
+      const [localRequest, localTasks] = await Promise.race([
+        Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
+        new Promise<[null, []]>((resolve) => 
+          setTimeout(() => {
+            OfflineLogger.cache(`RequestDetail: local DB timeout (${timeout}ms)`);
+            resolve([null, []]);
+          }, timeout)
+        )
+      ]);
+      
+      if (localRequest) {
+        OfflineLogger.nav('Showing local data first (offline-first)');
+        setRequest(localRequest);
+        setTasks(localTasks);
+        setIsOfflineMode(true);
+        setLoading(false);
+      }
+
+      // КРОК 2: Якщо є мережа — оновити з сервера
+      if (!isOffline) {
+        try {
+          OfflineLogger.nav('Fetching from server...');
+          const req = await requestsApi.getOne(requestId);
+          setRequest(req);
+          setIsOfflineMode(false);
+          
+          // ЗБЕРЕГТИ заявку в БД
+          await saveRequestToDB(req);
+          
+          try {
+            const serverTasks = await tasksApi.getByRequest(requestId);
+            setTasks(serverTasks);
+            // ЗБЕРЕГТИ задачі в БД
+            await saveTasksToDB(serverTasks);
+          } catch (serverTaskError) {
+            OfflineLogger.network('Server tasks failed, keeping local tasks');
+            // Залишаємо локальні задачі
+          }
+        } catch (serverError) {
+          OfflineLogger.network('Server request failed:', serverError);
+          if (!localRequest) {
+            // Немає ні локальних, ні серверних даних
+            Alert.alert('Помилка', 'Не вдалося завантажити заявку');
+            if (navigation.canGoBack()) navigation.goBack();
+            else navigation.navigate('RequestsList' as never);
+          }
+        }
+      } else {
+        OfflineLogger.nav('Offline — showing cached data only');
+      }
+    } catch (e) {
+      OfflineLogger.nav('RequestDetail: unexpected error', e);
     } finally {
+      // КРИТИЧНО: завжди знімати loading
       setLoading(false);
       setRefreshing(false);
     }
-  }, [requestId, loadTasks, navigation]);
+  }, [requestId, loadRequestLocal, loadTasksLocal, navigation, isOffline, saveRequestToDB, saveTasksToDB]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -169,6 +326,13 @@ export default function RequestDetailScreen() {
         onBack={() => navigation.goBack()}
       />
 
+      {isOfflineMode && (
+        <View style={{ backgroundColor: Colors.warningLight, padding: 8, alignItems: 'center' }}>
+          <Text style={{ fontSize: 12, color: Colors.warning }}>
+            📴 Офлайн режим — показано кешовані дані
+          </Text>
+        </View>
+      )}
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={Colors.primary} />}
         contentContainerStyle={{ paddingBottom: 32 }}

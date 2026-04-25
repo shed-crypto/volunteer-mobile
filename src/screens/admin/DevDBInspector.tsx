@@ -7,7 +7,7 @@ import { collections, database } from '../../db/index';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { API_BASE_URL } from '../../api/axios';
-import { isServerReachable } from '../../api/axios';
+import { useNetwork } from '../../context/NetworkContext';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 
@@ -21,6 +21,7 @@ export default function DevDBInspector() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { isConnected, isServerReachable } = useNetwork();
   const [tables, setTables] = useState<DBTable[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState<Date | null>(null);
@@ -171,15 +172,32 @@ export default function DevDBInspector() {
       {/* Статус бар */}
       <View style={{ padding: 16, gap: 12 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <Text style={{ color: Colors.text }}>Мережа:</Text>
+          <View style={{
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 12,
+            backgroundColor: isConnected ? Colors.successLight : Colors.dangerLight
+          }}>
+            <Text style={{
+              color: isConnected ? Colors.success : Colors.danger,
+              fontWeight: '600'
+            }}>
+              {isConnected ? 'Є зʼєднання' : 'Немає мережі'}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
           <Text style={{ color: Colors.text }}>Сервер:</Text>
           <View style={{
             paddingHorizontal: 8,
             paddingVertical: 4,
             borderRadius: 12,
-            backgroundColor: isServerReachable ? Colors.successLight : Colors.dangerLight
+            backgroundColor: isServerReachable ? Colors.successLight : Colors.warningLight
           }}>
             <Text style={{
-              color: isServerReachable ? Colors.success : Colors.danger,
+              color: isServerReachable ? Colors.success : Colors.warning,
               fontWeight: '600'
             }}>
               {isServerReachable ? 'Доступний' : 'Недоступний'}
