@@ -11,6 +11,7 @@ import { Q } from '@nozbe/watermelondb';
 import { chatApi } from '../../api/chat.api';
 import { Message, SystemRole, ClearanceLevel } from '../../types';
 import { Colors } from '../../utils/theme';
+import { fileUtils } from '../../utils/fileUtils';
 import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket, emitWhenReady } from '../../hooks/useSocket';
@@ -228,12 +229,15 @@ export default function ChatRoomScreen() {
   };
 
   const uploadAndSend = async (uri: string, name: string, type: string) => {
+    console.log('[uploadAndSend] params:', { uri, name, type });
     setUploading(true);
     try {
       const result = await chatApi.sendFile(chatId, { uri, name, type });
+      console.log('[uploadAndSend] server result:', result);
       // Чекаємо на готовий сокет перед відправкою
       await emitWhenReady('send_message', { chatId, content: result.name, attachmentUrl: result.url });
     } catch (e: any) {
+      console.error('[uploadAndSend] error:', e.message, e);
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
       setUploading(false);
@@ -241,20 +245,32 @@ export default function ChatRoomScreen() {
   };
 
   const handlePickMedia = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Потрібен дозвіл', 'Дозвольте доступ до галереї');
-      return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Потрібен дозвіл', 'Дозвольте доступ до галереї');
+        return;
+      }
+      console.log('[handlePickMedia] launching ImagePicker...');
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'] as any,
+        allowsMultipleSelection: false,
+        // ПРИБРАНО quality: може ламати вибір фото на Android
+      });
+      console.log('[handlePickMedia] ImagePicker result:', JSON.stringify({ canceled: result.canceled, assetsCount: result.assets?.length }));
+      if (result.canceled || !result.assets?.length) {
+        console.log('[handlePickMedia] canceled or no assets, returning');
+        return;
+      }
+      const asset = result.assets[0];
+      console.log('[handlePickMedia] picked asset:', JSON.stringify(asset));
+      const fileName = asset.fileName || asset.uri.split('/').pop() || `media_${Date.now()}`;
+      const normalized = await fileUtils.normalizeImagePickerAsset(asset.uri, fileName, asset.mimeType);
+      await uploadAndSend(normalized.uri, normalized.name, normalized.mimeType);
+    } catch (err: any) {
+      console.error('[handlePickMedia] exception:', err.message, err);
+      Alert.alert('Помилка', 'Не вдалося відкрити галерею: ' + err.message);
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'] as any,
-      allowsMultipleSelection: false,
-      quality: 0.85,
-    });
-    if (result.canceled || !result.assets?.length) return;
-    const asset = result.assets[0];
-    const fileName = asset.fileName || asset.uri.split('/').pop() || `media_${Date.now()}`;
-    await uploadAndSend(asset.uri, fileName, asset.mimeType || 'image/jpeg');
   };
 
   const handlePickDocument = async () => {

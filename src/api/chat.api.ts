@@ -24,6 +24,7 @@ export const chatApi = {
     chatId: string,
     file: { uri: string; name: string; type: string },
   ): Promise<{ url: string; name: string; mimeType: string }> => {
+    console.log('[chatApi.sendFile] input file:', file);
     const formData = new FormData();
     formData.append('file', {
       uri: file.uri,
@@ -37,21 +38,28 @@ export const chatApi = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
+    const url = `${API_BASE_URL}/chats/${chatId}/files`;
+    console.log('[chatApi.sendFile] posting to:', url, 'headers keys:', Object.keys(headers));
+
     try {
-      const response = await fetch(`${API_BASE_URL}/chats/${chatId}/files`, {
+      const response = await fetch(url, {
         method: 'POST',
         body: formData,
         headers,
       });
 
+      console.log('[chatApi.sendFile] response status:', response.status);
       if (!response.ok) {
         const text = await response.text().catch(() => response.statusText);
+        console.error('[chatApi.sendFile] response error text:', text);
         throw new Error(`Upload failed: ${response.status} ${text}`);
       }
 
-      return await response.json();
-    } catch (error) {
-      console.error('File upload error:', error);
+      const json = await response.json();
+      console.log('[chatApi.sendFile] response json:', json);
+      return json;
+    } catch (error: any) {
+      console.error('[chatApi.sendFile] fetch error:', error.message, error);
       throw error;
     }
   },

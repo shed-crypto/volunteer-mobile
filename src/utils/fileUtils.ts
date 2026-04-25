@@ -87,4 +87,53 @@ export const fileUtils = {
       console.error('Open externally error:', error);
     }
   },
+
+  /**
+   * Нормалізує asset з expo-image-picker:
+   * — якщо URI content:// (Android), копіює у file:// кеш
+   * — якщо mimeType відсутній, визначає за розширенням
+   */
+  normalizeImagePickerAsset: async (
+    uri: string,
+    fileName: string,
+    mimeType?: string | null,
+  ): Promise<{ uri: string; name: string; mimeType: string }> => {
+    let finalUri = uri;
+    let finalName = fileName;
+    let finalMime = mimeType || 'application/octet-stream';
+
+    console.log('[normalizeImagePickerAsset] input:', { uri, fileName, mimeType });
+
+    // Android: content:// URI неможливо передати у FormData/fetch — копіюємо в кеш
+    if (uri.startsWith('content://')) {
+      const safeName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+      const cacheUri = `${FileSystem.cacheDirectory}${safeName}`;
+      console.log('[normalizeImagePickerAsset] copying content:// to:', cacheUri);
+      try {
+        await FileSystem.copyAsync({ from: uri, to: cacheUri });
+        const info = await FileSystem.getInfoAsync(cacheUri);
+        console.log('[normalizeImagePickerAsset] copy result exists:', info.exists, 'size:', (info as any).size);
+        finalUri = cacheUri;
+      } catch (copyErr: any) {
+        console.error('[normalizeImagePickerAsset] copyAsync failed:', copyErr.message);
+        // Якщо копіювання не вдалося, повертаємо оригінальний URI — можливо він і так працює
+      }
+    }
+
+    // Fallback MIME за розширенням
+    if (!finalMime || finalMime === 'application/octet-stream') {
+      const ext = finalName.split('.').pop()?.toLowerCase() || '';
+      const MIME_BY_EXT: Record<string, string> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+        heic: 'image/heic', heif: 'image/heif', tiff: 'image/tiff',
+        mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo',
+        mkv: 'video/x-matroska', m4v: 'video/x-m4v', wmv: 'video/x-ms-wmv',
+      };
+      finalMime = MIME_BY_EXT[ext] || 'application/octet-stream';
+    }
+
+    console.log('[normalizeImagePickerAsset] output:', { uri: finalUri, name: finalName, mimeType: finalMime });
+    return { uri: finalUri, name: finalName, mimeType: finalMime };
+  },
 };

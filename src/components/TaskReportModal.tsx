@@ -6,6 +6,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Colors } from '../utils/theme';
+import { fileUtils } from '../utils/fileUtils';
 import { ScreenHeader, Button } from './ui';
 
 interface Attachment {
@@ -50,42 +51,47 @@ export const TaskReportModal = ({ visible, onClose, onSubmit, loading }: ReportM
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const handleAttach = async () => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) {
-      Alert.alert('Потрібен дозвіл', 'Нам потрібен доступ до вашої галереї, щоб додати файли.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      // ВИПРАВЛЕННЯ: MediaTypeOptions застарілий — використовуємо масив MediaType
-      mediaTypes: ['images', 'videos'] as any,
-      allowsEditing: false,
-      quality: 0.8,
-      allowsMultipleSelection: true,
-      selectionLimit: 5,
-    });
-
-    if (result.canceled) return;
-
-    const MAX_SIZE_BYTES = 10 * 1024 * 1024;
-    const newAttachments: Attachment[] = [];
-
-    for (const asset of result.assets) {
-      if ((asset.fileSize ?? 0) > MAX_SIZE_BYTES) {
-        Alert.alert('Помилка', `Файл "${asset.fileName ?? 'file'}" занадто великий (макс. 10 МБ).`);
-        continue;
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Потрібен дозвіл', 'Нам потрібен доступ до вашої галереї, щоб додати файли.');
+        return;
       }
 
-      // Ім'я файлу: беремо з метаданих або витягуємо з URI
-      const fileName = asset.fileName || asset.uri.split('/').pop() || `file_${Date.now()}`;
+      console.log('[TaskReportModal] launching ImagePicker...');
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'] as any,
+        allowsEditing: false,
+        // ПРИБРАНО quality: може ламати вибір фото на Android
+        allowsMultipleSelection: true,
+        selectionLimit: 5,
+      });
 
-      // MIME: resolveMime перевіряє asset.mimeType, потім розширення
-      const mimeType = resolveMime(asset.mimeType, asset.uri, fileName);
+      console.log('[TaskReportModal] ImagePicker result:', JSON.stringify({ canceled: result.canceled, assetsCount: result.assets?.length }));
+      if (result.canceled || !result.assets?.length) {
+        console.log('[TaskReportModal] canceled or no assets, returning');
+        return;
+      }
 
-      newAttachments.push({ uri: asset.uri, name: fileName, type: mimeType });
+      const MAX_SIZE_BYTES = 10 * 1024 * 1024;
+      const newAttachments: Attachment[] = [];
+
+      for (const asset of result.assets) {
+        if ((asset.fileSize ?? 0) > MAX_SIZE_BYTES) {
+          Alert.alert('Помилка', `Файл "${asset.fileName ?? 'file'}" занадто великий (макс. 10 МБ).`);
+          continue;
+        }
+
+        const fileName = asset.fileName || asset.uri.split('/').pop() || `file_${Date.now()}`;
+        const normalized = await fileUtils.normalizeImagePickerAsset(asset.uri, fileName, asset.mimeType);
+        newAttachments.push({ uri: normalized.uri, name: normalized.name, type: normalized.mimeType });
+      }
+
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    } catch (err: any) {
+      console.error('[TaskReportModal] exception:', err.message, err);
+      Alert.alert('Помилка', 'Не вдалося відкрити галерею: ' + err.message);
     }
-
-    setAttachments((prev) => [...prev, ...newAttachments]);
   };
 
   const handleAttachDocument = async () => {
