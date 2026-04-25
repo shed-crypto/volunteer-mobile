@@ -95,6 +95,41 @@ export const dbMigrations = schemaMigrations({
     {
       toVersion: 10,
       steps: []
+    },
+    // Міграція для версії 11 - додавання полів для offline attachments, user_name в assignments та таблиці task_reports
+    {
+      toVersion: 11,
+      steps: [
+        {
+          type: 'add_columns',
+          table: 'chat_messages',
+          columns: [
+            { name: 'message_type', type: 'string', isOptional: true },
+            { name: 'attachment_url', type: 'string', isOptional: true },
+          ]
+        },
+        {
+          type: 'add_columns',
+          table: 'task_assignments',
+          columns: [
+            { name: 'user_name', type: 'string', isOptional: true },
+          ]
+        },
+        {
+          type: 'sql',
+          sql: 'CREATE TABLE IF NOT EXISTS task_reports (id TEXT PRIMARY KEY NOT NULL, server_id TEXT, task_id TEXT NOT NULL, user_id TEXT NOT NULL, user_name TEXT, comment TEXT NOT NULL, attachments_raw TEXT, created_at INTEGER NOT NULL, is_synced INTEGER NOT NULL, last_synced_at INTEGER);'
+        }
+      ]
+    },
+    // Міграція для версії 12 - гарантоване додавання server_id до task_reports
+    {
+      toVersion: 12,
+      steps: [
+        {
+          type: 'sql',
+          sql: 'ALTER TABLE task_reports ADD COLUMN IF NOT EXISTS server_id TEXT;'
+        }
+      ]
     }
   ]
 });

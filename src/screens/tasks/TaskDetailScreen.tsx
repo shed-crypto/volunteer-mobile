@@ -68,6 +68,7 @@ export default function TaskDetailScreen() {
               id: a.id,
               taskId: a.taskId,
               userId: a.userId,
+              user: { fullName: a.userName || 'Користувач' },
               status: a.status,
               fulfilledRole: a.fulfilledRole,
               assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
@@ -150,12 +151,14 @@ export default function TaskDetailScreen() {
           if (existingA) {
             ops.push(existingA.prepareUpdate((ea: any) => {
               ea.status = a.status;
+              ea.userName = a.user?.fullName ?? null;
               ea.fulfilledRole = a.fulfilledRole ?? null;
             }));
           } else {
             ops.push(collections.taskAssignments.prepareCreate((ea: any) => {
               ea.taskId = a.taskId || taskId;
               ea.userId = a.userId;
+              ea.userName = a.user?.fullName ?? null;
               ea.status = a.status;
               ea.fulfilledRole = a.fulfilledRole ?? null;
               ea.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
@@ -177,12 +180,76 @@ export default function TaskDetailScreen() {
     }
   }, []);
 
+  // ─── Load reports from local DB ──────────────────────────────────────────
+  const loadReportsLocal = useCallback(async (taskId: string): Promise<any[]> => {
+    try {
+      const localReports = await collections.taskReports.query().fetch();
+      const taskReports = localReports.filter((r: any) => r.taskId === taskId);
+      return taskReports.map((r: any) => ({
+        id: r.serverId || r.id,
+        taskId: r.taskId,
+        userId: r.userId,
+        user: { fullName: r.userName || 'Користувач' },
+        comment: r.comment,
+        attachments: r.attachments || [],
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : '',
+      }));
+    } catch (e) {
+      OfflineLogger.cache('TaskDetail: local reports load failed', e);
+      return [];
+    }
+  }, []);
+
+  // ─── Save reports to local DB ────────────────────────────────────────────
+  const saveReportsToDB = useCallback(async (taskId: string, reportsData: any[]) => {
+    try {
+      const existing = await collections.taskReports.query().fetch();
+      const existingMap = new Map(existing.map((r: any) => [r.serverId, r]));
+      const ops: any[] = [];
+      
+      for (const r of reportsData) {
+        const existingR = existingMap.get(r.id);
+        if (existingR) {
+          ops.push(existingR.prepareUpdate((er: any) => {
+            er.taskId = r.taskId;
+            er.userId = r.userId;
+            er.userName = r.user?.fullName ?? null;
+            er.comment = r.comment;
+            er.attachmentsRaw = JSON.stringify(r.attachments ?? []);
+            er.createdAt = r.createdAt ? new Date(r.createdAt).getTime() : Date.now();
+            er.lastSyncedAt = Date.now();
+          }));
+        } else {
+          ops.push(collections.taskReports.prepareCreate((er: any) => {
+            er.serverId = r.id;
+            er.taskId = r.taskId;
+            er.userId = r.userId;
+            er.userName = r.user?.fullName ?? null;
+            er.comment = r.comment;
+            er.attachmentsRaw = JSON.stringify(r.attachments ?? []);
+            er.createdAt = r.createdAt ? new Date(r.createdAt).getTime() : Date.now();
+            er.isSynced = true;
+            er.lastSyncedAt = Date.now();
+          }));
+        }
+      }
+      
+      if (ops.length > 0) {
+        await database.write(async () => {
+          await database.batch(...ops);
+        });
+      }
+    } catch (e) {
+      OfflineLogger.cache('TaskDetail: save reports to DB failed', e);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     if (isNew) return;
     
     try {
       // КРОК 1: Load from local DB first (with adaptive timeout)
-      const timeout = isOffline ? 10000 : 300;
+      const timeout = isOffline ? 2000 : 300;
       const localTask = await Promise.race([
         loadTaskLocal(),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), timeout))
@@ -192,6 +259,12 @@ export default function TaskDetailScreen() {
         OfflineLogger.nav('TaskDetail: showing local data first');
         setTask(localTask);
         setLoading(false);
+      }
+      
+      // Load reports locally
+      const localReports = await loadReportsLocal(taskId);
+      if (localReports.length > 0) {
+        setReports(localReports);
       }
       
       // КРОК 2: If online, update from server
@@ -205,11 +278,12 @@ export default function TaskDetailScreen() {
           setTask(t);
           await saveTaskToDB(t);
           
-          // Load reports
+          // Load reports from server and save to DB
           try {
             const { taskReportsApi } = await import('../../api/task-reports.api');
             const reps = await taskReportsApi.getAll(taskId);
             setReports(reps);
+            await saveReportsToDB(taskId, reps);
           } catch {
             // ignore reports error
           }
@@ -226,7 +300,7 @@ export default function TaskDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [taskId, isNew, isOffline, loadTaskLocal, saveTaskToDB, navigation]);
+  }, [taskId, isNew, isOffline, loadTaskLocal, saveTaskToDB, loadReportsLocal, saveReportsToDB, navigation]);
 
   useEffect(() => {
     load();

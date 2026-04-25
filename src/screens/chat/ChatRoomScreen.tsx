@@ -90,6 +90,8 @@ export default function ChatRoomScreen() {
             m.sentAt = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
             m.isSynced = true;
             m.pendingAction = null;
+            m.messageType = (msg as any).messageType || 'text';
+            m.attachmentUrl = (msg as any).attachmentUrl || null;
             m.messageStatus = (msg as any).messageStatus || 'sent';
             m.readByRaw = JSON.stringify((msg as any).readBy || []);
             m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
@@ -115,110 +117,71 @@ export default function ChatRoomScreen() {
     console.log(`[ChatRoomScreen] Завантаження чату: ${chatId}`);
 
     try {
-      if (isOnlineRef.current) {
-        // СТРАТЕГІЯ: Онлайн → одразу API (без очікування БД).
-        // Це виключає зависання якщо WatermelonDB-черга зайнята.
-        console.log('[ChatRoomScreen] Онлайн — завантаження з API');
-        const data = await chatApi.getMessages(chatId, 50);
-        const sorted = [...data].sort(
-          (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
-        );
-        setMessages(sorted);
+      // КРОК 1: Спочатку локальна БД (offline-first, швидко)
+      const localMessages = await Promise.race([
+        collections.chatMessages.query(Q.where('chat_id', chatId)).fetch(),
+        new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 500))
+      ]);
+      console.log(`[ChatRoomScreen] Локальна БД: ${localMessages.length} повідомленнь`);
+
+      if (localMessages.length > 0) {
+        const mapped = localMessages
+          .map((m: any) => ({
+            id: m.serverId || m.id,
+            chatId: m.chatId,
+            senderId: m.senderId,
+            content: m.content,
+            sentAt: m.sentAt,
+            messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
+            attachmentUrl: m.attachmentUrl || undefined,
+            messageStatus: m.messageStatus || 'sent',
+            readBy: m.readBy || [],
+            deliveredTo: m.deliveredTo || [],
+            sender: {
+              id: m.senderId,
+              fullName: m.senderName || 'Користувач',
+              email: '',
+              systemRole: SystemRole.VOLUNTEER,
+              clearanceLevel: ClearanceLevel.LOCAL,
+              trustScore: 0,
+              isBlocked: false,
+              createdAt: new Date().toISOString(),
+            },
+          }))
+          .sort((a: any, b: any) => a.sentAt - b.sentAt);
+        setMessages(mapped);
         setLoading(false);
         setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
+      }
 
-        // Зберігаємо в БД асинхронно (не блокуємо UI)
-        saveMessagesToDB(data).catch(() => {});
-
-        chatApi.markAsRead(chatId).catch(() => {});
-      } else {
-        // Офлайн → читаємо з локальної БД
-        console.log('[ChatRoomScreen] Офлайн — завантаження з локальної БД');
+      // КРОК 2: Якщо online — оновити з API
+      if (isOnlineRef.current) {
+        console.log('[ChatRoomScreen] Онлайн — оновлення з API');
         try {
-          const localMessages = await collections.chatMessages
-            .query(Q.where('chat_id', chatId))
-            .fetch();
-          console.log(`[ChatRoomScreen] Локальна БД: ${localMessages.length} повідомленнь`);
+          const data = await chatApi.getMessages(chatId, 50);
+          const sorted = [...data].sort(
+            (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+          );
+          setMessages(sorted);
+          setLoading(false);
+          setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
 
-          if (localMessages.length > 0) {
-            const mapped = localMessages
-              .map((m: any) => ({
-                id: m.serverId || m.id,
-                chatId: m.chatId,
-                senderId: m.senderId,
-                content: m.content,
-                sentAt: m.sentAt,
-                messageType: 'text' as const,
-                messageStatus: m.messageStatus || 'sent',
-                readBy: m.readBy || [],
-                deliveredTo: m.deliveredTo || [],
-                sender: {
-                  id: m.senderId,
-                  fullName: m.senderName || 'Користувач',
-                  email: '',
-                  systemRole: SystemRole.VOLUNTEER,
-                  clearanceLevel: ClearanceLevel.LOCAL,
-                  trustScore: 0,
-                  isBlocked: false,
-                  createdAt: new Date().toISOString(),
-                },
-              }))
-              .sort((a: any, b: any) => a.sentAt - b.sentAt);
-
-            setMessages(mapped);
-            setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
-          } else {
+          saveMessagesToDB(data).catch(() => {});
+          chatApi.markAsRead(chatId).catch(() => {});
+        } catch (apiErr) {
+          console.warn('[ChatRoomScreen] API error, keeping local messages:', apiErr);
+          if (localMessages.length === 0) {
             setMessages([]);
+            setLoading(false);
           }
-        } catch (dbErr) {
-          console.warn('[ChatRoomScreen] Помилка читання з БД:', dbErr);
-          setMessages([]);
         }
+      } else if (localMessages.length === 0) {
+        setMessages([]);
         setLoading(false);
       }
     } catch (error: any) {
       console.error('[ChatRoomScreen] Помилка завантаження:', error);
-      // API впав — спробуємо локальну БД як fallback
-      try {
-          const localMessages = await collections.chatMessages
-            .query(Q.where('chat_id', chatId))
-            .fetch();
-          if (localMessages.length > 0) {
-            // Deduplicate by id
-            const msgMap = new Map<string, any>();
-            localMessages.forEach((m: any) => {
-              const key = m.serverId || m.id;
-              if (!msgMap.has(key) || msgMap.get(key).sentAt < m.sentAt) {
-                msgMap.set(key, m);
-              }
-            });
-            setMessages(Array.from(msgMap.values()).map((m: any) => ({
-              id: m.serverId || m.id,
-              chatId: m.chatId,
-              senderId: m.senderId,
-              content: m.content,
-              sentAt: m.sentAt,
-              messageType: 'text' as const,
-              messageStatus: m.messageStatus || 'sent',
-              readBy: [],
-              deliveredTo: [],
-              sender: {
-                id: m.senderId,
-                fullName: m.senderName || 'Користувач',
-                email: '',
-                systemRole: SystemRole.VOLUNTEER,
-                clearanceLevel: ClearanceLevel.LOCAL,
-                trustScore: 0,
-                isBlocked: false,
-                createdAt: new Date().toISOString(),
-              },
-            })).sort((a: any, b: any) => a.sentAt - b.sentAt));
-        } else {
-          setMessages([]);
-        }
-      } catch {
-        setMessages([]);
-      }
+      setMessages([]);
       setLoading(false);
     } finally {
       isLoadingRef.current = false;

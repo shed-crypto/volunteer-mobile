@@ -5,6 +5,7 @@ import { ChatMessageModel } from './models/ChatMessageModel';
 import { requestsApi } from '../api/requests.api';
 import { tasksApi } from '../api/tasks.api';
 import { chatApi } from '../api/chat.api';
+import { taskReportsApi } from '../api/task-reports.api';
 import api from '../api/axios';
 import { getServerReachable } from '../api/axios';
 import { OfflineLogger } from '../utils/offlineLogger';
@@ -225,8 +226,9 @@ export class SyncService {
               r.status = sr.status;
               r.title = sr.title;
               r.tagsRaw = JSON.stringify(sr.tags ?? []);
-              r.latitude = sr.latitude ?? null;
-              r.longitude = sr.longitude ?? null;
+              if (sr.latitude !== undefined) r.latitude = sr.latitude ?? null;
+              if (sr.longitude !== undefined) r.longitude = sr.longitude ?? null;
+              if (sr.isLocationHidden !== undefined) r.isLocationHidden = sr.isLocationHidden ?? false;
               r.lastSyncedAt = Date.now();
             })
           );
@@ -327,6 +329,7 @@ export class SyncService {
                 preparedOperations.push(
                   existingA.prepareUpdate((a: any) => {
                     a.status = sa.status;
+                    a.userName = sa.user?.fullName ?? null;
                     a.fulfilledRole = sa.fulfilledRole ?? null;
                     a.lastSyncedAt = Date.now();
                   })
@@ -337,6 +340,7 @@ export class SyncService {
                   collections.taskAssignments.prepareCreate((a: any) => {
                     a.taskId = st.id;
                     a.userId = sa.userId;
+                    a.userName = sa.user?.fullName ?? null;
                     a.status = sa.status;
                     a.fulfilledRole = sa.fulfilledRole ?? null;
                     a.assignedAt = sa.assignedAt ? new Date(sa.assignedAt).getTime() : Date.now();
@@ -367,7 +371,7 @@ export class SyncService {
 
       for (const chat of serverChats) {
         try {
-          const response = await api.get(`/chats/${chat.id}/messages?limit=20`);
+          const response = await api.get(`/chats/${chat.id}/messages?limit=50`);
           const serverMessages = response.data;
 
           for (const sm of serverMessages) {
@@ -378,6 +382,8 @@ export class SyncService {
                   existingMsg.prepareUpdate((m: any) => {
                     m.content = sm.content;
                     m.sentAt = typeof sm.sentAt === 'string' ? new Date(sm.sentAt).getTime() : sm.sentAt;
+                    m.messageType = sm.messageType || 'text';
+                    m.attachmentUrl = sm.attachmentUrl || null;
                     m.messageStatus = sm.messageStatus || 'sent';
                     m.readByRaw = JSON.stringify(sm.readBy || []);
                     m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
@@ -397,6 +403,8 @@ export class SyncService {
                 m.sentAt = typeof sm.sentAt === 'string' ? new Date(sm.sentAt).getTime() : sm.sentAt;
                 m.isSynced = true;
                 m.pendingAction = null;
+                m.messageType = sm.messageType || 'text';
+                m.attachmentUrl = sm.attachmentUrl || null;
                 m.messageStatus = sm.messageStatus || 'sent';
                 m.readByRaw = JSON.stringify(sm.readBy || []);
                 m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
@@ -414,7 +422,61 @@ export class SyncService {
       console.warn('[SyncService.pull] Помилка при синхронізації чатів:', err);
     }
 
-    // 7. Один database.batch() — атомарно, без вкладених write
+    // 7. Синхронізація звітів по задачах
+    try {
+      let localReports: any[] = [];
+      try {
+        localReports = await collections.taskReports.query().fetch();
+      } catch (err) {
+        OfflineLogger.sync('Pull local reports error:', err);
+      }
+      const localReportsMap = new Map(localReports.map((r) => [r.serverId, r]));
+      const syncedTaskIds = localTasks.filter((t: any) => t.serverId && t.isSynced).map((t: any) => t.serverId);
+
+      for (const taskId of syncedTaskIds.slice(0, 50)) {
+        try {
+          const serverReports = await taskReportsApi.getAll(taskId);
+          for (const sr of serverReports) {
+            const existingReport = localReportsMap.get(sr.id);
+            if (existingReport) {
+              preparedOperations.push(
+                existingReport.prepareUpdate((r: any) => {
+                  r.taskId = sr.taskId;
+                  r.userId = sr.userId;
+                  r.userName = sr.user?.fullName ?? null;
+                  r.comment = sr.comment;
+                  r.attachmentsRaw = JSON.stringify(sr.attachments ?? []);
+                  r.createdAt = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
+                  r.lastSyncedAt = Date.now();
+                })
+              );
+              count++;
+            } else {
+              preparedOperations.push(
+                collections.taskReports.prepareCreate((r: any) => {
+                  r.serverId = sr.id;
+                  r.taskId = sr.taskId;
+                  r.userId = sr.userId;
+                  r.userName = sr.user?.fullName ?? null;
+                  r.comment = sr.comment;
+                  r.attachmentsRaw = JSON.stringify(sr.attachments ?? []);
+                  r.createdAt = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
+                  r.isSynced = true;
+                  r.lastSyncedAt = Date.now();
+                })
+              );
+              count++;
+            }
+          }
+        } catch (err) {
+          OfflineLogger.sync(`Pull reports error for task ${taskId}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('[SyncService.pull] Помилка при синхронізації звітів:', err);
+    }
+
+    // 8. Один database.batch() — атомарно, без вкладених write
     if (preparedOperations.length > 0) {
       OfflineLogger.sync(`Pull: executing ${preparedOperations.length} batch operations...`);
       try {
@@ -473,6 +535,8 @@ export class SyncService {
     senderId: string;
     senderName?: string;
     content: string;
+    messageType?: string;
+    attachmentUrl?: string;
   }): Promise<ChatMessageModel> {
     return database.write(async () => {
       const msg = collections.chatMessages.prepareCreate((m: any) => {
@@ -484,6 +548,8 @@ export class SyncService {
         m.sentAt = Date.now();
         m.isSynced = false;
         m.pendingAction = 'send';
+        m.messageType = data.messageType || 'text';
+        m.attachmentUrl = data.attachmentUrl ?? null;
         m.messageStatus = 'pending';
         m.readByRaw = '[]';
         m.deliveredToRaw = '[]';

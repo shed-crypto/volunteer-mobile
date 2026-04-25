@@ -7,6 +7,7 @@ export class TaskAssignmentModel extends Model {
 
   @field('task_id') taskId!: string;
   @field('user_id') userId!: string;
+  @field('user_name') userName!: string | null;
   @field('status') status!: string;
   @field('fulfilled_role') fulfilledRole!: string | null;
   @field('assigned_at') assignedAt!: number;

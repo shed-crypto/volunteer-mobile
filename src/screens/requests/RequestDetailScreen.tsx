@@ -51,6 +51,28 @@ export default function RequestDetailScreen() {
       const requestTasks = localTasks.filter((t: any) => t.requestId === requestId || t.requestServerId === requestId);
       
       if (requestTasks.length > 0) {
+        // Load assignments for these tasks
+        const localAssignments = await collections.taskAssignments.query().fetch();
+        const taskAssignmentsMap = new Map<string, any[]>();
+        localAssignments
+          .filter((a: any) => requestTasks.some((t: any) => t.serverId === a.taskId || t.id === a.taskId))
+          .forEach((a: any) => {
+            const key = a.taskId;
+            if (!taskAssignmentsMap.has(key)) taskAssignmentsMap.set(key, []);
+            const list = taskAssignmentsMap.get(key)!;
+            if (!list.find((x: any) => x.userId === a.userId)) {
+              list.push({
+                id: a.id,
+                taskId: a.taskId,
+                userId: a.userId,
+                user: { fullName: a.userName || 'Користувач' },
+                status: a.status,
+                fulfilledRole: a.fulfilledRole,
+                assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
+              });
+            }
+          });
+
         return requestTasks.map((t: any) => ({
           id: t.serverId || t.id,
           title: t.title,
@@ -62,6 +84,7 @@ export default function RequestDetailScreen() {
           priority: t.priority,
           createdAt: t.createdAt,
           requestId: t.requestId || t.requestServerId,
+          assignments: taskAssignmentsMap.get(t.serverId) || taskAssignmentsMap.get(t.id) || [],
         }));
       }
     } catch (localError) {
@@ -85,8 +108,8 @@ export default function RequestDetailScreen() {
           urgency: local.urgency as any,
           status: local.status as any,
           requiredClearance: local.requiredClearance as any,
-          latitude: local.latitude ?? undefined,
-          longitude: local.longitude ?? undefined,
+          latitude: local.latitude != null ? local.latitude : undefined,
+          longitude: local.longitude != null ? local.longitude : undefined,
           isLocationHidden: local.isLocationHidden,
           tags: local.tags,
           creatorId: local.creatorId ?? '',
@@ -229,8 +252,8 @@ export default function RequestDetailScreen() {
     
     try {
       // КРОК 1: Завантажити з локальної БД (з АДАПТИВНИМ таймаутом)
-      // Онлайн: 300мс, Офлайн: 10000мс
-      const timeout = isOffline ? 10000 : 300;
+      // Онлайн: 300мс, Офлайн: 2000мс
+      const timeout = isOffline ? 2000 : 300;
       const [localRequest, localTasks] = await Promise.race([
         Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
         new Promise<[null, []]>((resolve) => 

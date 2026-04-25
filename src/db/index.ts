@@ -13,11 +13,12 @@ import { ChatModel } from './models/ChatModel';
 import { UserCacheModel } from './models/UserCacheModel';
 import { PendingReport } from './models/PendingReport';
 import { ActionQueueItem } from './models/ActionQueueItem';
+import { TaskReportModel } from './models/TaskReportModel';
 
 const adapter = new SQLiteAdapter({
   schema: dbSchema,
   migrations: dbMigrations,
-  dbName: 'volunteer_help_v10',
+  dbName: 'volunteer_help_v12',
   jsi: false,
   onSetUpError: (error) => {
     console.error('[WatermelonDB] Setup error:', error);
@@ -35,6 +36,7 @@ export const database = new Database({
     UserCacheModel,
     PendingReport,
     ActionQueueItem,
+    TaskReportModel,
   ],
 });
 
@@ -47,5 +49,6 @@ export const collections = {
   chats: database.collections.get('chats'),
   usersCache: database.collections.get('users_cache'),
   pendingReports: database.collections.get('pending_reports'),
+  taskReports: database.collections.get('task_reports'),
   actionQueue: database.collections.get('action_queue'),
 };

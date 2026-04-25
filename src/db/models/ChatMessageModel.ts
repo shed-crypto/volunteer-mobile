@@ -19,6 +19,8 @@ export class ChatMessageModel extends Model {
   @field('pending_action') pendingAction!: string | null; // 'send'
   
   // Нові поля для статусів повідомлень
+  @field('message_type') messageType!: string | null; // 'text' | 'attachment' | 'system'
+  @field('attachment_url') attachmentUrl!: string | null;
   @field('message_status') messageStatus!: string | null; // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
   @field('read_by_raw') readByRaw!: string | null; // JSON array of user IDs who read the message
   @field('delivered_to_raw') deliveredToRaw!: string | null; // JSON array of user IDs message was delivered to

@@ -4,7 +4,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const dbSchema = appSchema({
-  version: 10,
+  version: 12,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -60,6 +60,7 @@ export const dbSchema = appSchema({
       columns: [
         { name: 'task_id', type: 'string', isIndexed: true },
         { name: 'user_id', type: 'string', isIndexed: true },
+        { name: 'user_name', type: 'string', isOptional: true },
         { name: 'status', type: 'string' },
         { name: 'fulfilled_role', type: 'string', isOptional: true },
         { name: 'assigned_at', type: 'number' },
@@ -81,6 +82,8 @@ export const dbSchema = appSchema({
         { name: 'sent_at', type: 'number' },
         { name: 'is_synced', type: 'boolean' },
         { name: 'pending_action', type: 'string', isOptional: true },
+        { name: 'message_type', type: 'string', isOptional: true }, // 'text' | 'attachment' | 'system'
+        { name: 'attachment_url', type: 'string', isOptional: true },
         { name: 'message_status', type: 'string', isOptional: true }, // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
         { name: 'read_by_raw', type: 'string', isOptional: true }, // JSON array of user IDs who read the message
         { name: 'delivered_to_raw', type: 'string', isOptional: true }, // JSON array of user IDs message was delivered to
@@ -126,6 +129,22 @@ export const dbSchema = appSchema({
         { name: 'last_message_raw', type: 'string', isOptional: true }, // JSON object
         { name: 'unread_count', type: 'number' },
         { name: 'updated_at', type: 'number' },
+        { name: 'is_synced', type: 'boolean' },
+        { name: 'last_synced_at', type: 'number', isOptional: true },
+      ],
+    }),
+
+    // ─── Звіти по задачах ────────────────────────────────────────────────────
+    tableSchema({
+      name: 'task_reports',
+      columns: [
+        { name: 'server_id', type: 'string', isOptional: true },
+        { name: 'task_id', type: 'string', isIndexed: true },
+        { name: 'user_id', type: 'string' },
+        { name: 'user_name', type: 'string', isOptional: true },
+        { name: 'comment', type: 'string' },
+        { name: 'attachments_raw', type: 'string', isOptional: true }, // JSON array
+        { name: 'created_at', type: 'number' },
         { name: 'is_synced', type: 'boolean' },
         { name: 'last_synced_at', type: 'number', isOptional: true },
       ],
