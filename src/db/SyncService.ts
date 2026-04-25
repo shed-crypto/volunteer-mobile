@@ -268,6 +268,15 @@ export class SyncService {
     const localTasksMap = new Map(localTasks.map((t) => [t.serverId, t]));
 
     // 5. Задачі для synced заявок (HTTP поза database.write())
+    // Зчитуємо локальні assignments
+    let localAssignments: any[] = [];
+    try {
+      localAssignments = await collections.taskAssignments.query().fetch();
+    } catch (err) {
+      OfflineLogger.sync('Pull local assignments error:', err);
+    }
+    const localAssignmentsMap = new Map(localAssignments.map((a) => [a.id, a]));
+    
     const syncedRequests = localRequests.filter((r: any) => r.serverId && r.isSynced);
     for (const req of syncedRequests.slice(0, 50)) {
       try {
@@ -309,6 +318,37 @@ export class SyncService {
             );
             count++;
           }
+          
+          // Зберігаємо assignments для задачі
+          if (st.assignments && st.assignments.length > 0) {
+            for (const sa of st.assignments) {
+              const existingA = localAssignmentsMap.get(sa.id);
+              if (existingA) {
+                preparedOperations.push(
+                  existingA.prepareUpdate((a: any) => {
+                    a.status = sa.status;
+                    a.fulfilledRole = sa.fulfilledRole ?? null;
+                    a.lastSyncedAt = Date.now();
+                  })
+                );
+                count++;
+              } else {
+                preparedOperations.push(
+                  collections.taskAssignments.prepareCreate((a: any) => {
+                    a.id = sa.id;
+                    a.taskId = st.id;
+                    a.userId = sa.userId;
+                    a.status = sa.status;
+                    a.fulfilledRole = sa.fulfilledRole ?? null;
+                    a.assignedAt = sa.assignedAt ? new Date(sa.assignedAt).getTime() : Date.now();
+                    a.isSynced = true;
+                    a.lastSyncedAt = Date.now();
+                  })
+                );
+                count++;
+              }
+            }
+          }
         }
       } catch (err) {
         OfflineLogger.sync(`Pull tasks error for request ${req.serverId}:`, err);
@@ -338,7 +378,7 @@ export class SyncService {
                 preparedOperations.push(
                   existingMsg.prepareUpdate((m: any) => {
                     m.content = sm.content;
-                    m.sentAt = sm.sentAt;
+                    m.sentAt = typeof sm.sentAt === 'string' ? new Date(sm.sentAt).getTime() : sm.sentAt;
                     m.messageStatus = sm.messageStatus || 'sent';
                     m.readByRaw = JSON.stringify(sm.readBy || []);
                     m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
@@ -349,20 +389,20 @@ export class SyncService {
               }
             } else {
               preparedOperations.push(
-                collections.chatMessages.prepareCreate((m: any) => {
-                  m.serverId = sm.id;
-                  m.chatId = sm.chatId;
-                  m.senderId = sm.senderId;
-                  m.senderName = sm.sender?.fullName || null;
-                  m.content = sm.content;
-                  m.sentAt = sm.sentAt;
-                  m.isSynced = true;
-                  m.pendingAction = null;
-                  m.messageStatus = sm.messageStatus || 'sent';
-                  m.readByRaw = JSON.stringify(sm.readBy || []);
-                  m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
-                  m.lastSyncedAt = Date.now();
-                })
+              collections.chatMessages.prepareCreate((m: any) => {
+                m.serverId = sm.id;
+                m.chatId = sm.chatId;
+                m.senderId = sm.senderId;
+                m.senderName = sm.sender?.fullName || null;
+                m.content = sm.content;
+                m.sentAt = typeof sm.sentAt === 'string' ? new Date(sm.sentAt).getTime() : sm.sentAt;
+                m.isSynced = true;
+                m.pendingAction = null;
+                m.messageStatus = sm.messageStatus || 'sent';
+                m.readByRaw = JSON.stringify(sm.readBy || []);
+                m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
+                m.lastSyncedAt = Date.now();
+              })
               );
               count++;
             }

@@ -8,6 +8,9 @@ import { Task, TaskStatus, AssignmentStatus, SystemRole, Organization } from '..
 import { Colors, statusColors } from '../../utils/theme';
 import { Badge, Card, Button, LoadingScreen, ScreenHeader, Input, ProgressBar } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
+import { useNetwork } from '../../context/NetworkContext';
+import { OfflineLogger } from '../../utils/offlineLogger';
+import { collections, database } from '../../db/index';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
 
@@ -44,31 +47,179 @@ export default function TaskDetailScreen() {
   const [uploading, setUploading] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
 
+  const { isOffline } = useNetwork();
+
+  // ─── Load task from local DB ─────────────────────────────────────────────
+  const loadTaskLocal = useCallback(async (): Promise<Task | null> => {
+    try {
+      const localTasks = await collections.tasks.query().fetch();
+      const local = localTasks.find((t: any) => t.serverId === taskId || t.id === taskId);
+      if (!local) return null;
+      
+      // Load assignments for this task
+      const localAssignments = await collections.taskAssignments.query().fetch();
+      const taskAssignments = localAssignments
+        .filter((a: any) => a.taskId === taskId || a.taskId === local.id)
+        .map((a: any) => ({
+          id: a.id,
+          taskId: a.taskId,
+          userId: a.userId,
+          status: a.status,
+          fulfilledRole: a.fulfilledRole,
+          assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
+        }));
+      
+      return {
+        id: local.serverId || local.id,
+        requestId: local.requestId || local.requestServerId,
+        title: local.title,
+        description: local.description,
+        status: local.status,
+        neededPeopleCount: local.neededPeopleCount,
+        requiredRoles: local.requiredRoles || [],
+        assignedCount: local.assignedCount,
+        priority: local.priority,
+        deadline: local.deadline ? new Date(local.deadline).toISOString() : undefined,
+        chatId: local.chatId,
+        assignments: taskAssignments,
+        createdAt: local.createdAtServer ? new Date(local.createdAtServer).toISOString() : '',
+      } as Task;
+    } catch (e) {
+      OfflineLogger.cache('TaskDetail: local load failed', e);
+      return null;
+    }
+  }, [taskId]);
+
+  // ─── Save task to local DB ───────────────────────────────────────────────
+  const saveTaskToDB = useCallback(async (t: Task) => {
+    try {
+      const existing = await collections.tasks.query().fetch();
+      const existingTask = existing.find((et: any) => et.serverId === t.id);
+      
+      if (existingTask) {
+        await database.write(async () => {
+          await existingTask.update((et: any) => {
+            et.title = t.title;
+            et.description = t.description ?? null;
+            et.status = t.status;
+            et.neededPeopleCount = t.neededPeopleCount;
+            et.requiredRolesRaw = JSON.stringify(t.requiredRoles ?? []);
+            et.assignedCount = t.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+            et.priority = t.priority ?? 0;
+            et.deadline = t.deadline ? new Date(t.deadline).getTime() : null;
+            et.chatId = t.chatId ?? null;
+            et.isSynced = true;
+            et.lastSyncedAt = Date.now();
+          });
+        });
+      } else {
+        await database.write(async () => {
+          await collections.tasks.create((et: any) => {
+            et.serverId = t.id;
+            et.requestServerId = t.requestId;
+            et.title = t.title;
+            et.description = t.description ?? null;
+            et.status = t.status;
+            et.neededPeopleCount = t.neededPeopleCount ?? 1;
+            et.requiredRolesRaw = JSON.stringify(t.requiredRoles ?? []);
+            et.assignedCount = t.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+            et.priority = t.priority ?? 0;
+            et.deadline = t.deadline ? new Date(t.deadline).getTime() : null;
+            et.chatId = t.chatId ?? null;
+            et.isSynced = true;
+            et.lastSyncedAt = Date.now();
+          });
+        });
+      }
+      
+      // Save assignments
+      if (t.assignments && t.assignments.length > 0) {
+        const existingAssignments = await collections.taskAssignments.query().fetch();
+        const existingMap = new Map(existingAssignments.map((a: any) => [a.id, a]));
+        const ops: any[] = [];
+        
+        for (const a of t.assignments) {
+          const existingA = existingMap.get(a.id);
+          if (existingA) {
+            ops.push(existingA.prepareUpdate((ea: any) => {
+              ea.status = a.status;
+              ea.fulfilledRole = a.fulfilledRole ?? null;
+            }));
+          } else {
+            ops.push(collections.taskAssignments.prepareCreate((ea: any) => {
+              ea.taskId = a.taskId;
+              ea.userId = a.userId;
+              ea.status = a.status;
+              ea.fulfilledRole = a.fulfilledRole ?? null;
+              ea.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
+              ea.isSynced = true;
+            }));
+          }
+        }
+        
+        if (ops.length > 0) {
+          await database.write(async () => {
+            await database.batch(...ops);
+          });
+        }
+      }
+      
+      OfflineLogger.cache(`TaskDetail: saved task ${t.id} to DB`);
+    } catch (e) {
+      OfflineLogger.cache('TaskDetail: save to DB failed', e);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     if (isNew) return;
+    
     try {
-      const t = await tasksApi.getOne(taskId);
-      setTask(t);
-    } catch {
-      Alert.alert('Помилка', 'Не вдалося завантажити підзадачу');
-      if (navigation.canGoBack()) navigation.goBack();
-      else navigation.navigate('RequestsList' as never);
+      // КРОК 1: Load from local DB first (with adaptive timeout)
+      const timeout = isOffline ? 10000 : 300;
+      const localTask = await Promise.race([
+        loadTaskLocal(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), timeout))
+      ]);
+      
+      if (localTask) {
+        OfflineLogger.nav('TaskDetail: showing local data first');
+        setTask(localTask);
+        setLoading(false);
+      }
+      
+      // КРОК 2: If online, update from server
+      if (!isOffline) {
+        try {
+          const t = await tasksApi.getOne(taskId);
+          setTask(t);
+          await saveTaskToDB(t);
+          
+          // Load reports
+          try {
+            const { taskReportsApi } = await import('../../api/task-reports.api');
+            const reps = await taskReportsApi.getAll(task.id);
+            setReports(reps);
+          } catch {
+            // ignore reports error
+          }
+        } catch (e) {
+          OfflineLogger.network('TaskDetail: server load failed');
+          if (!localTask) {
+            Alert.alert('Помилка', 'Не вдалося завантажити підзадачу');
+            if (navigation.canGoBack()) navigation.goBack();
+          }
+        }
+      }
+    } catch (e) {
+      OfflineLogger.nav('TaskDetail: unexpected error', e);
     } finally {
       setLoading(false);
     }
-  }, [taskId, isNew]);
+  }, [taskId, isNew, isOffline, loadTaskLocal, saveTaskToDB, navigation]);
 
   useEffect(() => {
     load();
   }, [load]);
-
-  useEffect(() => {
-    if (!task) return;
-    import('../../api/task-reports.api')
-      .then(mod => mod.taskReportsApi.getAll(task.id))
-      .then(setReports)
-      .catch(() => {});
-  }, [task]);
 
   const handleCreate = async () => {
     if (!newTitle.trim() || newTitle.trim().length < 3) {
@@ -267,7 +418,7 @@ export default function TaskDetailScreen() {
       <View style={{ flex: 1 }}>
         <ScreenHeader title="Створити задачу" onBack={() => navigation.goBack()} />
         <ScrollView contentContainerStyle={{ padding: 16 }}>
-          <Input label="Назва задачі" value={newTitle} onChangeText={setNewTitle} required />
+          <Input label="Назва задачі" value={newTitle} onChangeText={setNewTitle} />
           <Input label="Опис" value={newDesc} onChangeText={setNewDesc} multiline />
           <Input label="Потрібно людей" value={newPeople} onChangeText={setNewPeople} keyboardType="numeric" />
           <Input label="Потрібні ролі (через кому)" value={newRoles} onChangeText={setNewRoles} multiline />
@@ -404,7 +555,7 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                 variant={myAssignment.status === AssignmentStatus.EN_ROUTE ? 'primary' : 'outline'}
                 onPress={() => {
                   const targetStatus = AssignmentStatus.EN_ROUTE;
-                  const newStatus = myAssignment?.status === targetStatus ? AssignmentStatus.ACCEPTED : targetStatus;
+                  const newStatus = myAssignment?.status === targetStatus ? 'assigned' as AssignmentStatus : targetStatus;
                   handleUpdateStatus(newStatus);
                 }}
                 loading={actioning}
@@ -416,7 +567,7 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                 variant={myAssignment.status === AssignmentStatus.ON_SITE ? 'primary' : 'outline'}
                 onPress={() => {
                   const targetStatus = AssignmentStatus.ON_SITE;
-                  const newStatus = myAssignment?.status === targetStatus ? AssignmentStatus.ACCEPTED : targetStatus;
+                  const newStatus = myAssignment?.status === targetStatus ? 'assigned' as AssignmentStatus : targetStatus;
                   handleUpdateStatus(newStatus);
                 }}
                 loading={actioning}

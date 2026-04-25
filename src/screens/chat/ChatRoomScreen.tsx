@@ -87,7 +87,7 @@ export default function ChatRoomScreen() {
             m.senderId = msg.senderId;
             m.senderName = msg.sender?.fullName || null;
             m.content = msg.content;
-            m.sentAt = msg.sentAt;
+            m.sentAt = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
             m.isSynced = true;
             m.pendingAction = null;
             m.messageStatus = (msg as any).messageStatus || 'sent';
