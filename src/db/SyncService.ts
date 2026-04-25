@@ -275,7 +275,7 @@ export class SyncService {
     } catch (err) {
       OfflineLogger.sync('Pull local assignments error:', err);
     }
-    const localAssignmentsMap = new Map(localAssignments.map((a) => [a.id, a]));
+    const localAssignmentsMap = new Map(localAssignments.map((a) => [`${a.taskId}:${a.userId}`, a]));
     
     const syncedRequests = localRequests.filter((r: any) => r.serverId && r.isSynced);
     for (const req of syncedRequests.slice(0, 50)) {
@@ -322,7 +322,7 @@ export class SyncService {
           // Зберігаємо assignments для задачі
           if (st.assignments && st.assignments.length > 0) {
             for (const sa of st.assignments) {
-              const existingA = localAssignmentsMap.get(sa.id);
+              const existingA = localAssignmentsMap.get(`${st.id}:${sa.userId}`);
               if (existingA) {
                 preparedOperations.push(
                   existingA.prepareUpdate((a: any) => {

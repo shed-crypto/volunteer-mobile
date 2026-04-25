@@ -56,18 +56,25 @@ export default function TaskDetailScreen() {
       const local = localTasks.find((t: any) => t.serverId === taskId || t.id === taskId);
       if (!local) return null;
       
-      // Load assignments for this task
+      // Load assignments for this task (deduplicate by userId — workaround for duplicates in DB)
       const localAssignments = await collections.taskAssignments.query().fetch();
-      const taskAssignments = localAssignments
+      const taskAssignmentsMap = new Map<string, any>();
+      localAssignments
         .filter((a: any) => a.taskId === taskId || a.taskId === local.id)
-        .map((a: any) => ({
-          id: a.id,
-          taskId: a.taskId,
-          userId: a.userId,
-          status: a.status,
-          fulfilledRole: a.fulfilledRole,
-          assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
-        }));
+        .forEach((a: any) => {
+          const key = a.userId;
+          if (!taskAssignmentsMap.has(key)) {
+            taskAssignmentsMap.set(key, {
+              id: a.id,
+              taskId: a.taskId,
+              userId: a.userId,
+              status: a.status,
+              fulfilledRole: a.fulfilledRole,
+              assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
+            });
+          }
+        });
+      const taskAssignments = Array.from(taskAssignmentsMap.values());
       
       return {
         id: local.serverId || local.id,

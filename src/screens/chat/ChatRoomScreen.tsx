@@ -180,31 +180,39 @@ export default function ChatRoomScreen() {
       console.error('[ChatRoomScreen] Помилка завантаження:', error);
       // API впав — спробуємо локальну БД як fallback
       try {
-        const localMessages = await collections.chatMessages
-          .query(Q.where('chat_id', chatId))
-          .fetch();
-        if (localMessages.length > 0) {
-          setMessages(localMessages.map((m: any) => ({
-            id: m.serverId || m.id,
-            chatId: m.chatId,
-            senderId: m.senderId,
-            content: m.content,
-            sentAt: m.sentAt,
-            messageType: 'text' as const,
-            messageStatus: m.messageStatus || 'sent',
-            readBy: [],
-            deliveredTo: [],
-            sender: {
-              id: m.senderId,
-              fullName: m.senderName || 'Користувач',
-              email: '',
-              systemRole: SystemRole.VOLUNTEER,
-              clearanceLevel: ClearanceLevel.LOCAL,
-              trustScore: 0,
-              isBlocked: false,
-              createdAt: new Date().toISOString(),
-            },
-          })).sort((a: any, b: any) => a.sentAt - b.sentAt));
+          const localMessages = await collections.chatMessages
+            .query(Q.where('chat_id', chatId))
+            .fetch();
+          if (localMessages.length > 0) {
+            // Deduplicate by id
+            const msgMap = new Map<string, any>();
+            localMessages.forEach((m: any) => {
+              const key = m.serverId || m.id;
+              if (!msgMap.has(key) || msgMap.get(key).sentAt < m.sentAt) {
+                msgMap.set(key, m);
+              }
+            });
+            setMessages(Array.from(msgMap.values()).map((m: any) => ({
+              id: m.serverId || m.id,
+              chatId: m.chatId,
+              senderId: m.senderId,
+              content: m.content,
+              sentAt: m.sentAt,
+              messageType: 'text' as const,
+              messageStatus: m.messageStatus || 'sent',
+              readBy: [],
+              deliveredTo: [],
+              sender: {
+                id: m.senderId,
+                fullName: m.senderName || 'Користувач',
+                email: '',
+                systemRole: SystemRole.VOLUNTEER,
+                clearanceLevel: ClearanceLevel.LOCAL,
+                trustScore: 0,
+                isBlocked: false,
+                createdAt: new Date().toISOString(),
+              },
+            })).sort((a: any, b: any) => a.sentAt - b.sentAt));
         } else {
           setMessages([]);
         }
