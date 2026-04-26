@@ -26,6 +26,43 @@ type RouteParams = { ChatRoom: { chatId: string; chatName?: string } };
 const STATIC_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api')
   .replace('/api', '');
 
+// Допоміжний компонент для динамічного відображення фото
+function AdaptiveImage({ uri }: { uri: string }) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    Image.getSize(uri, (width, height) => {
+      const maxWidth = 250;
+      const maxHeight = 200;
+      const ratio = width / height;
+
+      let finalWidth = width;
+      let finalHeight = height;
+
+      if (width > maxWidth) {
+        finalWidth = maxWidth;
+        finalHeight = maxWidth / ratio;
+      }
+      if (finalHeight > maxHeight) {
+        finalHeight = maxHeight;
+        finalWidth = maxHeight * ratio;
+      }
+
+      setSize({ width: finalWidth, height: finalHeight });
+    });
+  }, [uri]);
+
+  if (size.width === 0) return <ActivityIndicator style={styles.attachImage} />;
+
+  return (
+    <Image 
+      source={{ uri }} 
+      style={[styles.attachImage, { width: size.width, height: size.height }]} 
+      resizeMode="cover" 
+    />
+  );
+}
+
 export default function ChatRoomScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<RouteProp<RouteParams, 'ChatRoom'>>();
@@ -40,12 +77,11 @@ export default function ChatRoomScreen() {
   const [uploading, setUploading] = useState(false);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState('');
-  // Android keyboard handling
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const TAB_BAR_HEIGHT = 65; // Приблизна висота вкладок
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
 
-  // ─── WebSocket ──────────────────────────────────────────────────────────────
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
       if (msg.chatId === chatId) {
@@ -72,10 +108,8 @@ export default function ChatRoomScreen() {
   const isOnlineRef = useRef(isOnline);
   useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
 
-  // Захист від подвійного запуску (React StrictMode)
   const isLoadingRef = useRef(false);
 
-  // ─── Зберегти повідомлення в локальну БД (асинхронно, не блокуємо UI) ──────
   const saveMessagesToDB = useCallback(async (msgs: Message[]) => {
     if (!msgs.length) return;
     try {
@@ -106,7 +140,6 @@ export default function ChatRoomScreen() {
         );
 
       if (preparedOps.length > 0) {
-        // ВИПРАВЛЕНО: database.batch() ОБОВ'ЯЗКОВО всередині database.write()
         await database.write(async () => {
           await database.batch(...preparedOps);
         });
@@ -116,19 +149,14 @@ export default function ChatRoomScreen() {
     }
   }, [chatId]);
 
-  // ─── Load history ──────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     if (!chatId || isLoadingRef.current) return;
     isLoadingRef.current = true;
-    console.log(`[ChatRoomScreen] Завантаження чату: ${chatId}`);
-
     try {
-      // КРОК 1: Спочатку локальна БД (offline-first, швидко)
       const localMessages = await Promise.race([
         collections.chatMessages.query(Q.where('chat_id', chatId)).fetch(),
         new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 500))
       ]);
-      console.log(`[ChatRoomScreen] Локальна БД: ${localMessages.length} повідомленнь`);
 
       if (localMessages.length > 0) {
         const mapped = localMessages
@@ -160,9 +188,7 @@ export default function ChatRoomScreen() {
         setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
       }
 
-      // КРОК 2: Якщо online — оновити з API
       if (isOnlineRef.current) {
-        console.log('[ChatRoomScreen] Онлайн — оновлення з API');
         try {
           const data = await chatApi.getMessages(chatId, 50);
           const sorted = [...data].sort(
@@ -171,11 +197,9 @@ export default function ChatRoomScreen() {
           setMessages(sorted);
           setLoading(false);
           setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
-
           saveMessagesToDB(data).catch(() => {});
           chatApi.markAsRead(chatId).catch(() => {});
         } catch (apiErr) {
-          console.warn('[ChatRoomScreen] API error, keeping local messages:', apiErr);
           if (localMessages.length === 0) {
             setMessages([]);
             setLoading(false);
@@ -186,7 +210,6 @@ export default function ChatRoomScreen() {
         setLoading(false);
       }
     } catch (error: any) {
-      console.error('[ChatRoomScreen] Помилка завантаження:', error);
       setMessages([]);
       setLoading(false);
     } finally {
@@ -201,7 +224,6 @@ export default function ChatRoomScreen() {
     };
   }, [load]);
 
-  // Android keyboard handling
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) => {
       setKeyboardHeight(e.endCoordinates.height);
@@ -215,19 +237,13 @@ export default function ChatRoomScreen() {
     };
   }, []);
 
-  // ─── Надіслати текст ───────────────────────────────────────────────────────
   const handleSend = async () => {
     const content = text.trim();
     if (!content || sending) return;
-
     setSending(true);
     setText('');
     sendTyping(chatId, false);
-
-    // 1. Надсилаємо ОДРАЗУ через WebSocket — не чекаємо БД
     sendMessage(chatId, content);
-
-    // 2. Зберігаємо в локальну БД асинхронно (офлайн-резерв)
     import('../../db/SyncService')
       .then((module) =>
         module.SyncService.saveMessageOffline({
@@ -238,7 +254,6 @@ export default function ChatRoomScreen() {
         })
       )
       .catch((err) => console.warn('[handleSend] saveOffline failed:', err));
-
     setSending(false);
   };
 
@@ -248,15 +263,11 @@ export default function ChatRoomScreen() {
   };
 
   const uploadAndSend = async (uri: string, name: string, type: string) => {
-    console.log('[uploadAndSend] params:', { uri, name, type });
     setUploading(true);
     try {
       const result = await chatApi.sendFile(chatId, { uri, name, type });
-      console.log('[uploadAndSend] server result:', result);
-      // Чекаємо на готовий сокет перед відправкою
       await emitWhenReady('send_message', { chatId, content: result.name, attachmentUrl: result.url });
     } catch (e: any) {
-      console.error('[uploadAndSend] error:', e.message, e);
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
       setUploading(false);
@@ -270,24 +281,16 @@ export default function ChatRoomScreen() {
         Alert.alert('Потрібен дозвіл', 'Дозвольте доступ до галереї');
         return;
       }
-      console.log('[handlePickMedia] launching ImagePicker...');
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'] as any,
         allowsMultipleSelection: false,
-        // ПРИБРАНО quality: може ламати вибір фото на Android
       });
-      console.log('[handlePickMedia] ImagePicker result:', JSON.stringify({ canceled: result.canceled, assetsCount: result.assets?.length }));
-      if (result.canceled || !result.assets?.length) {
-        console.log('[handlePickMedia] canceled or no assets, returning');
-        return;
-      }
+      if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
-      console.log('[handlePickMedia] picked asset:', JSON.stringify(asset));
       const fileName = asset.fileName || asset.uri.split('/').pop() || `media_${Date.now()}`;
       const normalized = await fileUtils.normalizeImagePickerAsset(asset.uri, fileName, asset.mimeType);
       await uploadAndSend(normalized.uri, normalized.name, normalized.mimeType);
     } catch (err: any) {
-      console.error('[handlePickMedia] exception:', err.message, err);
       Alert.alert('Помилка', 'Не вдалося відкрити галерею: ' + err.message);
     }
   };
@@ -314,69 +317,77 @@ export default function ChatRoomScreen() {
     );
   }
 
+  const renderContent = () => (
+    <View style={{ flex: 1 }}>
+      <FlatList
+        ref={flatRef}
+        data={messages}
+        keyExtractor={(m) => m.id}
+        contentContainerStyle={{ padding: 12, paddingBottom: 4 }}
+        onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: false })}
+        ListEmptyComponent={
+          <View style={{ alignItems: 'center', padding: 40 }}>
+            <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
+            <Text style={{ color: Colors.textSecondary }}>Повідомлень поки немає</Text>
+          </View>
+        }
+        renderItem={({ item: msg }) => (
+          <MessageBubble
+            message={msg}
+            isMine={msg.senderId === user?.id}
+            staticBase={STATIC_BASE}
+            onAvatarPress={(userId) => navigation.navigate('UserProfile', { userId })}
+            onMediaPress={(url) => {
+              setSelectedMediaUrl(url);
+              setMediaViewerVisible(true);
+            }}
+          />
+        )}
+      />
+
+      <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: Math.max(10, keyboardHeight - TAB_BAR_HEIGHT) }]}>
+        <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploading}>
+          <Text style={{ fontSize: 20 }}>🖼</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument} disabled={uploading}>
+          <Text style={{ fontSize: 20 }}>📎</Text>
+        </TouchableOpacity>
+        <TextInput
+          style={styles.input}
+          value={text}
+          onChangeText={handleTyping}
+          placeholder="Написати повідомлення..."
+          placeholderTextColor={Colors.textMuted}
+          multiline
+          maxLength={2000}
+          returnKeyType="send"
+          onSubmitEditing={handleSend}
+        />
+        {uploading ? (
+          <ActivityIndicator color={Colors.primary} style={styles.sendBtn} />
+        ) : (
+          <TouchableOpacity
+            style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
+            onPress={handleSend}
+            disabled={!text.trim()}
+          >
+            <Text style={{ fontSize: 20 }}>➤</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
       <ScreenHeader title={chatName ?? 'Чат'} onBack={() => navigation.navigate('ChatsList')} />
-
-      <View style={{ flex: 1 }}>
-        <FlatList
-          ref={flatRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={{ padding: 12, paddingBottom: 4 }}
-          onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: false })}
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', padding: 40 }}>
-              <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
-              <Text style={{ color: Colors.textSecondary }}>Повідомлень поки немає</Text>
-            </View>
-          }
-          renderItem={({ item: msg }) => (
-            <MessageBubble
-              message={msg}
-              isMine={msg.senderId === user?.id}
-              staticBase={STATIC_BASE}
-              onAvatarPress={(userId) => navigation.navigate('UserProfile', { userId })}
-              onMediaPress={(url) => {
-                setSelectedMediaUrl(url);
-                setMediaViewerVisible(true);
-              }}
-            />
-          )}
-        />
-
-        <View style={[styles.inputRow, { paddingBottom: Math.max(10, keyboardHeight) }]}>
-          <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploading}>
-            <Text style={{ fontSize: 20 }}>🖼</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument} disabled={uploading}>
-            <Text style={{ fontSize: 20 }}>📎</Text>
-          </TouchableOpacity>
-          <TextInput
-            style={styles.input}
-            value={text}
-            onChangeText={handleTyping}
-            placeholder="Написати повідомлення..."
-            placeholderTextColor={Colors.textMuted}
-            multiline
-            maxLength={2000}
-            returnKeyType="send"
-            onSubmitEditing={handleSend}
-          />
-          {uploading ? (
-            <ActivityIndicator color={Colors.primary} style={styles.sendBtn} />
-          ) : (
-            <TouchableOpacity
-              style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
-              onPress={handleSend}
-              disabled={!text.trim()}
-            >
-              <Text style={{ fontSize: 20 }}>➤</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={90}>
+          {renderContent()}
+        </KeyboardAvoidingView>
+      ) : (
+        renderContent()
+      )}
       <MediaViewer
         visible={mediaViewerVisible}
         url={selectedMediaUrl}
@@ -385,8 +396,6 @@ export default function ChatRoomScreen() {
     </View>
   );
 }
-
-// ─── MessageBubble ─────────────────────────────────────────────────────────────
 
 function MessageBubble({
   message, isMine, staticBase, onAvatarPress, onMediaPress,
@@ -435,11 +444,7 @@ function MessageBubble({
         )}
         {isImage && attachUrl && (
           <TouchableOpacity onPress={() => onMediaPress?.(attachUrl)}>
-            <Image 
-              source={{ uri: attachUrl }} 
-              style={styles.attachImage} 
-              resizeMode="contain" 
-            />
+            <AdaptiveImage uri={attachUrl} />
           </TouchableOpacity>
         )}
         {!isImage && hasAttachment && attachUrl && (
