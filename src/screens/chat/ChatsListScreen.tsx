@@ -11,7 +11,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   RefreshControl, StyleSheet, Modal,
-  TextInput, ActivityIndicator,
+  TextInput, ActivityIndicator, Image
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { chatApi } from '../../api/chat.api';
@@ -282,6 +282,17 @@ export default function ChatsListScreen() {
     return 'Чат';
   };
 
+  const getLastMessagePreview = (chat: Chat) => {
+    if (!chat.lastMessage) return '';
+    const msg = chat.lastMessage;
+    if (msg.messageType === 'system') return msg.content;
+    if (msg.attachmentUrl) {
+      const isImage = msg.attachmentUrl.match(/\.(jpg|jpeg|png|gif|webp|bmp|heic)/i);
+      return isImage ? '🖼 Фото' : '📎 Файл';
+    }
+    return msg.content || '';
+  };
+
   const getChatIcon = (chat: Chat) => {
     if (chat.type === ChatType.TASK_CHAT) return '📌';
     if (chat.type === ChatType.ORG_CHAT)  return '🏢';
@@ -353,10 +364,12 @@ export default function ChatsListScreen() {
                   </Text>
                 </View>
                 <Text style={styles.chatSub} numberOfLines={1}>
-                  {chat.type === ChatType.DIRECT   ? 'Особистий чат'
-                   : chat.type === ChatType.TASK_CHAT ? '📌 Чат задачі'
-                   : chat.type === ChatType.ORG_CHAT  ? '🏢 Чат організації'
-                   : `${chat.participants?.length ?? 0} учасників`}
+                  {getLastMessagePreview(chat) || (
+                    chat.type === ChatType.DIRECT   ? 'Особистий чат'
+                    : chat.type === ChatType.TASK_CHAT ? '📌 Чат задачі'
+                    : chat.type === ChatType.ORG_CHAT  ? '🏢 Чат організації'
+                    : `${chat.participants?.length ?? 0} учасників`
+                  )}
                 </Text>
               </View>
 
