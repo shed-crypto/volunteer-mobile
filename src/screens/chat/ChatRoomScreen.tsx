@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
   Image, Alert,
 } from 'react-native';
+import { MediaViewer } from '../../components/MediaViewer';
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -37,6 +38,8 @@ export default function ChatRoomScreen() {
   const [typing, setTyping] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
+  const [selectedMediaUrl, setSelectedMediaUrl] = useState('');
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
 
@@ -301,7 +304,7 @@ export default function ChatRoomScreen() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <FlatList
@@ -370,7 +373,10 @@ export default function ChatRoomScreen() {
 // ─── MessageBubble ─────────────────────────────────────────────────────────────
 
 function MessageBubble({
-  message, isMine, staticBase, onAvatarPress,
+  message,
+  isMine,
+  staticBase,
+  onAvatarPress,
 }: {
   message: Message;
   isMine: boolean;
@@ -395,6 +401,22 @@ function MessageBubble({
     : null;
   const isImage = attachUrl ? /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i.test(attachUrl) : false;
   const isVideo = attachUrl ? /\.(mp4|mov|avi|mkv|m4v)$/i.test(attachUrl) : false;
+  
+  // Динамічне обчислення розмірів зображення
+  const [imageDimensions, setImageDimensions] = useState({ width: 200, height: 150 });
+  useEffect(() => {
+    if (isImage && attachUrl) {
+      Image.getSize(attachUrl, (width, height) => {
+        const maxWidth = 250;
+        const maxHeight = 250;
+        const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+        setImageDimensions({
+          width: width * scale,
+          height: height * scale,
+        });
+      });
+    }
+  }, [isImage, attachUrl]);
 
   return (
     <View style={[styles.bubbleWrapper, isMine && styles.bubbleWrapperMine]}>
@@ -413,14 +435,29 @@ function MessageBubble({
         {!isMine && message.sender && (
           <Text style={styles.senderName}>{message.sender.fullName}</Text>
         )}
-        {isImage && attachUrl && (
-          <Image source={{ uri: attachUrl }} style={styles.attachImage} resizeMode="cover" />
-        )}
+  {isImage && attachUrl && (
+    <TouchableOpacity onPress={() => {
+      setSelectedMediaUrl(attachUrl);
+      setMediaViewerVisible(true);
+    }}>
+      <Image 
+        source={{ uri: attachUrl }} 
+        style={[styles.attachImage, { width: imageDimensions.width, height: imageDimensions.height }]} 
+        resizeMode="contain" 
+      />
+    </TouchableOpacity>
+  )}
+  <MediaViewer
+    visible={mediaViewerVisible}
+    onClose={() => setMediaViewerVisible(false)}
+    mediaUrl={selectedMediaUrl}
+    mediaType="image"
+  />
         {!isImage && hasAttachment && attachUrl && (
-          <View style={styles.attachFile}>
+          <TouchableOpacity onPress={() => {/* TODO: Open file viewer */}} style={styles.attachFile}>
             <Text style={styles.attachFileIcon}>{isVideo ? '🎥' : '📄'}</Text>
             <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
-          </View>
+          </TouchableOpacity>
         )}
         {!hasAttachment && (
           <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
@@ -457,14 +494,20 @@ const styles = StyleSheet.create({
   bubbleWrapper: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 8, gap: 6 },
   bubbleWrapperMine: { flexDirection: 'row-reverse' },
   senderAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  bubble: { maxWidth: '75%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, overflow: 'hidden' },
+  bubble: { 
+    maxWidth: '75%', 
+    borderRadius: 18, 
+    paddingHorizontal: 14, 
+    paddingVertical: 8, 
+    overflow: 'hidden' 
+  },
   bubbleMine: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
   bubbleOther: { backgroundColor: Colors.surface, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: Colors.borderLight },
   senderName: { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 3 },
   bubbleText: { fontSize: 15, color: Colors.text, lineHeight: 20 },
   bubbleTextMine: { color: '#fff' },
   bubbleTime: { fontSize: 10, color: Colors.textMuted, marginTop: 4, textAlign: 'right' },
-  attachImage: { width: 220, height: 160, borderRadius: 10, marginBottom: 6 },
+  attachImage: { borderRadius: 10, marginBottom: 6 },
   attachFile: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },
   attachFileName: { flex: 1, fontSize: 13, color: Colors.text },
