@@ -58,9 +58,9 @@ const ChatStack = createNativeStackNavigator();
 function ChatStackNavigator() {
   return (
     <ChatStack.Navigator screenOptions={{ headerShown: false }}>
-      <ChatStack.Screen name="ChatsList"   component={ChatsListScreen} />
-      <ChatStack.Screen name="ChatRoom"    component={ChatRoomScreen} />
-      <ChatStack.Screen name="UserProfile" component={UserProfileScreen} />
+      <ChatStack.Screen name="ChatsList"    component={ChatsListScreen} />
+      <ChatStack.Screen name="ChatRoom"     component={ChatRoomScreen} />
+      <ChatStack.Screen name="UserProfile"  component={UserProfileScreen} />
     </ChatStack.Navigator>
   );
 }

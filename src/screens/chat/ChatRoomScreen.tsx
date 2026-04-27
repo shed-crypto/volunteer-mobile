@@ -19,7 +19,8 @@ import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { database, collections } from '../../db/index';
 import { MessageStatusIcon } from '../../components/MessageStatusIcon';
 import { NetworkStatusIndicator } from '../../components/NetworkStatusIndicator';
-import { MediaViewer } from '../../components/MediaViewer';
+import { MediaViewer, VideoThumbnail } from '../../components/MediaViewer';
+import { MessageContextMenu } from '../../components/MessageContextMenu';
 
 type RouteParams = { ChatRoom: { chatId: string; chatName?: string } };
 
@@ -76,7 +77,7 @@ export default function ChatRoomScreen() {
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
-  const [selectedMediaUrl, setSelectedMediaUrl] = useState('');
+  const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' }>({ url: '', type: 'image' });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const TAB_BAR_HEIGHT = 65; // Приблизна висота вкладок
   const flatRef = useRef<FlatList>(null);
@@ -337,9 +338,13 @@ export default function ChatRoomScreen() {
             isMine={msg.senderId === user?.id}
             staticBase={STATIC_BASE}
             onAvatarPress={(userId) => navigation.navigate('UserProfile', { userId })}
-            onMediaPress={(url) => {
-              setSelectedMediaUrl(url);
+            onMediaPress={(url, type = 'image') => {
+              setSelectedMedia({ url, type: type as 'image' | 'video' });
               setMediaViewerVisible(true);
+            }}
+            onLongPress={(message) => {
+              // TODO: Implement context menu logic here
+              console.log('Long press on message:', message.id);
             }}
           />
         )}
@@ -390,7 +395,8 @@ export default function ChatRoomScreen() {
       )}
       <MediaViewer
         visible={mediaViewerVisible}
-        url={selectedMediaUrl}
+        url={selectedMedia.url}
+        type={selectedMedia.type}
         onClose={() => setMediaViewerVisible(false)}
       />
     </View>
@@ -398,13 +404,14 @@ export default function ChatRoomScreen() {
 }
 
 function MessageBubble({
-  message, isMine, staticBase, onAvatarPress, onMediaPress,
+  message, isMine, staticBase, onAvatarPress, onMediaPress, onLongPress,
 }: {
   message: Message;
   isMine: boolean;
   staticBase: string;
   onAvatarPress?: (userId: string) => void;
-  onMediaPress?: (url: string) => void;
+  onMediaPress?: (url: string, type?: 'image' | 'video') => void;
+  onLongPress?: (message: Message) => void;
 }) {
   const isSystem = message.messageType === 'system';
   if (isSystem) {
@@ -426,11 +433,19 @@ function MessageBubble({
   const isVideo = attachUrl ? /\.(mp4|mov|avi|mkv|m4v)$/i.test(attachUrl) : false;
 
   return (
-    <View style={[styles.bubbleWrapper, isMine && styles.bubbleWrapperMine]}>
+    <TouchableOpacity 
+      onLongPress={() => onLongPress?.(message)}
+      delayLongPress={500}
+      activeOpacity={0.8}
+      style={[styles.bubbleWrapper, isMine && styles.bubbleWrapperMine]}
+    >
       {!isMine && (
         <TouchableOpacity
           style={styles.senderAvatar}
-          onPress={() => message.senderId && onAvatarPress?.(message.senderId)}
+          onPress={(e) => {
+            e.stopPropagation();
+            message.senderId && onAvatarPress?.(message.senderId);
+          }}
           activeOpacity={0.7}
         >
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
@@ -443,13 +458,21 @@ function MessageBubble({
           <Text style={styles.senderName}>{message.sender.fullName}</Text>
         )}
         {isImage && attachUrl && (
-          <TouchableOpacity onPress={() => onMediaPress?.(attachUrl)}>
+          <TouchableOpacity onPress={(e) => {
+            e.stopPropagation();
+            onMediaPress?.(attachUrl);
+          }}>
             <AdaptiveImage uri={attachUrl} />
           </TouchableOpacity>
         )}
-        {!isImage && hasAttachment && attachUrl && (
+        {!isImage && hasAttachment && attachUrl && isVideo && (
+          <VideoThumbnail uri={attachUrl} onPress={() => {
+            onMediaPress?.(attachUrl, 'video');
+          }} />
+        )}
+        {!isImage && !isVideo && hasAttachment && attachUrl && (
           <View style={styles.attachFile}>
-            <Text style={styles.attachFileIcon}>{isVideo ? '🎥' : '📄'}</Text>
+            <Text style={styles.attachFileIcon}>📄</Text>
             <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
           </View>
         )}
@@ -465,7 +488,7 @@ function MessageBubble({
           />
         )}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
