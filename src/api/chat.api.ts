@@ -1,6 +1,6 @@
 import api, { API_BASE_URL } from './axios';
 import * as SecureStore from 'expo-secure-store';
-import { Chat, Message } from '../types';
+import { Chat, Message, User } from '../types';
 
 export const chatApi = {
   getMyChats: (): Promise<Chat[]> =>
@@ -66,4 +66,26 @@ export const chatApi = {
 
   markAsRead: (chatId: string): Promise<void> =>
     api.post(`/chats/${chatId}/read`).then(() => undefined),
+
+  deleteMessage: (chatId: string, messageId: string): Promise<void> =>
+    api.delete(`/chats/${chatId}/messages/${messageId}`).then(() => undefined),
+
+  deleteChat: (chatId: string): Promise<void> =>
+    api.delete(`/chats/${chatId}`).then(() => undefined),
+
+  clearChatHistory: (chatId: string): Promise<void> =>
+    api.delete(`/chats/${chatId}/messages`).then(() => undefined),
+
+  togglePin: (chatId: string): Promise<Chat> =>
+    api.patch(`/chats/${chatId}/pin`).then((r) => r.data),
+
+  getChatParticipants: (chatId: string): Promise<User[]> =>
+    api.get(`/chats/${chatId}/participants`).then((r) => r.data),
+
+  forwardMessage: (chatId: string, content: string, originalMessageId?: string): Promise<Message> =>
+    api.post(`/chats/${chatId}/messages`, {
+      content,
+      messageType: 'forwarded',
+      replyTo: originalMessageId
+    }).then((r) => r.data),
 };

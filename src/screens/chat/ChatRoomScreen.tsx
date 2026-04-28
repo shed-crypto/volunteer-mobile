@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
-  Image, Alert, Keyboard,
+  Image, Alert, Keyboard, Clipboard,
 } from 'react-native';
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -79,6 +79,11 @@ export default function ChatRoomScreen() {
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' }>({ url: '', type: 'image' });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
+  const [showForwardModal, setShowForwardModal] = useState(false);
+  const [messageToForward, setMessageToForward] = useState<Message | null>(null);
   const TAB_BAR_HEIGHT = 65; // Приблизна висота вкладок
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
@@ -88,10 +93,10 @@ export default function ChatRoomScreen() {
       if (msg.chatId === chatId) {
         setMessages((prev) => {
           if (prev.find((m) => m.id === msg.id)) return prev;
-          return [...prev, msg as Message]
-            .sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
+          return [msg as Message, ...prev]
+            .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
         });
-        setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+        // Scroll is handled by FlatList inverted={true}
       }
     },
     onTyping: (data) => {
@@ -258,6 +263,49 @@ export default function ChatRoomScreen() {
     setSending(false);
   };
 
+  const handleCopyMessage = () => {
+    if (selectedMessage) {
+      Clipboard.setString(selectedMessage.content);
+      Alert.alert('✅', 'Повідомлення скопійовано');
+      setContextMenuVisible(false);
+    }
+  };
+
+  const handleDeleteMessage = async () => {
+    if (!selectedMessage) return;
+    Alert.alert('Видалити повідомлення', 'Ви впевнені?', [
+      { text: 'Скасувати', style: 'cancel' },
+      {
+        text: 'Видалити',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await chatApi.deleteMessage(chatId, selectedMessage.id);
+            setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
+            setContextMenuVisible(false);
+          } catch (error: any) {
+            Alert.alert('Помилка', 'Не вдалося видалити: ' + error.message);
+          }
+        }
+      }
+    ]);
+  };
+
+  const handleReplyMessage = () => {
+    if (selectedMessage) {
+      setReplyToMessage(selectedMessage);
+      setContextMenuVisible(false);
+    }
+  };
+
+  const handleForwardMessage = () => {
+    if (selectedMessage) {
+      setMessageToForward(selectedMessage);
+      setShowForwardModal(true);
+      setContextMenuVisible(false);
+    }
+  };
+
   const handleTyping = (val: string) => {
     setText(val);
     sendTyping(chatId, val.length > 0);
@@ -323,9 +371,9 @@ export default function ChatRoomScreen() {
       <FlatList
         ref={flatRef}
         data={messages}
+        inverted={true}
         keyExtractor={(m) => m.id}
         contentContainerStyle={{ padding: 12, paddingBottom: 4 }}
-        onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: false })}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', padding: 40 }}>
             <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
@@ -342,12 +390,21 @@ export default function ChatRoomScreen() {
               setSelectedMedia({ url, type: type as 'image' | 'video' });
               setMediaViewerVisible(true);
             }}
-            onLongPress={(message) => {
-              // TODO: Implement context menu logic here
-              console.log('Long press on message:', message.id);
+            onLongPress={(message: Message) => {
+              setSelectedMessage(message);
+              setContextMenuVisible(true);
             }}
           />
         )}
+      />
+
+      <MessageContextMenu
+        visible={contextMenuVisible}
+        onClose={() => setContextMenuVisible(false)}
+        onReply={handleReplyMessage}
+        onForward={handleForwardMessage}
+        onCopy={handleCopyMessage}
+        onDelete={handleDeleteMessage}
       />
 
       <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: Math.max(10, keyboardHeight - TAB_BAR_HEIGHT) }]}>

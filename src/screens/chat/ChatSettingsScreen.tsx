@@ -4,6 +4,8 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { ScreenHeader } from '../../components/ui';
 import { Colors } from '../../utils/theme';
 import { chatApi } from '../../api/chat.api';
+import { Q } from '@nozbe/watermelondb';
+import { database, collections } from '../../db/index';
 
 type RouteParams = { ChatSettings: { chatId: string; chatName?: string; isGroupChat: boolean } };
 
@@ -23,11 +25,16 @@ export default function ChatSettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // TODO: Implement actual delete chat API call
-              // await chatApi.deleteChat(chatId);
-              Alert.alert('✅', 'Чат видалено (локально)');
-              // Повертаємося до списку чатів
-              navigation.navigate('Main', { screen: 'Chats', params: { screen: 'ChatsList' } });
+              await chatApi.deleteChat(chatId);
+              // Додатково видаляємо локальні повідомлення в БД
+              await database.write(async () => {
+                const msgs = await collections.chatMessages.query(Q.where('chat_id', chatId)).fetch();
+                await database.batch(...msgs.map((m: any) => m.prepareDestroyPermanently()));
+                const chat = await collections.chats.find(chatId);
+                await chat.markAsDeleted();
+              });
+              Alert.alert('✅', 'Чат видалено');
+              navigation.goBack();
             } catch (error: any) {
               Alert.alert('Помилка', 'Не вдалося видалити чат: ' + error.message);
             }
@@ -48,9 +55,12 @@ export default function ChatSettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // TODO: Implement actual clear chat API call or local DB deletion
-              // await chatApi.clearChatHistory(chatId);
-              Alert.alert('✅', 'Історію чату очищено (локально)');
+              await chatApi.clearChatHistory(chatId);
+              await database.write(async () => {
+                const msgs = await collections.chatMessages.query(Q.where('chat_id', chatId)).fetch();
+                await database.batch(...msgs.map((m: any) => m.prepareDestroyPermanently()));
+              });
+              Alert.alert('✅', 'Історію чату очищено');
               navigation.goBack();
             } catch (error: any) {
               Alert.alert('Помилка', 'Не вдалося очистити чат: ' + error.message);
@@ -61,9 +71,13 @@ export default function ChatSettingsScreen() {
     );
   };
 
-  const handlePinChat = () => {
-    // TODO: Implement pinning/unpinning chat logic
-    Alert.alert('У розробці', 'Функція закріплення/відкріплення чату буде реалізована пізніше.');
+  const handlePinChat = async () => {
+    try {
+      await chatApi.togglePin(chatId);
+      Alert.alert('✅', 'Статус чату оновлено');
+    } catch (error: any) {
+      Alert.alert('Помилка', 'Не вдалося закріпити чат: ' + error.message);
+    }
   };
 
   const handleViewProfile = () => {

@@ -1,25 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, View, Image, TouchableOpacity, StyleSheet, Text, ActivityIndicator } from 'react-native';
+import { Modal, View, Image, TouchableOpacity, StyleSheet, Text, ActivityIndicator, Alert } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import * as VideoThumbnails from 'expo-video-thumbnails';
+import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
 
 interface MediaViewerProps {
   visible: boolean;
   url: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'document';
   onClose: () => void;
 }
 
 export const MediaViewer: React.FC<MediaViewerProps> = ({ visible, url, type, onClose }) => {
+  const handleDownload = async () => {
+    try {
+      const filename = url.split('/').pop() || 'file';
+      // @ts-ignore
+      const localUri = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}${filename}`;
+      const downloadRes = await FileSystem.downloadAsync(url, localUri);
+      await Sharing.shareAsync(downloadRes.uri);
+    } catch (e) {
+      Alert.alert('Помилка', 'Не вдалося завантажити файл');
+    }
+  };
+
   return (
     <Modal visible={visible} transparent={true} animationType="fade">
       <View style={styles.container}>
         <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
           <Text style={styles.closeText}>✕</Text>
         </TouchableOpacity>
-        {type === 'image' ? (
+
+        {type === 'image' && (
           <Image source={{ uri: url }} style={styles.image} resizeMode="contain" />
-        ) : (
+        )}
+        {type === 'video' && (
           <Video
             source={{ uri: url }}
             style={styles.image}
@@ -27,6 +43,14 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({ visible, url, type, on
             useNativeControls
             shouldPlay
           />
+        )}
+        {type === 'document' && (
+          <View style={styles.docPlaceholder}>
+            <Text style={{ fontSize: 60 }}>📄</Text>
+            <TouchableOpacity style={styles.downloadBtn} onPress={handleDownload}>
+              <Text style={styles.downloadText}>Завантажити / Відкрити файл</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </Modal>
@@ -76,4 +100,7 @@ const styles = StyleSheet.create({
   thumb: { width: '100%', height: '100%', borderRadius: 10 },
   thumbPlaceholder: { fontSize: 40 },
   playIcon: { position: 'absolute' },
+  docPlaceholder: { justifyContent: 'center', alignItems: 'center' },
+  downloadBtn: { marginTop: 20, padding: 15, backgroundColor: '#fff', borderRadius: 10 },
+  downloadText: { color: '#000', fontWeight: 'bold' },
 });
