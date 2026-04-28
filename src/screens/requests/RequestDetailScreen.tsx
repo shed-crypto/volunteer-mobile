@@ -99,21 +99,21 @@ export default function RequestDetailScreen() {
       const localReqs = await collections.requests.query().fetch();
       const local = localReqs.find((r: any) => r.serverId === requestId || r.id === requestId);
       if (local) {
-        OfflineLogger.cache('Loaded request from local DB', { id: local.serverId || local.id });
+        OfflineLogger.cache('Loaded request from local DB', { id: (local as any).serverId || local.id });
         return {
-          id: local.serverId ?? local.id,
-          title: local.title,
-          description: local.description ?? '',
-          category: local.category as any,
-          urgency: local.urgency as any,
-          status: local.status as any,
-          requiredClearance: local.requiredClearance as any,
-          latitude: local.latitude != null ? local.latitude : undefined,
-          longitude: local.longitude != null ? local.longitude : undefined,
-          isLocationHidden: local.isLocationHidden,
-          tags: local.tags,
-          creatorId: local.creatorId ?? '',
-          createdAt: local.createdAtServer ? new Date(local.createdAtServer).toISOString() : '',
+          id: (local as any).serverId ?? local.id,
+          title: (local as any).title,
+          description: (local as any).description ?? '',
+          category: (local as any).category as any,
+          urgency: (local as any).urgency as any,
+          status: (local as any).status as any,
+          requiredClearance: (local as any).requiredClearance as any,
+          latitude: (local as any).latitude != null ? (local as any).latitude : undefined,
+          longitude: (local as any).longitude != null ? (local as any).longitude : undefined,
+          isLocationHidden: (local as any).isLocationHidden,
+          tags: (local as any).tags,
+          creatorId: (local as any).creatorId ?? '',
+          createdAt: (local as any).createdAtServer ? new Date((local as any).createdAtServer).toISOString() : '',
         } as any;
       }
     } catch (e) {
@@ -339,8 +339,14 @@ export default function RequestDetailScreen() {
   const isOwner = user?.id === request.creatorId;
   const isAdmin = user?.systemRole === SystemRole.ADMIN;
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;
+  const isVolunteer = user?.systemRole === SystemRole.VOLUNTEER;
+  
+  // Перевірка: чи волонтер бере участь хоча б в одній задачі цієї заявки
+  const isParticipant = tasks.some(t => t.assignments?.some(a => a.userId === user?.id));
+  
   const canManage = isOwner || isAdmin;
   const canCreateTask = isOwner || isAdmin || isCoord;
+  const canSubmitReview = isVolunteer && isParticipant;
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
@@ -385,6 +391,13 @@ export default function RequestDetailScreen() {
             {request.latitude ? (
               <LocationDisplay request={request} />
             ) : null}
+            {request.isLocationHidden && (
+              <View style={{ marginTop: 8, padding: 8, backgroundColor: Colors.warningLight, borderRadius: 8 }}>
+                <Text style={{ fontSize: 12, color: Colors.warning }}>
+                  ⚠️ Координати приховані з міркувань безпеки.
+                </Text>
+              </View>
+            )}
             {request.fundraisingUrl && (
               <TouchableOpacity onPress={() => Linking.openURL(request.fundraisingUrl!)}>
                 <MetaRow icon="💳" label="Збір" value="Перейти до збору коштів →" highlight />
@@ -461,11 +474,32 @@ export default function RequestDetailScreen() {
         )}
 
         {/* Actions */}
-        {canManage && request.status !== RequestStatus.CANCELLED && request.status !== RequestStatus.COMPLETED && (
-          <View style={{ marginHorizontal: 16, marginTop: 8 }}>
+        <View style={{ marginHorizontal: 16, marginTop: 8, gap: 8 }}>
+          {request.status === RequestStatus.IN_PROGRESS && (canManage || canSubmitReview) && (
+            <Button
+              title="Відправити на перевірку"
+              onPress={async () => {
+                await requestsApi.markAsPendingReview(request.id);
+                load();
+              }}
+            />
+          )}
+
+          {(request.status === RequestStatus.PENDING_REVIEW && canManage) && (
+            <Button
+              title="Підтвердити виконання"
+              variant="secondary"
+              onPress={async () => {
+                await requestsApi.confirmCompletion(request.id);
+                load();
+              }}
+            />
+          )}
+
+          {canManage && request.status !== RequestStatus.CANCELLED && request.status !== RequestStatus.COMPLETED && (
             <Button title="Скасувати заявку" variant="danger" onPress={handleCancelRequest} />
-          </View>
-        )}
+          )}
+        </View>
       </ScrollView>
     </View>
   );

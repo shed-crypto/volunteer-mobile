@@ -13,6 +13,7 @@ import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections, database } from '../../db/index';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
+import { MediaViewer } from '../../components/MediaViewer';
 
 type RouteParams = {
   TaskDetail: { taskId: string; requestId?: string; requestTitle?: string };
@@ -46,6 +47,8 @@ export default function TaskDetailScreen() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
+  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' }>({ url: '', type: 'image' });
 
   const { isOffline } = useNetwork();
 
@@ -60,7 +63,7 @@ export default function TaskDetailScreen() {
       const localAssignments = await collections.taskAssignments.query().fetch();
       const taskAssignmentsMap = new Map<string, any>();
       localAssignments
-        .filter((a: any) => a.taskId === taskId || a.taskId === local.id)
+        .filter((a: any) => a.taskId === (local as any).serverId || a.taskId === local.id)
         .forEach((a: any) => {
           const key = a.userId;
           if (!taskAssignmentsMap.has(key)) {
@@ -78,19 +81,19 @@ export default function TaskDetailScreen() {
       const taskAssignments = Array.from(taskAssignmentsMap.values());
       
       return {
-        id: local.serverId || local.id,
-        requestId: local.requestId || local.requestServerId,
-        title: local.title,
-        description: local.description,
-        status: local.status,
-        neededPeopleCount: local.neededPeopleCount,
-        requiredRoles: local.requiredRoles || [],
-        assignedCount: local.assignedCount,
-        priority: local.priority,
-        deadline: local.deadline ? new Date(local.deadline).toISOString() : undefined,
-        chatId: local.chatId,
+        id: (local as any).serverId || local.id,
+        requestId: (local as any).requestId || (local as any).requestServerId,
+        title: (local as any).title,
+        description: (local as any).description,
+        status: (local as any).status,
+        neededPeopleCount: (local as any).neededPeopleCount,
+        requiredRoles: (local as any).requiredRoles || [],
+        assignedCount: (local as any).assignedCount,
+        priority: (local as any).priority,
+        deadline: (local as any).deadline ? new Date((local as any).deadline).toISOString() : undefined,
+        chatId: (local as any).chatId,
         assignments: taskAssignments,
-        createdAt: local.createdAtServer ? new Date(local.createdAtServer).toISOString() : '',
+        createdAt: (local as any).createdAtServer ? new Date((local as any).createdAtServer).toISOString() : '',
       } as Task;
     } catch (e) {
       OfflineLogger.cache('TaskDetail: local load failed', e);
@@ -749,7 +752,23 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                 {r.attachments?.length > 0 && (
                   <View style={{ marginTop: 8 }}>
                     {r.attachments.map((a: any, j: number) => (
-                      <TouchableOpacity key={j} onPress={() => handleOpenAttachment(a)}>
+                      <TouchableOpacity
+                        key={j}
+                        onPress={() => {
+                          const absoluteUrl = buildFileUrl(a.url);
+                          const isImage = a.type?.startsWith('image/');
+                          const isVideo = a.type?.startsWith('video/');
+                          if (isImage || isVideo) {
+                            setSelectedMedia({
+                              url: absoluteUrl,
+                              type: isImage ? 'image' : 'video',
+                            });
+                            setMediaViewerVisible(true);
+                          } else {
+                            handleOpenAttachment(a);
+                          }
+                        }}
+                      >
                         <View
                           style={{
                             flexDirection: 'row',
@@ -768,6 +787,25 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                         </View>
                       </TouchableOpacity>
                     ))}
+                  </View>
+                )}
+                {/* Кнопки Редагування/Видалення (тільки для автора звіту) */}
+                {r.userId === user?.id && (
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                    <TouchableOpacity onPress={() => Alert.alert('Редагування', 'Редагування поки в процесі розробки') }>
+                      <Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={async () => {
+                      try {
+                        const { reportsApi } = await import('../../api/reports.api');
+                        await reportsApi.delete(task.id, r.id);
+                        await load();
+                      } catch (e: any) {
+                        Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити');
+                      }
+                    }}>
+                      <Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
               </View>
@@ -805,6 +843,14 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
 
       {/* Report modal */}
       <TaskReportModal visible={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={handleReportSubmit} loading={uploading} />
+      
+      {/* Media Viewer */}
+      <MediaViewer 
+        visible={mediaViewerVisible} 
+        url={selectedMedia.url} 
+        type={selectedMedia.type} 
+        onClose={() => setMediaViewerVisible(false)} 
+      />
     </View>
   );
 }

@@ -19,4 +19,10 @@ export const requestsApi = {
 
   delete: (id: string): Promise<void> =>
     api.delete(`/requests/${id}`).then(() => undefined),
+
+  markAsPendingReview: (id: string): Promise<Request> =>
+    api.post(`/requests/${id}/pending-review`).then((r) => r.data),
+
+  confirmCompletion: (id: string): Promise<Request> =>
+    api.post(`/requests/${id}/confirm-completion`).then((r) => r.data),
 };
