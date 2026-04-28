@@ -27,4 +27,13 @@ export const authApi = {
   /** Повторно надіслати лист підтвердження */
   resendVerification: (): Promise<{ message: string }> =>
     api.post('/auth/resend-verification').then((r) => r.data),
+
+  requestPasswordReset: (email: string): Promise<{ message: string }> =>
+    api.post('/auth/forgot-password', { email }).then((r) => r.data),
+
+  resetPassword: (token: string, newPassword: string): Promise<{ message: string }> =>
+    api.post('/auth/reset-password', { token, newPassword }).then((r) => r.data),
+
+  changePassword: (oldPassword: string, newPassword: string): Promise<{ message: string }> =>
+    api.post('/auth/change-password', { oldPassword, newPassword }).then((r) => r.data),
 };

@@ -93,10 +93,9 @@ export default function ChatRoomScreen() {
       if (msg.chatId === chatId) {
         setMessages((prev) => {
           if (prev.find((m) => m.id === msg.id)) return prev;
-          return [msg as Message, ...prev]
-            .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+          return [...prev, msg as Message]
+            .sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
         });
-        // Scroll is handled by FlatList inverted={true}
       }
     },
     onTyping: (data) => {
@@ -164,54 +163,52 @@ export default function ChatRoomScreen() {
         new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 500))
       ]);
 
-      if (localMessages.length > 0) {
-        const mapped = localMessages
-          .map((m: any) => ({
-            id: m.serverId || m.id,
-            chatId: m.chatId,
-            senderId: m.senderId,
-            content: m.content,
-            sentAt: m.sentAt,
-            messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
-            attachmentUrl: m.attachmentUrl || undefined,
-            messageStatus: m.messageStatus || 'sent',
-            readBy: m.readBy || [],
-            deliveredTo: m.deliveredTo || [],
-            sender: {
-              id: m.senderId,
-              fullName: m.senderName || 'Користувач',
-              email: '',
-              systemRole: SystemRole.VOLUNTEER,
-              clearanceLevel: ClearanceLevel.LOCAL,
-              trustScore: 0,
-              isBlocked: false,
-              createdAt: new Date().toISOString(),
-            },
-          }))
-          .sort((a: any, b: any) => a.sentAt - b.sentAt);
-        setMessages(mapped);
-        setLoading(false);
-        setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
-      }
-
-      if (isOnlineRef.current) {
-        try {
-          const data = await chatApi.getMessages(chatId, 50);
-          const sorted = [...data].sort(
-            (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
-          );
-          setMessages(sorted);
+        if (localMessages.length > 0) {
+          const mapped = localMessages
+            .map((m: any) => ({
+              id: m.serverId || m.id,
+              chatId: m.chatId,
+              senderId: m.senderId,
+              content: m.content,
+              sentAt: m.sentAt,
+              messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
+              attachmentUrl: m.attachmentUrl || undefined,
+              messageStatus: m.messageStatus || 'sent',
+              readBy: m.readBy || [],
+              deliveredTo: m.deliveredTo || [],
+              sender: {
+                id: m.senderId,
+                fullName: m.senderName || 'Користувач',
+                email: '',
+                systemRole: SystemRole.VOLUNTEER,
+                clearanceLevel: ClearanceLevel.LOCAL,
+                trustScore: 0,
+                isBlocked: false,
+                createdAt: new Date().toISOString(),
+              },
+            }))
+            .sort((a: any, b: any) => a.sentAt - b.sentAt);
+          setMessages(mapped);
           setLoading(false);
-          setTimeout(() => flatRef.current?.scrollToEnd({ animated: false }), 100);
-          saveMessagesToDB(data).catch(() => {});
-          chatApi.markAsRead(chatId).catch(() => {});
-        } catch (apiErr) {
-          if (localMessages.length === 0) {
-            setMessages([]);
-            setLoading(false);
-          }
         }
-      } else if (localMessages.length === 0) {
+
+        if (isOnlineRef.current) {
+          try {
+            const data = await chatApi.getMessages(chatId, 50);
+            const sorted = [...data].sort(
+              (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+            );
+            setMessages(sorted);
+            setLoading(false);
+            saveMessagesToDB(data).catch(() => {});
+            chatApi.markAsRead(chatId).catch(() => {});
+          } catch (apiErr) {
+            if (localMessages.length === 0) {
+              setMessages([]);
+              setLoading(false);
+            }
+          }
+        } else if (localMessages.length === 0) {
         setMessages([]);
         setLoading(false);
       }
@@ -396,6 +393,7 @@ export default function ChatRoomScreen() {
             }}
           />
         )}
+        onContentSizeChange={() => flatRef.current?.scrollToOffset({ offset: 0, animated: false })}
       />
 
       <MessageContextMenu

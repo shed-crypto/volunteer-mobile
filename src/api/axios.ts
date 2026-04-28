@@ -131,7 +131,11 @@ api.interceptors.response.use(
     const originalRequest = error.config;
 
     // Тільки якщо є реальна 401 відповідь від сервера — обробляти
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/auth/')
+    ) {
       // Перевірити чи є мережа взагалі
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {

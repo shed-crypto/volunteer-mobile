@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
-  StyleSheet, ViewStyle, TextStyle,
+  StyleSheet, ViewStyle, TextStyle, TextInput, TextInputProps,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, urgencyColors, statusColors } from '../utils/theme';
@@ -172,8 +172,6 @@ export function EmptyState({ icon, title, subtitle }: { icon: string; title: str
 
 // ─── Input ────────────────────────────────────────────────────────────────────
 
-import { TextInput, TextInputProps } from 'react-native';
-
 interface InputProps extends TextInputProps {
   label?: string;
   error?: string;
@@ -182,23 +180,45 @@ interface InputProps extends TextInputProps {
 }
 
 export function Input({ label, error, hint, containerStyle, style, ...props }: InputProps) {
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const isPassword = props.secureTextEntry;
+
   return (
     <View style={[{ marginBottom: 16 }, containerStyle]}>
       {label && <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 6 }}>{label}</Text>}
-      <TextInput
-        placeholderTextColor={Colors.textMuted}
-        style={[{
-          borderWidth: 1.5,
-          borderColor: error ? Colors.danger : Colors.border,
-          borderRadius: 10,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
-          fontSize: 15,
-          backgroundColor: Colors.surface,
-          color: Colors.text,
-        }, style]}
-        {...props}
-      />
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: error ? Colors.danger : Colors.border,
+        borderRadius: 10,
+        backgroundColor: Colors.surface,
+      }}>
+        <TextInput
+          placeholderTextColor={Colors.textMuted}
+          style={[{
+            flex: 1,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+            fontSize: 15,
+            color: Colors.text,
+          }, style]}
+          {...props}
+          secureTextEntry={isPassword && !isPasswordVisible}
+        />
+        {isPassword && (
+          <TouchableOpacity
+            onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+            style={{ padding: 12 }}
+          >
+            <Ionicons
+              name={isPasswordVisible ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color={Colors.textMuted}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
       {error && <Text style={{ color: Colors.danger, fontSize: 12, marginTop: 4 }}>{error}</Text>}
       {hint && !error && <Text style={{ color: Colors.textMuted, fontSize: 12, marginTop: 4 }}>{hint}</Text>}
     </View>

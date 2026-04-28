@@ -212,6 +212,8 @@ export default function ProfileScreen() {
             <Button title="🛡 Адмін-панель" variant="outline"
               onPress={() => navigation.navigate('Admin')} />
           )}
+          <Button title="🔑 Змінити пароль" variant="outline"
+            onPress={() => navigation.navigate('ChangePassword')} />
           <Button title="Вийти з системи" variant="danger" onPress={handleLogout} />
         </View>
       </ScrollView>

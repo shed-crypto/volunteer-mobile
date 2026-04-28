@@ -26,6 +26,16 @@ import OrgDetailScreen      from '../screens/organizations/OrgDetailScreen';
 import AdminScreen          from '../screens/admin/AdminScreen';
 import DevDBInspector       from '../screens/admin/DevDBInspector';
 import KanbanScreen          from '../screens/kanban/KanbanScreen';
+import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
+
+export type MainStackParamList = {
+  Requests: undefined;
+  Map: undefined;
+  Chats: undefined;
+  Profile: undefined;
+  Admin: undefined;
+  ChangePassword: undefined;
+};
 
 const RequestsStack = createNativeStackNavigator();
 function RequestsStackNavigator() {
@@ -75,6 +85,7 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="Organizations" component={OrganizationsScreen} />
       <ProfileStack.Screen name="OrgDetail"     component={OrgDetailScreen} />
       <ProfileStack.Screen name="UserProfile"   component={UserProfileScreen} />
+      <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
     </ProfileStack.Navigator>
   );
 }

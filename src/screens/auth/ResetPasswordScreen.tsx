@@ -1,0 +1,73 @@
+import React, { useState } from 'react';
+import { View, Text, Alert, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Button, Input } from '../../components/ui';
+import { Colors } from '../../utils/theme';
+import { AuthStackParamList } from '../../navigation/AuthNavigator';
+import { authApi } from '../../api/auth.api';
+
+type Nav = NativeStackNavigationProp<AuthStackParamList, 'ResetPassword'>;
+type Route = RouteProp<AuthStackParamList, 'ResetPassword'>;
+
+export default function ResetPasswordScreen() {
+  const navigation = useNavigation<Nav>();
+  const route = useRoute<Route>();
+  const { token } = route.params;
+
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleReset = async () => {
+    if (password.length < 8) {
+      Alert.alert('Помилка', 'Пароль повинен бути щонайменше 8 символів');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await authApi.resetPassword(token, password);
+      Alert.alert('Успіх', response.message);
+      navigation.navigate('Login');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Не вдалося скинути пароль';
+      Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <View style={styles.form}>
+          <Text style={styles.formTitle}>Новий пароль</Text>
+          <Text style={styles.subtitle}>Введіть новий пароль для вашого акаунта.</Text>
+
+          <Input
+            label="Новий пароль"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            placeholder="••••••••"
+          />
+
+          <Button
+            title="Зберегти"
+            onPress={handleReset}
+            loading={loading}
+            size="lg"
+            style={{ marginTop: 20 }}
+          />
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flexGrow: 1, backgroundColor: Colors.background, padding: 24, justifyContent: 'center' },
+  form: { backgroundColor: Colors.surface, padding: 24, borderRadius: 16 },
+  formTitle: { fontSize: 22, fontWeight: '800', color: Colors.text, marginBottom: 12 },
+  subtitle: { fontSize: 15, color: Colors.textSecondary, marginBottom: 20 },
+});

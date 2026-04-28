@@ -46,7 +46,11 @@ export default function LoginScreen() {
     try {
       await login(email.trim().toLowerCase(), password);
     } catch (err: any) {
-      const msg = err?.response?.data?.message || 'Невірний email або пароль';
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data ||
+        err?.message ||
+        'Невідома помилка';
       Alert.alert('Помилка входу', Array.isArray(msg) ? msg.join('\n') : msg);
     } finally {
       setLoading(false);

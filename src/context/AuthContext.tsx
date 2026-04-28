@@ -111,6 +111,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    // Перевірка доступності сервера
+    const serverOk = await checkServerReachable();
+    if (!serverOk) {
+      throw new Error('Сервер недоступний. Перевірте підключення до мережі.');
+    }
+
     const response = await authApi.login(email, password);
     await SecureStore.setItemAsync('accessToken', response.accessToken);
     await SecureStore.setItemAsync('refreshToken', response.refreshToken);
