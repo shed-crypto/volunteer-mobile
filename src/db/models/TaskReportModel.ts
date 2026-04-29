@@ -8,15 +8,16 @@ import { field } from '@nozbe/watermelondb/decorators';
 export class TaskReportModel extends Model {
   static table = 'task_reports';
 
-  @field('server_id') serverId!: string | null;
+  @field('server_id') serverId!: string;
   @field('task_id') taskId!: string;
   @field('user_id') userId!: string;
-  @field('user_name') userName!: string | null;
+  @field('user_name') userName!: string;
   @field('comment') comment!: string;
-  @field('attachments_raw') attachmentsRaw!: string | null; // JSON array
+  @field('attachments_raw') attachmentsRaw!: string;
+  @field('is_verified') isVerified!: boolean;
   @field('created_at') createdAt!: number;
   @field('is_synced') isSynced!: boolean;
-  @field('last_synced_at') lastSyncedAt!: number | null;
+  @field('last_synced_at') lastSyncedAt!: number;
 
   get attachments(): Array<{ url: string; type: string; name: string }> {
     try {

@@ -883,24 +883,43 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                   </View>
                 )}
                 {/* Кнопки Редагування/Видалення (тільки для автора звіту) */}
-                {r.userId === user?.id && (
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                    <TouchableOpacity onPress={() => Alert.alert('Редагування', 'Редагування поки в процесі розробки') }>
-                      <Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text>
-                    </TouchableOpacity>
+                {/* Кнопки Редагування/Видалення (тільки для автора звіту) */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+                  {r.userId === user?.id && (
+                    <>
+                      <TouchableOpacity onPress={() => Alert.alert('Редагування', 'Редагування поки в процесі розробки') }>
+                        <Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={async () => {
+                        try {
+                          const { reportsApi } = await import('../../api/reports.api');
+                          await reportsApi.delete(task.id, r.id);
+                          await load();
+                        } catch (e: any) {
+                          Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити');
+                        }
+                      }}>
+                        <Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                  {isCoordOrAdmin && !r.isVerified && (
                     <TouchableOpacity onPress={async () => {
                       try {
                         const { reportsApi } = await import('../../api/reports.api');
-                        await reportsApi.delete(task.id, r.id);
+                        await reportsApi.verify(task.id, r.id);
                         await load();
                       } catch (e: any) {
-                        Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити');
+                        Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося підтвердити');
                       }
                     }}>
-                      <Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text>
+                      <Text style={{ color: Colors.success, fontSize: 12 }}>✓ Підтвердити</Text>
                     </TouchableOpacity>
-                  </View>
-                )}
+                  )}
+                  {r.isVerified && (
+                    <Text style={{ color: Colors.success, fontSize: 12, fontWeight: 'bold' }}>✓ Підтверджено</Text>
+                  )}
+                </View>
               </View>
             ))}
           </Card>

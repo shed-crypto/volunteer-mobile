@@ -15,4 +15,7 @@ export const reportsApi = {
 
   delete: (taskId: string, reportId: string): Promise<void> =>
     api.post(`/tasks/${taskId}/reports/${reportId}/delete`).then(() => undefined),
+
+  verify: (taskId: string, reportId: string): Promise<TaskReport> =>
+    api.post(`/tasks/${taskId}/reports/${reportId}/verify`).then((r) => r.data),
 };
