@@ -24,6 +24,7 @@ import UserProfileScreen    from '../screens/profile/UserProfileScreen';
 import OrganizationsScreen  from '../screens/organizations/OrganizationsScreen';
 import OrgDetailScreen      from '../screens/organizations/OrgDetailScreen';
 import AdminScreen          from '../screens/admin/AdminScreen';
+import AdminCreateUserScreen from '../screens/admin/AdminCreateUserScreen';
 import DevDBInspector       from '../screens/admin/DevDBInspector';
 import KanbanScreen          from '../screens/kanban/KanbanScreen';
 import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
@@ -97,9 +98,10 @@ const AdminStack = createNativeStackNavigator();
 function AdminStackNavigator() {
   return (
     <AdminStack.Navigator screenOptions={{ headerShown: false }}>
-      <AdminStack.Screen name="AdminMain"      component={AdminScreen} />
-      <AdminStack.Screen name="UserProfile"    component={UserProfileScreen} />
-      <AdminStack.Screen name="DevDBInspector" component={DevDBInspector} />
+      <AdminStack.Screen name="AdminMain"       component={AdminScreen} />
+      <AdminStack.Screen name="AdminCreateUser" component={AdminCreateUserScreen} />
+      <AdminStack.Screen name="UserProfile"     component={UserProfileScreen} />
+      <AdminStack.Screen name="DevDBInspector"  component={DevDBInspector} />
     </AdminStack.Navigator>
   );
 }

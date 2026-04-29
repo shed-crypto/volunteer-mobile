@@ -87,6 +87,7 @@ export default function ChatRoomScreen() {
   const TAB_BAR_HEIGHT = 65; // Приблизна висота вкладок
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
+  const isNearBottomRef = useRef(true);
 
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
@@ -393,7 +394,18 @@ export default function ChatRoomScreen() {
             }}
           />
         )}
-        onContentSizeChange={() => flatRef.current?.scrollToOffset({ offset: 0, animated: false })}
+        onScroll={(e) => {
+          const { contentOffset } = e.nativeEvent;
+          // In inverted FlatList, offset.y = 0 is the bottom (newest messages).
+          // If user scrolls up (to old messages), offset.y increases.
+          isNearBottomRef.current = contentOffset.y < 100;
+        }}
+        scrollEventThrottle={100}
+        onContentSizeChange={() => {
+          if (isNearBottomRef.current) {
+            flatRef.current?.scrollToOffset({ offset: 0, animated: false });
+          }
+        }}
       />
 
       <MessageContextMenu

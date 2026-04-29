@@ -1,5 +1,5 @@
 import api from './axios';
-import { User, TrustVouch, Vehicle } from '../types';
+import { User, TrustVouch, Vehicle, SystemRole, ClearanceLevel } from '../types';
 
 export const usersApi = {
   getAll: (): Promise<User[]> =>
@@ -36,5 +36,25 @@ export const usersApi = {
     status?: string;
   }): Promise<Vehicle> =>
     api.post('/users/me/vehicles', data).then((r) => r.data),
+
+  // --- Admin actions ---
+  changeRole: (userId: string, systemRole: SystemRole): Promise<User> =>
+    api.patch(`/users/${userId}/role`, { systemRole }).then((r) => r.data),
+
+  updateClearance: (userId: string, clearanceLevel: ClearanceLevel): Promise<User> =>
+    api.patch(`/users/${userId}/clearance`, { clearanceLevel }).then((r) => r.data),
+
+  create: (data: {
+    email: string;
+    fullName: string;
+    password?: string;
+    systemRole: SystemRole;
+    clearanceLevel?: ClearanceLevel;
+    phoneNumber?: string;
+  }): Promise<User> =>
+    api.post('/users', data).then((r) => r.data),
+
+  unblock: (userId: string): Promise<void> =>
+    api.patch(`/users/${userId}/unblock`).then(() => undefined),
 };
 

@@ -16,7 +16,7 @@ import { fileUtils } from '../../utils/fileUtils';
 import { MediaViewer } from '../../components/MediaViewer';
 
 type RouteParams = {
-  TaskDetail: { taskId: string; requestId?: string; requestTitle?: string };
+  TaskDetail: { taskId: string; requestId?: string; requestTitle?: string; editMode?: boolean };
 };
 
 /** Будує абсолютний URL для файлу зі збереженого відносного шляху */
@@ -32,6 +32,7 @@ export default function TaskDetailScreen() {
   const { user } = useAuth();
 
   const isNew = taskId === '__new__';
+  const [isEditing, setIsEditing] = useState(route.params?.editMode || false);
 
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -261,6 +262,12 @@ export default function TaskDetailScreen() {
       if (localTask) {
         OfflineLogger.nav('TaskDetail: showing local data first');
         setTask(localTask);
+        if (route.params?.editMode) {
+          setNewTitle(localTask.title);
+          setNewDesc(localTask.description || '');
+          setNewPeople(String(localTask.neededPeopleCount || 1));
+          setNewRoles(localTask.requiredRoles?.join(', ') || '');
+        }
         setLoading(false);
       }
       
@@ -279,6 +286,12 @@ export default function TaskDetailScreen() {
             t.assignedCount = t.assignments.filter((a: any) => a.status !== 'withdrawn').length;
           }
           setTask(t);
+          if (route.params?.editMode) {
+            setNewTitle(t.title);
+            setNewDesc(t.description || '');
+            setNewPeople(String(t.neededPeopleCount || 1));
+            setNewRoles(t.requiredRoles?.join(', ') || '');
+          }
           await saveTaskToDB(t);
           
           // Load reports from server and save to DB
@@ -325,6 +338,28 @@ export default function TaskDetailScreen() {
       });
       if (navigation.canGoBack()) navigation.goBack();
       else navigation.navigate('RequestsList' as never);
+    } catch (e: any) {
+      Alert.alert('Помилка', e?.response?.data?.message ?? 'Щось пішло не так');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!newTitle.trim() || newTitle.trim().length < 3) {
+      Alert.alert('', 'Назва — мін. 3 символи');
+      return;
+    }
+    setCreating(true);
+    try {
+      await tasksApi.update(taskId, {
+        title: newTitle.trim(),
+        description: newDesc.trim() || undefined,
+        neededPeopleCount: parseInt(newPeople) || 1,
+        requiredRoles: newRoles.split(',').map(r => r.trim()).filter(Boolean),
+      });
+      setIsEditing(false);
+      load();
     } catch (e: any) {
       Alert.alert('Помилка', e?.response?.data?.message ?? 'Щось пішло не так');
     } finally {
@@ -523,17 +558,17 @@ export default function TaskDetailScreen() {
     }
   };
 
-  if (isNew) {
+  if (isNew || isEditing) {
     return (
       <View style={{ flex: 1 }}>
-        <ScreenHeader title="Створити задачу" onBack={() => navigation.goBack()} />
+        <ScreenHeader title={isEditing ? "Редагувати задачу" : "Створити задачу"} onBack={() => isEditing ? setIsEditing(false) : navigation.goBack()} />
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           <Input label="Назва задачі" value={newTitle} onChangeText={setNewTitle} />
           <Input label="Опис" value={newDesc} onChangeText={setNewDesc} multiline />
           <Input label="Потрібно людей" value={newPeople} onChangeText={setNewPeople} keyboardType="numeric" />
           <Input label="Потрібні ролі (через кому)" value={newRoles} onChangeText={setNewRoles} multiline />
-          <Button title="Створити" onPress={handleCreate} loading={creating} style={{ marginTop: 12 }} />
-          <Button title="Скасувати" variant="ghost" onPress={() => navigation.goBack()} style={{ marginTop: 8 }} />
+          <Button title={isEditing ? "Зберегти" : "Створити"} onPress={isEditing ? handleUpdate : handleCreate} loading={creating} style={{ marginTop: 12 }} />
+          <Button title="Скасувати" variant="ghost" onPress={() => isEditing ? setIsEditing(false) : navigation.goBack()} style={{ marginTop: 8 }} />
         </ScrollView>
       </View>
     );
@@ -775,7 +810,13 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
       <Button
         title="✏️ Редагувати задачу"
         variant="outline"
-        onPress={() => navigation.navigate('TaskDetail', { taskId: task.id, requestId: task.requestId, editMode: true })}
+        onPress={() => {
+          setNewTitle(task.title);
+          setNewDesc(task.description || '');
+          setNewPeople(String(task.neededPeopleCount || 1));
+          setNewRoles(task.requiredRoles?.join(', ') || '');
+          setIsEditing(true);
+        }}
         style={{ marginTop: 8 }}
       />
     )}

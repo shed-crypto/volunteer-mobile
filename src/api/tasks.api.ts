@@ -11,6 +11,9 @@ export const tasksApi = {
   create: (requestId: string, data: CreateTaskDto): Promise<Task> =>
     api.post(`/requests/${requestId}/tasks`, data).then((r) => r.data),
 
+  update: (id: string, data: Partial<CreateTaskDto>): Promise<Task> =>
+    api.patch(`/tasks/${id}`, data).then((r) => r.data),
+
   assign: (taskId: string, fulfilledRole?: string): Promise<TaskAssignment> =>
     api.post(`/tasks/${taskId}/assign`, { fulfilledRole }).then((r) => r.data),
 

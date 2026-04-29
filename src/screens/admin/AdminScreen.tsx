@@ -17,8 +17,9 @@ import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../utils/theme';
 import { ScreenHeader } from '../../components/ui';
 import axiosInstance from '../../api/axios';
-import { SystemRole } from '../../types';
+import { SystemRole, ClearanceLevel } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { usersApi } from '../../api/users.api';
 
 interface AdminUser {
   id: string;
@@ -55,6 +56,12 @@ const ALL_ROLES = [
   { value: SystemRole.VOLUNTEER,   label: 'Волонтер' },
   { value: SystemRole.COORDINATOR, label: 'Координатор' },
   { value: SystemRole.REQUESTER,   label: 'Потребуючий' },
+];
+
+const ALL_CLEARANCE = [
+  { value: ClearanceLevel.LOCAL,         label: 'Локальний' },
+  { value: ClearanceLevel.INTERNATIONAL, label: 'Міжнародний' },
+  { value: ClearanceLevel.FRONTLINE,     label: 'Фронтлайн (ВПО/ЗСУ)' },
 ];
 
 export default function AdminScreen() {
@@ -211,6 +218,53 @@ export default function AdminScreen() {
     }
   };
 
+  // Зміна рівня допуску через PATCH /users/:id/clearance
+  const changeClearance = (user: AdminUser) => {
+    const options = ALL_CLEARANCE.filter((c) => c.value !== user.clearanceLevel);
+
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: [...options.map((o) => o.label), 'Скасувати'],
+          cancelButtonIndex: options.length,
+          title: `Змінити рівень допуску: ${user.fullName}`,
+          message: `Поточний: ${CLEARANCE_LABELS[user.clearanceLevel] ?? user.clearanceLevel}`,
+        },
+        async (idx) => {
+          if (idx >= options.length) return;
+          await doChangeClearance(user, options[idx].value as ClearanceLevel);
+        },
+      );
+    } else {
+      Alert.alert(
+        'Змінити рівень допуску',
+        `Користувач: ${user.fullName}\nОберіть новий рівень:`,
+        [
+          ...options.map((o) => ({
+            text: o.label,
+            onPress: () => doChangeClearance(user, o.value as ClearanceLevel),
+          })),
+          { text: 'Скасувати', style: 'cancel' },
+        ],
+      );
+    }
+  };
+
+  const doChangeClearance = async (user: AdminUser, newLevel: ClearanceLevel) => {
+    setActioning(user.id);
+    try {
+      await usersApi.updateClearance(user.id, newLevel);
+      setUsers((prev) =>
+        prev.map((u) => u.id === user.id ? { ...u, clearanceLevel: newLevel } : u),
+      );
+      Alert.alert('Успіх', `Рівень допуску ${user.fullName} змінено на ${CLEARANCE_LABELS[newLevel]}`);
+    } catch (e: any) {
+      Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося змінити рівень допуску');
+    } finally {
+      setActioning(null);
+    }
+  };
+
   const renderUser = ({ item }: { item: AdminUser }) => (
     <View style={[styles.userCard, item.isBlocked && styles.userCardBlocked]}>
       <TouchableOpacity
@@ -239,8 +293,14 @@ export default function AdminScreen() {
                 {ROLE_LABELS[item.systemRole] ?? item.systemRole} ✎
               </Text>
             </TouchableOpacity>
-            <View style={[styles.clearanceDot, { backgroundColor: CLEARANCE_COLORS[item.clearanceLevel] ?? '#999' }]} />
-            <Text style={styles.clearanceText}>{CLEARANCE_LABELS[item.clearanceLevel] ?? item.clearanceLevel}</Text>
+            <TouchableOpacity
+              style={[styles.clearancePill, { borderColor: CLEARANCE_COLORS[item.clearanceLevel] ?? '#999' }]}
+              onPress={() => changeClearance(item)}
+              disabled={actioning === item.id}
+            >
+              <View style={[styles.clearanceDot, { backgroundColor: CLEARANCE_COLORS[item.clearanceLevel] ?? '#999' }]} />
+              <Text style={styles.clearanceText}>{CLEARANCE_LABELS[item.clearanceLevel] ?? item.clearanceLevel} ✎</Text>
+            </TouchableOpacity>
             <Text style={styles.vouchText}>👥 {item.vouchCount ?? 0}</Text>
           </View>
         </View>
@@ -261,7 +321,14 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.container}>
-      <ScreenHeader title="Адміністрування" subtitle="Управління користувачами" />
+      <ScreenHeader
+        title="Адміністрування"
+        subtitle="Управління користувачами"
+        rightAction={{
+          icon: 'person-add-outline',
+          onPress: () => navigation.navigate('AdminCreateUser'),
+        }}
+      />
 
       <View style={styles.searchContainer}>
         <TextInput
@@ -346,8 +413,14 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#C7D2FE',
   },
   roleText: { fontSize: 11, color: '#4338CA', fontWeight: '600' },
-  clearanceDot: { width: 8, height: 8, borderRadius: 4 },
-  clearanceText: { fontSize: 11, color: '#666' },
+  clearancePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#F9FAFB', borderRadius: 8,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderWidth: 1,
+  },
+  clearanceDot: { width: 6, height: 6, borderRadius: 3 },
+  clearanceText: { fontSize: 11, color: '#444', fontWeight: '500' },
   vouchText: { fontSize: 11, color: '#666' },
 
   blockBtn: {
