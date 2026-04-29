@@ -23,6 +23,9 @@ export const tasksApi = {
   confirm: (taskId: string): Promise<Task> =>
     api.patch(`/tasks/${taskId}/confirm`).then((r) => r.data),
 
+  returnToProgress: (taskId: string): Promise<Task> =>
+    api.patch(`/tasks/${taskId}/return`).then((r) => r.data),
+
   // FR-09d: відхилення результату (автор → повернення IN_PROGRESS)
   reject: (taskId: string, reason?: string): Promise<Task> =>
     api.patch(`/tasks/${taskId}/reject`, { reason }).then((r) => r.data),
@@ -33,5 +36,11 @@ export const tasksApi = {
 
   delegate: (taskId: string, organizationId: string, message?: string): Promise<any> =>
     api.post(`/tasks/${taskId}/delegate`, { organizationId, message }).then((r) => r.data),
+
+  cancel: (taskId: string): Promise<Task> =>
+    api.patch(`/tasks/${taskId}/cancel`).then((r) => r.data),
+
+  renew: (taskId: string): Promise<Task> =>
+    api.patch(`/tasks/${taskId}/renew`).then((r) => r.data),
 };
 

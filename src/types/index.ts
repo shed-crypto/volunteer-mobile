@@ -111,6 +111,7 @@ export interface Request {
   fundraisingUrl?: string;
   tags: string[];
   reportUrls: string[];
+  additionalInfo: Array<{ id: string; text: string; createdAt: string; updatedAt?: string }>;
   creatorId: string;
   creator?: User;
   tasks?: Task[];
@@ -292,6 +293,8 @@ export interface FindRequestsDto {
   category?: RequestCategory;
   urgency?: RequestUrgency;
   search?: string;
+  creatorId?: string;
+  excludeCreatorId?: string;
   latitude?: number;
   longitude?: number;
   radiusKm?: number;

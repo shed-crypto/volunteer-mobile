@@ -372,6 +372,27 @@ export default function TaskDetailScreen() {
     ]);
   };
 
+  const handleReturnToProgress = async () => {
+    if (!task) return;
+    Alert.alert('Скасувати перевірку?', 'Задача буде повернута в роботу', [
+      { text: 'Ні' },
+      {
+        text: 'Так, повернути',
+        onPress: async () => {
+          try {
+            setActioning(true);
+            await tasksApi.returnToProgress(task.id);
+            await load();
+          } catch (e: any) {
+            Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося повернути задачу в роботу');
+          } finally {
+            setActioning(false);
+          }
+        },
+      },
+    ]);
+  };
+
   const handleAddReport = () => {
     setShowReportModal(true);
   };
@@ -523,11 +544,14 @@ export default function TaskDetailScreen() {
 
   const activeAssignments = task.assignments?.filter(a => a.status !== AssignmentStatus.WITHDRAWN) ?? [];
   const isMe = task.assignments?.some(a => a.userId === user?.id && a.status !== 'withdrawn');
-  const myAssignment = task.assignments?.find(a => a.userId === user?.id && a.status !== AssignmentStatus.WITHDRAWN);
+  const myAssignment = task.assignments?.find(a => a.userId === user?.id && a.status !== 'withdrawn');
   const isAdmin = user?.systemRole === SystemRole.ADMIN;
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;
   const isVolunteer = user?.systemRole === SystemRole.VOLUNTEER;
-  const isCoordOrAdmin = isCoord || isAdmin;
+  // Потрібно перевірити, чи у об'єкті Task є поле request, якщо ні — завантажити або використати інший підхід
+  // Оскільки request може бути не завантажений, ми перевіряємо чи є creatorId у заявці
+  const isOwner = user?.id === (task as any).request?.creatorId;
+  const isCoordOrAdmin = isCoord || isAdmin || isOwner;
 const statusLabels: Record<string, string> = {
   en_route: 'В дорозі',
   on_site: 'На місці',
@@ -685,6 +709,24 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
             </>
           )}
 
+          {isMe && task.status === TaskStatus.PENDING_REVIEW && (
+            <>
+              <Button
+                title="↩️ Скасувати перевірку"
+                variant="danger"
+                onPress={handleReturnToProgress}
+                loading={actioning}
+                style={{ marginBottom: 8 }}
+              />
+              <Button
+                title="📋 Додати звіт"
+                variant="outline"
+                onPress={handleAddReport}
+                style={{ marginBottom: 8 }}
+              />
+            </>
+          )}
+
           {/* Confirm/Reject for coordinators/admins */}
           {isCoordOrAdmin && task.status === TaskStatus.PENDING_REVIEW && (
             <>
@@ -714,20 +756,30 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
             />
           )}
 
-          {/* Chat button */}
-          {task.chatId && (
-            <Button
-              title="💬 Чат завдання"
-              variant="primary"
-              onPress={() =>
-                navigation.navigate('Chats', {
-                  screen: 'ChatRoom',
-                  params: { chatId: task.chatId, chatName: `Чат: ${task.title}` },
-                })
-              }
-            />
-          )}
-        </Card>
+    {/* Chat button */}
+    {task.chatId && (
+      <Button
+        title="💬 Чат завдання"
+        variant="primary"
+        onPress={() =>
+          navigation.navigate('Chats', {
+            screen: 'ChatRoom',
+            params: { chatId: task.chatId, chatName: `Чат: ${task.title}` },
+          })
+        }
+      />
+    )}
+
+    {/* Edit button for coordinators/admins/owners */}
+    {isCoordOrAdmin && task.status === TaskStatus.TODO && (
+      <Button
+        title="✏️ Редагувати задачу"
+        variant="outline"
+        onPress={() => navigation.navigate('TaskDetail', { taskId: task.id, requestId: task.requestId, editMode: true })}
+        style={{ marginTop: 8 }}
+      />
+    )}
+</Card>
 
         {/* Reports history */}
         {reports.length > 0 && (

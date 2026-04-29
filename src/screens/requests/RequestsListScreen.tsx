@@ -28,9 +28,11 @@ import { SystemRole } from '../../types';
   import { database } from '../../db/index';
 
 const STATUS_FILTERS = [
-  { value: undefined,                  label: 'Всі' },
+  { value: 'all',                      label: 'Всі' },
+  { value: 'my',                       label: 'Мої' },
   { value: RequestStatus.OPEN,         label: 'Відкриті' },
   { value: RequestStatus.IN_PROGRESS,  label: 'Виконуються' },
+  { value: RequestStatus.PENDING_REVIEW, label: 'На перевірці' },
   { value: RequestStatus.COMPLETED,    label: 'Завершені' },
 ];
 
@@ -60,7 +62,7 @@ export default function RequestsListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [search, setSearch]     = useState('');
-  const [statusFilter, setStatusFilter]     = useState<RequestStatus | undefined>();
+  const [statusFilter, setStatusFilter]     = useState<string | undefined>('all');
   const [urgencyFilter, setUrgencyFilter]   = useState<RequestUrgency | undefined>();
   const [categoryFilter, setCategoryFilter] = useState<RequestCategory | undefined>();
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -101,7 +103,13 @@ export default function RequestsListScreen() {
       
       // Apply filters locally
       return mapped.filter((r: any) => {
-        if (statusFilter && r.status !== statusFilter) return false;
+        if (statusFilter === 'my') {
+          if (r.creatorId !== user?.id) return false;
+        } else if (statusFilter === 'all') {
+          if (r.creatorId === user?.id) return false;
+        } else if (statusFilter && r.status !== statusFilter) {
+          return false;
+        }
         if (urgencyFilter && r.urgency !== urgencyFilter) return false;
         if (categoryFilter && r.category !== categoryFilter) return false;
         if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
@@ -208,13 +216,21 @@ export default function RequestsListScreen() {
       // КРОК 2: If online, update from server AND save to DB
       if (!isOffline) {
         try {
-          const data = await requestsApi.getAll({
+          const params: any = {
             search: search || undefined,
-            status: statusFilter,
             urgency: urgencyFilter,
             category: categoryFilter,
             limit: 50,
-          });
+          };
+          if (statusFilter === 'my') {
+            params.creatorId = user?.id;
+          } else if (statusFilter === 'all') {
+            params.excludeCreatorId = user?.id;
+          } else if (statusFilter) {
+            params.status = statusFilter;
+          }
+
+          const data = await requestsApi.getAll(params);
           setRequests(data);
           OfflineLogger.nav(`RequestsList: loaded ${data.length} from server`);
           
@@ -487,6 +503,8 @@ export default function RequestsListScreen() {
 }
 
 function RequestCard({ request, onPress }: { request: Request; onPress: () => void }) {
+  const { user } = useAuth();
+  const isMy = request.creatorId === user?.id;
   const urgency = urgencyColors[request.urgency];
   const status  = statusColors[request.status];
   
@@ -547,7 +565,14 @@ function RequestCard({ request, onPress }: { request: Request; onPress: () => vo
         <View style={[styles.urgencyStrip, { backgroundColor: urgency?.bg ?? Colors.borderLight }]} />
         <View style={styles.cardHeader}>
           <View style={{ flex: 1, gap: 6 }}>
-            <Text style={styles.cardTitle} numberOfLines={2}>{request.title}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.cardTitle} numberOfLines={2}>{request.title}</Text>
+              {isMy && (
+                <View style={{ backgroundColor: Colors.primaryLight, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primary }}>👤 МОЯ</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.cardCategory}>{categoryLabels[request.category] ?? request.category}</Text>
           </View>
           <View style={{ gap: 4, alignItems: 'flex-end' }}>
@@ -631,12 +656,14 @@ const styles = StyleSheet.create({
   filterRow: {
     paddingHorizontal: 12, paddingVertical: 8, gap: 8,
     backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border,
+    flexDirection: 'row', alignItems: 'center',
   },
   pill: {
     paddingHorizontal: 14, paddingVertical: 6,
     borderRadius: 20, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.surface,
+    flexShrink: 0,
   },
-  pillActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryLight },
+  pillActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryLight, flexShrink: 0 },
   pillText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
   pillTextActive: { color: Colors.primary },
   clearBtn: {

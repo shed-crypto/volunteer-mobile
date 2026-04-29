@@ -7,13 +7,13 @@
  *   2. Ручне введення координат (два TextInput) — fallback при РЕБ
  *   3. Без локації — якщо не потрібна або небезпечно вказувати
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   Alert, StyleSheet, KeyboardAvoidingView, Platform,
   TextInput as RNTextInput,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import { requestsApi } from '../../api/requests.api';
 import { RequestCategory, RequestUrgency, ClearanceLevel } from '../../types';
@@ -52,6 +52,7 @@ function PickerRow<T extends string>({
 
 export default function CreateRequestScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
 
   const [title, setTitle]             = useState('');
   const [description, setDescription] = useState('');
@@ -62,12 +63,15 @@ export default function CreateRequestScreen() {
   const [fundraisingUrl, setFundraisingUrl] = useState('');
   const [loading, setLoading]         = useState(false);
   const [errors, setErrors]           = useState<Record<string, string>>({});
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
 
   // Геолокація — три режими
   const [locMode, setLocMode]     = useState<LocationMode>('none');
   const [latitude, setLatitude]   = useState<number | undefined>();
   const [longitude, setLongitude] = useState<number | undefined>();
   const [locLoading, setLocLoading] = useState(false);
+  // Доповнення (для режиму редагування/доповнення)
+  const [additionalInfo, setAdditionalInfo] = useState('');
   // Для ручного введення
   const [manualLat, setManualLat] = useState('');
   const [manualLng, setManualLng] = useState('');
@@ -166,187 +170,248 @@ export default function CreateRequestScreen() {
     }
   };
 
+  const handleAddInfo = async () => {
+    if (!additionalInfo.trim()) return;
+    setLoading(true);
+    try {
+      await requestsApi.addInfo(route.params?.requestId, additionalInfo.trim());
+      navigation.goBack();
+    } catch (e: any) {
+      const msg = e?.response?.data?.message;
+      Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : (msg ?? 'Щось пішло не так'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isEditMode = route.params?.requestId && route.params?.mode !== 'additional';
+  const isAdditionalMode = route.params?.requestId && route.params?.mode === 'additional';
+
+  useEffect(() => {
+    if (isEditMode && !initialDataLoaded && route.params?.requestId) {
+      const loadRequest = async () => {
+        try {
+          const req = await requestsApi.getOne(route.params.requestId);
+          setTitle(req.title);
+          setDescription(req.description || '');
+          setCategory(req.category);
+          setUrgency(req.urgency);
+          setClearance(req.requiredClearance);
+          setIsHidden(req.isLocationHidden);
+          setFundraisingUrl(req.fundraisingUrl || '');
+          if (req.latitude != null && req.longitude != null) {
+            setLatitude(Number(req.latitude));
+            setLongitude(Number(req.longitude));
+            setLocMode('gps');
+          }
+          setInitialDataLoaded(true);
+        } catch (e) {
+          Alert.alert('Помилка', 'Не вдалося завантажити дані для редагування');
+        }
+      };
+      loadRequest();
+    }
+  }, [isEditMode, initialDataLoaded, route.params?.requestId]);
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScreenHeader title="Нова заявка" onBack={() => {
+      <ScreenHeader title={isAdditionalMode ? "Доповнити заявку" : "Нова заявка"} onBack={() => {
         if (navigation.canGoBack()) navigation.goBack();
       }} />
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Input
-          label="Назва заявки *"
-          value={title}
-          onChangeText={setTitle}
-          placeholder="Наприклад: Потрібна евакуація родини з Херсонщини"
-          multiline
-          error={errors.title}
-        />
+        {isAdditionalMode ? (
+          <Input
+            label="Додаткова інформація *"
+            value={additionalInfo}
+            onChangeText={setAdditionalInfo}
+            placeholder="Введіть нові деталі тут..."
+            multiline
+            style={{ minHeight: 120, textAlignVertical: 'top' }}
+          />
+        ) : (
+          <>
+            <Input
+              label="Назва заявки *"
+              value={title}
+              onChangeText={setTitle}
+              placeholder="Наприклад: Потрібна евакуація родини з Херсонщини"
+              multiline
+              error={errors.title}
+            />
 
-        <Input
-          label="Опис (необов'язково)"
-          value={description}
-          onChangeText={setDescription}
-          placeholder="Деталі: кількість людей, стан здоров'я, контакти..."
-          multiline
-          style={{ minHeight: 100, textAlignVertical: 'top' }}
-        />
+            <Input
+              label="Опис (необов'язково)"
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Деталі: кількість людей, стан здоров'я, контакти..."
+              multiline
+              style={{ minHeight: 100, textAlignVertical: 'top' }}
+            />
 
-        <PickerRow
-          label="Категорія"
-          value={category}
-          onChange={setCategory}
-          options={Object.values(RequestCategory).map((v) => ({ value: v, label: categoryLabels[v] ?? v }))}
-        />
+            <PickerRow
+              label="Категорія"
+              value={category}
+              onChange={setCategory}
+              options={Object.values(RequestCategory).map((v) => ({ value: v, label: categoryLabels[v] ?? v }))}
+            />
 
-        <PickerRow
-          label="Терміновість"
-          value={urgency}
-          onChange={setUrgency}
-          options={Object.values(RequestUrgency).map((v) => ({ value: v, label: urgencyColors[v]?.label ?? v }))}
-        />
+            <PickerRow
+              label="Терміновість"
+              value={urgency}
+              onChange={setUrgency}
+              options={Object.values(RequestUrgency).map((v) => ({ value: v, label: urgencyColors[v]?.label ?? v }))}
+            />
 
-        <PickerRow
-          label="Мінімальний рівень допуску волонтера"
-          value={clearance}
-          onChange={setClearance}
-          options={Object.values(ClearanceLevel).map((v) => ({ value: v, label: clearanceLabels[v] ?? v }))}
-        />
+            <PickerRow
+              label="Мінімальний рівень допуску волонтера"
+              value={clearance}
+              onChange={setClearance}
+              options={Object.values(ClearanceLevel).map((v) => ({ value: v, label: clearanceLabels[v] ?? v }))}
+            />
 
-        <View style={styles.hintBox}>
-          <Text style={styles.hintText}>
-            {clearance === ClearanceLevel.LOCAL
-              ? '📍 Доступно всім верифікованим волонтерам'
-              : clearance === ClearanceLevel.INTERNATIONAL
-              ? '🌍 Доступно лише волонтерам з міжнародним допуском'
-              : '⚔️ Доступно лише фронтовим волонтерам (3+ поручителі)'}
-          </Text>
-        </View>
-
-        {/* ─── Геолокація ────────────────────────────────────────────────────── */}
-        <Text style={styles.label}>Місцезнаходження (необов'язково)</Text>
-
-        {locMode === 'none' && (
-          <View style={styles.locOptions}>
-            <TouchableOpacity
-              style={styles.locOptionBtn}
-              onPress={handleDetectGPS}
-              disabled={locLoading}
-            >
-              <Text style={styles.locOptionIcon}>📡</Text>
-              <Text style={styles.locOptionLabel}>
-                {locLoading ? 'Визначення...' : 'GPS автоматично'}
+            <View style={styles.hintBox}>
+              <Text style={styles.hintText}>
+                {clearance === ClearanceLevel.LOCAL
+                  ? '📍 Доступно всім верифікованим волонтерам'
+                  : clearance === ClearanceLevel.INTERNATIONAL
+                  ? '🌍 Доступно лише волонтерам з міжнародним допуском'
+                  : '⚔️ Доступно лише фронтовим волонтерам (3+ поручителі)'}
               </Text>
-              <Text style={styles.locOptionHint}>Може не працювати при РЕБ</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.locOptionBtn}
-              onPress={() => setLocMode('manual')}
-            >
-              <Text style={styles.locOptionIcon}>⌨️</Text>
-              <Text style={styles.locOptionLabel}>Ввести вручну</Text>
-              <Text style={styles.locOptionHint}>Координати з карти або телефону</Text>
-            </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.locOptionBtn}
-          onPress={() => navigation.navigate('Map', {
-            screen: 'SelectLocation',
-            params: {
-              isSelectionMode: true,
-              onSelect: (coords: { latitude: number; longitude: number }) => {
-                setLatitude(coords.latitude);
-                setLongitude(coords.longitude);
-                setLocMode('gps');
-              }
-            }
-          })}
-        >
-          <Text style={styles.locOptionIcon}>🗺</Text>
-          <Text style={styles.locOptionLabel}>Вибрати на карті</Text>
-          <Text style={styles.locOptionHint}>Натисніть на точку</Text>
-        </TouchableOpacity>
-          </View>
-        )}
+            </View>
 
-        {locMode === 'manual' && !(latitude && longitude) && (
-          <View style={styles.manualBox}>
-            <Text style={styles.manualTitle}>Введіть координати</Text>
-            <Text style={styles.manualHint}>
-              Відкрийте Google Maps, натисніть на потрібну точку — координати з'являться внизу.
+            {/* ─── Геолокація ────────────────────────────────────────────────────── */}
+            <Text style={styles.label}>Місцезнаходження (необов'язково)</Text>
+
+            {locMode === 'none' && (
+              <View style={styles.locOptions}>
+                <TouchableOpacity
+                  style={styles.locOptionBtn}
+                  onPress={handleDetectGPS}
+                  disabled={locLoading}
+                >
+                  <Text style={styles.locOptionIcon}>📡</Text>
+                  <Text style={styles.locOptionLabel}>
+                    {locLoading ? 'Визначення...' : 'GPS автоматично'}
+                  </Text>
+                  <Text style={styles.locOptionHint}>Може не працювати при РЕБ</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.locOptionBtn}
+                  onPress={() => setLocMode('manual')}
+                >
+                  <Text style={styles.locOptionIcon}>⌨️</Text>
+                  <Text style={styles.locOptionLabel}>Ввести вручну</Text>
+                  <Text style={styles.locOptionHint}>Координати з карти або телефону</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.locOptionBtn}
+                  onPress={() => navigation.navigate('Map', {
+                    screen: 'SelectLocation',
+                    params: {
+                      isSelectionMode: true,
+                      onSelect: (coords: { latitude: number; longitude: number }) => {
+                        setLatitude(coords.latitude);
+                        setLongitude(coords.longitude);
+                        setLocMode('gps');
+                      }
+                    }
+                  })}
+                >
+                  <Text style={styles.locOptionIcon}>🗺</Text>
+                  <Text style={styles.locOptionLabel}>Вибрати на карті</Text>
+                  <Text style={styles.locOptionHint}>Натисніть на точку</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {locMode === 'manual' && !(latitude && longitude) && (
+              <View style={styles.manualBox}>
+                <Text style={styles.manualTitle}>Введіть координати</Text>
+                <Text style={styles.manualHint}>
+                  Відкрийте Google Maps, натисніть на потрібну точку — координати з'являться внизу.
+                </Text>
+                <View style={styles.manualRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.manualLabel}>Широта (Lat)</Text>
+                    <RNTextInput
+                      style={styles.manualInput}
+                      value={manualLat}
+                      onChangeText={setManualLat}
+                      placeholder="46.6354"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor="#AAA"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.manualLabel}>Довгота (Lng)</Text>
+                    <RNTextInput
+                      style={styles.manualInput}
+                      value={manualLng}
+                      onChangeText={setManualLng}
+                      placeholder="32.6169"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor="#AAA"
+                    />
+                  </View>
+                </View>
+                <View style={styles.manualActions}>
+                  <TouchableOpacity style={styles.manualCancelBtn} onPress={handleClearLocation}>
+                    <Text style={styles.manualCancelText}>Скасувати</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.manualApplyBtn} onPress={handleApplyManual}>
+                    <Text style={styles.manualApplyText}>Підтвердити</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {latitude != null && longitude != null && (
+              <View style={styles.locationBox}>
+                <View style={{ flex: 1 }}>
+            <Text style={styles.locationText}>
+              📍 {Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}
             </Text>
-            <View style={styles.manualRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.manualLabel}>Широта (Lat)</Text>
-                <RNTextInput
-                  style={styles.manualInput}
-                  value={manualLat}
-                  onChangeText={setManualLat}
-                  placeholder="46.6354"
-                  keyboardType="decimal-pad"
-                  placeholderTextColor="#AAA"
-                />
+                  <Text style={styles.locationHint}>
+                    {locMode === 'gps' ? 'GPS' : 'Введено вручну'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={handleClearLocation} style={styles.clearLocBtn}>
+                  <Text style={styles.clearLocText}>✕</Text>
+                </TouchableOpacity>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.manualLabel}>Довгота (Lng)</Text>
-                <RNTextInput
-                  style={styles.manualInput}
-                  value={manualLng}
-                  onChangeText={setManualLng}
-                  placeholder="32.6169"
-                  keyboardType="decimal-pad"
-                  placeholderTextColor="#AAA"
-                />
-              </View>
-            </View>
-            <View style={styles.manualActions}>
-              <TouchableOpacity style={styles.manualCancelBtn} onPress={handleClearLocation}>
-                <Text style={styles.manualCancelText}>Скасувати</Text>
+            )}
+
+            {latitude != null && longitude != null && (
+              <TouchableOpacity style={styles.toggleRow} onPress={() => setIsHidden(!isHidden)}>
+                <View style={[styles.toggle, isHidden && styles.toggleOn]}>
+                  <View style={[styles.toggleThumb, isHidden && styles.toggleThumbOn]} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Приховати точне місцезнаходження</Text>
+                  <Text style={styles.toggleDesc}>Координати будуть обфусковані (безпека)</Text>
+                </View>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.manualApplyBtn} onPress={handleApplyManual}>
-                <Text style={styles.manualApplyText}>Підтвердити</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+            )}
+
+            <Input
+              label="Посилання на збір коштів (необов'язково)"
+              value={fundraisingUrl}
+              onChangeText={setFundraisingUrl}
+              placeholder="https://send.monobank.ua/..."
+              keyboardType="url"
+              autoCapitalize="none"
+              error={errors.fundraisingUrl}
+            />
+          </>
         )}
 
-        {latitude && longitude && (
-          <View style={styles.locationBox}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.locationText}>
-                📍 {latitude.toFixed(5)}, {longitude.toFixed(5)}
-              </Text>
-              <Text style={styles.locationHint}>
-                {locMode === 'gps' ? 'GPS' : 'Введено вручну'}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={handleClearLocation} style={styles.clearLocBtn}>
-              <Text style={styles.clearLocText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {latitude && longitude && (
-          <TouchableOpacity style={styles.toggleRow} onPress={() => setIsHidden(!isHidden)}>
-            <View style={[styles.toggle, isHidden && styles.toggleOn]}>
-              <View style={[styles.toggleThumb, isHidden && styles.toggleThumbOn]} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.toggleLabel}>Приховати точне місцезнаходження</Text>
-              <Text style={styles.toggleDesc}>Координати будуть обфусковані (безпека)</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        <Input
-          label="Посилання на збір коштів (необов'язково)"
-          value={fundraisingUrl}
-          onChangeText={setFundraisingUrl}
-          placeholder="https://send.monobank.ua/..."
-          keyboardType="url"
-          autoCapitalize="none"
-          error={errors.fundraisingUrl}
+        <Button
+          title={isAdditionalMode ? "Відправити доповнення" : "Опублікувати заявку"} 
+          onPress={isAdditionalMode ? handleAddInfo : handleCreate} 
+          loading={loading} 
+          size="lg" 
         />
-
-        <Button title="Опублікувати заявку" onPress={handleCreate} loading={loading} size="lg" />
         <Button
           title="Скасувати"
           variant="ghost"

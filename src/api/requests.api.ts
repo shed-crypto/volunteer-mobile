@@ -25,4 +25,16 @@ export const requestsApi = {
 
   confirmCompletion: (id: string): Promise<Request> =>
     api.post(`/requests/${id}/confirm-completion`).then((r) => r.data),
+
+  returnToProgress: (id: string): Promise<Request> =>
+    api.post(`/requests/${id}/return-to-progress`).then((r) => r.data),
+
+  addInfo: (id: string, text: string): Promise<Request> =>
+    api.patch(`/requests/${id}/add-info`, { text }).then((r) => r.data),
+
+  updateAdditionalInfo: (id: string, infoId: string, text: string): Promise<Request> =>
+    api.patch(`/requests/${id}/additional-info/${infoId}`, { text }).then((r) => r.data),
+
+  removeAdditionalInfo: (id: string, infoId: string): Promise<Request> =>
+    api.delete(`/requests/${id}/additional-info/${infoId}`).then((r) => r.data),
 };

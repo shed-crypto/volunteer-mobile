@@ -15,6 +15,7 @@ import {
 import {
   Badge, Card, Button, EmptyState,
   LoadingScreen, ScreenHeader, ProgressBar,
+  Input,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
@@ -43,6 +44,10 @@ export default function RequestDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const { isOffline } = useNetwork();
+
+  const [editingInfoId, setEditingInfoId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [savingInfo, setSavingInfo] = useState(false);
 
   // ─── Load tasks from local DB ────────────────────────────────────────────
   const loadTasksLocal = useCallback(async (requestId: string): Promise<Task[]> => {
@@ -347,6 +352,16 @@ export default function RequestDetailScreen() {
   const canManage = isOwner || isAdmin;
   const canCreateTask = isOwner || isAdmin || isCoord;
   const canSubmitReview = isVolunteer && isParticipant;
+  const canEdit = (isOwner || isAdmin) && tasks.every(t => !t.assignments?.some(a => a.status !== 'withdrawn'));
+
+  const handleUpdate = async (data: any) => {
+    try {
+      await requestsApi.update(requestId, data);
+      load();
+    } catch (e) {
+      Alert.alert('Помилка', 'Не вдалося оновити заявку');
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
@@ -354,6 +369,26 @@ export default function RequestDetailScreen() {
         title="Деталі заявки"
         onBack={() => navigation.goBack()}
       />
+
+      {/* Action buttons row to avoid header overlap */}
+      {(isOwner || isAdmin) && (
+        <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
+          {canEdit && (
+            <TouchableOpacity 
+              style={[styles.headerActionBtn, { backgroundColor: Colors.primary }]} 
+              onPress={() => navigation.navigate('CreateRequest', { requestId })}
+            >
+              <Text style={styles.headerActionText}>✏️ Редагувати</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity 
+            style={[styles.headerActionBtn, { backgroundColor: Colors.secondary }]} 
+            onPress={() => navigation.navigate('CreateRequest', { requestId, mode: 'additional' })}
+          >
+            <Text style={styles.headerActionText}>➕ Доповнити</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {isOfflineMode && (
         <View style={{ backgroundColor: Colors.warningLight, padding: 8, alignItems: 'center' }}>
@@ -416,6 +451,93 @@ export default function RequestDetailScreen() {
             </View>
           )}
         </Card>
+
+        {/* Additional Info (History) */}
+        {request.additionalInfo && request.additionalInfo.length > 0 && (
+          <Card style={{ marginTop: 12 }}>
+            <Text style={styles.sectionTitle}>Доповнення до заявки</Text>
+            {request.additionalInfo.map((info, index) => {
+              const createdAt = new Date(info.createdAt);
+              const diffMs = new Date().getTime() - createdAt.getTime();
+              const canEditInfo = (isOwner || isAdmin) && diffMs < 30 * 60 * 1000;
+
+              return (
+                <View key={info.id || `info-${index}`} style={styles.additionalInfoItem}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={styles.additionalInfoDate}>
+                      📅 {createdAt.toLocaleString('uk-UA')}
+                      {info.updatedAt && ' (ред.)'}
+                    </Text>
+                    {canEditInfo && editingInfoId !== info.id && (
+                      <View style={{ flexDirection: 'row', gap: 12 }}>
+                        <TouchableOpacity onPress={() => {
+                          setEditingInfoId(info.id);
+                          setEditingText(info.text);
+                        }}>
+                          <Text style={{ fontSize: 12, color: Colors.primary }}>✏️</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => {
+                          Alert.alert('Видалити?', 'Ви впевнені?', [
+                            { text: 'Ні' },
+                            { text: 'Так', style: 'destructive', onPress: async () => {
+                              try {
+                                await requestsApi.removeAdditionalInfo(request.id, info.id);
+                                load();
+                              } catch (e) {
+                                Alert.alert('Помилка', 'Не вдалося видалити');
+                              }
+                            }}
+                          ]);
+                        }}>
+                          <Text style={{ fontSize: 12, color: Colors.danger }}>🗑</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  {editingInfoId === info.id ? (
+                    <View style={{ marginTop: 8 }}>
+                      <Input
+                        value={editingText}
+                        onChangeText={setEditingText}
+                        multiline
+                        autoFocus
+                      />
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                        <Button
+                          title="Зберегти"
+                          size="sm"
+                          loading={savingInfo}
+                          onPress={async () => {
+                            if (!editingText.trim()) return;
+                            setSavingInfo(true);
+                            try {
+                              await requestsApi.updateAdditionalInfo(request.id, info.id, editingText.trim());
+                              setEditingInfoId(null);
+                              load();
+                            } catch (e) {
+                              Alert.alert('Помилка', 'Не вдалося зберегти');
+                            } finally {
+                              setSavingInfo(false);
+                            }
+                          }}
+                        />
+                        <Button
+                          title="Скасувати"
+                          variant="ghost"
+                          size="sm"
+                          onPress={() => setEditingInfoId(null)}
+                        />
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.additionalInfoText}>{info.text}</Text>
+                  )}
+                </View>
+              );
+            })}
+          </Card>
+        )}
 
         {/* Progress */}
         {totalTasks > 0 && (
@@ -485,15 +607,29 @@ export default function RequestDetailScreen() {
             />
           )}
 
-          {(request.status === RequestStatus.PENDING_REVIEW && canManage) && (
-            <Button
-              title="Підтвердити виконання"
-              variant="secondary"
-              onPress={async () => {
-                await requestsApi.confirmCompletion(request.id);
-                load();
-              }}
-            />
+          {(request.status === RequestStatus.PENDING_REVIEW && (canManage || canSubmitReview)) && (
+            <View style={{ gap: 8 }}>
+              {canManage && (
+                <Button
+                  title="Підтвердити виконання"
+                  variant="secondary"
+                  onPress={async () => {
+                    await requestsApi.confirmCompletion(request.id);
+                    load();
+                  }}
+                />
+              )}
+              {(canSubmitReview || isAdmin) && (
+                <Button
+                  title="Скасувати перевірку"
+                  variant="danger"
+                  onPress={async () => {
+                    await requestsApi.returnToProgress(request.id);
+                    load();
+                  }}
+                />
+              )}
+            </View>
           )}
 
           {canManage && request.status !== RequestStatus.CANCELLED && request.status !== RequestStatus.COMPLETED && (
@@ -511,6 +647,10 @@ function LocationDisplay({ request }: { request: Request }) {
 
   useEffect(() => {
     (async () => {
+      if (request.latitude == null || request.longitude == null) {
+        setLoading(false);
+        return;
+      }
       try {
         if (request.isLocationHidden) {
           setAddress('Приблизне розташування');
@@ -535,6 +675,7 @@ function LocationDisplay({ request }: { request: Request }) {
   }, [request]);
 
   if (loading) return <MetaRow icon="📍" label="Місце" value="Завантаження..." />;
+  if (request.latitude == null || request.longitude == null) return null;
 
   const lat = Number(request.latitude);
   const lng = Number(request.longitude);
@@ -660,6 +801,27 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05, shadowRadius: 3, elevation: 1,
   },
+  headerActionBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerActionText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  additionalInfoItem: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+  },
+  additionalInfoDate: { fontSize: 11, color: Colors.textMuted, marginBottom: 4 },
+  additionalInfoText: { fontSize: 14, color: Colors.text, lineHeight: 20 },
   taskHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
   taskTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: Colors.text },
   taskMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
