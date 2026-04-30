@@ -161,20 +161,23 @@ export interface Chat {
   unreadCount?: number;
 }
 
-export interface Message {
-  id: string;
-  chatId: string;
-  senderId?: string;
-  sender?: User;
-  content: string;
-  sentAt: string;
-  readBy: string[];
-  messageType: 'text' | 'attachment' | 'system';
-  attachmentUrl?: string;
-  // Додано для офлайн-архітектури
-  messageStatus?: string; // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
-  deliveredTo?: string[];
-}
+  export interface Message {
+    id: string;
+    chatId: string;
+    senderId?: string;
+    sender?: User;
+    content: string;
+    sentAt: string;
+    readBy: string[];
+    messageType: 'text' | 'attachment' | 'system';
+    attachmentUrl?: string;
+    // Reply functionality
+    replyToId?: string;
+    replyTo?: Message;
+    // Додано для офлайн-архітектури
+    messageStatus?: string; // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
+    deliveredTo?: string[];
+  }
 
 export interface Organization {
   id: string;

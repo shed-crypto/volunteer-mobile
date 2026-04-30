@@ -193,7 +193,12 @@ export default function ChatsListScreen() {
       if (!isOffline) {
         try {
           const data = await chatApi.getMyChats();
-          setChats(data);
+          
+          // Мержимо серверні дані з локальними (зберігаємо локальні які ще не синхронізувалися)
+          if (data && data.length > 0) {
+            // Використовуємо серверні дані як основу
+            setChats(data);
+          }
           setIsOfflineMode(false);
           OfflineLogger.nav(`ChatsList: loaded ${data.length} from server`);
           
@@ -201,6 +206,7 @@ export default function ChatsListScreen() {
           await saveChatsToDB(data);
         } catch (error) {
           OfflineLogger.network('ChatsList: server load failed, keeping local data');
+          // Не скидаємо стан, залишаємо локальні дані
           setHasError(true);
         }
       } else {
@@ -225,8 +231,14 @@ export default function ChatsListScreen() {
         ...prev,
         [msg.chatId]: (msg.senderId !== user?.id) ? (prev[msg.chatId] ?? 0) + 1 : prev[msg.chatId] ?? 0,
       }));
-      // оновлюємо список чатів щоб показати актуальний стан
-      load();
+      
+      // Оновлюємо стан чатів локально (додаємо нове повідомлення в прев'ю)
+      setChats(prevChats => prevChats.map(c => {
+        if (c.id === msg.chatId) {
+          return { ...c, lastMessage: msg, updatedAt: msg.sentAt };
+        }
+        return c;
+      }));
     },
   });
 

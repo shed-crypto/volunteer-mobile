@@ -24,10 +24,12 @@ let listenerCount = 0;
 type MessageHandler  = (msg: Message & { senderName: string }) => void;
 type TypingHandler   = (data: { userId: string; name: string; isTyping: boolean }) => void;
 type NewChatHandler  = (data: { chatId: string; chatName: string }) => void;
+type MessagesReadHandler = (data: { chatId: string; readerId: string; messageIds: string[] }) => void;
 
 const messageListeners = new Set<MessageHandler>();
 const typingListeners  = new Set<TypingHandler>();
 const newChatListeners = new Set<NewChatHandler>();
+const messagesReadListeners = new Set<MessagesReadHandler>();
 
 async function getOrCreateSocket(): Promise<Socket> {
   if (globalSocket?.connected) return globalSocket;
@@ -63,6 +65,10 @@ async function getOrCreateSocket(): Promise<Socket> {
     newChatListeners.forEach((fn) => fn(data));
   });
 
+  socket.on('messages_read', (data: { chatId: string; readerId: string; messageIds: string[] }) => {
+    messagesReadListeners.forEach((fn) => fn(data));
+  });
+
   globalSocket = socket;
   return socket;
 }
@@ -73,6 +79,7 @@ interface UseSocketOptions {
   onNewMessage?:    MessageHandler;
   onTyping?:        TypingHandler;
   onNewChatJoined?: NewChatHandler;
+  onMessagesRead?:  MessagesReadHandler;
 }
 
 export function useSocket(options: UseSocketOptions = {}) {
@@ -86,10 +93,12 @@ export function useSocket(options: UseSocketOptions = {}) {
     const msgHandler:  MessageHandler  = (msg) => optionsRef.current.onNewMessage?.(msg);
     const typHandler:  TypingHandler   = (d)   => optionsRef.current.onTyping?.(d);
     const chatHandler: NewChatHandler  = (d)   => optionsRef.current.onNewChatJoined?.(d);
+    const readHandler: MessagesReadHandler = (d) => optionsRef.current.onMessagesRead?.(d);
 
     if (options.onNewMessage)    messageListeners.add(msgHandler);
     if (options.onTyping)        typingListeners.add(typHandler);
     if (options.onNewChatJoined) newChatListeners.add(chatHandler);
+    if (options.onMessagesRead)  messagesReadListeners.add(readHandler);
 
     getOrCreateSocket().then((s) => { socketRef.current = s; });
 
@@ -98,6 +107,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       messageListeners.delete(msgHandler);
       typingListeners.delete(typHandler);
       newChatListeners.delete(chatHandler);
+      messagesReadListeners.delete(readHandler);
 
       if (listenerCount === 0) {
         globalSocket?.disconnect();

@@ -350,14 +350,24 @@ export default function RequestsListScreen() {
       <ScreenHeader
         title="Заявки на допомогу"
         subtitle={`${requests.length} заявок${hasError ? ' (офлайн)' : ''}`}
-        rightAction={canCreate ? (
-          <TouchableOpacity
-            onPress={() => navigation.navigate('CreateRequest')}
-            style={styles.addBtn}
-          >
-            <Text style={{ color: '#fff', fontSize: 26, lineHeight: 28 }}>+</Text>
-          </TouchableOpacity>
-        ) : undefined}
+        rightAction={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('SavedRequests' as never)}
+              style={styles.addBtn}
+            >
+              <Text style={{ color: '#fff', fontSize: 20 }}>🔖</Text>
+            </TouchableOpacity>
+            {canCreate && (
+              <TouchableOpacity
+                onPress={() => navigation.navigate('CreateRequest')}
+                style={styles.addBtn}
+              >
+                <Text style={{ color: '#fff', fontSize: 26, lineHeight: 28 }}>+</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        }
       />
 
       {/* Банер помилки (не очищуємо список!) */}
@@ -398,17 +408,25 @@ export default function RequestsListScreen() {
         style={{ maxHeight: 44, flexGrow: 0 }}
         contentContainerStyle={styles.filterRow}
       >
-        {STATUS_FILTERS.map((f) => (
-          <TouchableOpacity
-            key={f.label}
-            onPress={() => setStatusFilter(f.value as any)}
-            style={[styles.pill, statusFilter === f.value && styles.pillActive]}
-          >
-            <Text style={[styles.pillText, statusFilter === f.value && styles.pillTextActive]}>
-              {f.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {STATUS_FILTERS.map((f) => {
+          const count = f.value === 'all' 
+            ? requests.length 
+            : f.value === 'my'
+              ? requests.filter(r => r.creatorId === user?.id).length
+              : requests.filter(r => r.status === f.value).length;
+          
+          return (
+            <TouchableOpacity
+              key={f.label}
+              onPress={() => setStatusFilter(f.value as any)}
+              style={[styles.pill, statusFilter === f.value && styles.pillActive]}
+            >
+              <Text style={[styles.pillText, statusFilter === f.value && styles.pillTextActive]}>
+                {f.label} ({count})
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
         {activeFiltersCount > 0 && (
           <TouchableOpacity onPress={clearFilters} style={styles.clearBtn}>
             <Text style={styles.clearBtnText}>✕ Скинути</Text>
@@ -502,7 +520,7 @@ export default function RequestsListScreen() {
   );
 }
 
-function RequestCard({ request, onPress }: { request: Request; onPress: () => void }) {
+export function RequestCard({ request, onPress }: { request: Request; onPress: () => void }) {
   const { user } = useAuth();
   const isMy = request.creatorId === user?.id;
   const urgency = urgencyColors[request.urgency];

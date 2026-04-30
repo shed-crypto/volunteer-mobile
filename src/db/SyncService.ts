@@ -86,7 +86,6 @@ export class SyncService {
             latitude: (req as any).latitude ?? undefined,
             longitude: (req as any).longitude ?? undefined,
             isLocationHidden: (req as any).isLocationHidden ?? false,
-            tags: (req as any).tags ?? [],
           });
 
           // prepareUpdate() — синхронний, без database.write()!
@@ -387,6 +386,7 @@ export class SyncService {
                     m.messageStatus = sm.messageStatus || 'sent';
                     m.readByRaw = JSON.stringify(sm.readBy || []);
                     m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
+                    m.replyToId = sm.replyToId || null;
                     m.lastSyncedAt = Date.now();
                   })
                 );
@@ -408,6 +408,7 @@ export class SyncService {
                 m.messageStatus = sm.messageStatus || 'sent';
                 m.readByRaw = JSON.stringify(sm.readBy || []);
                 m.deliveredToRaw = JSON.stringify(sm.deliveredTo || []);
+                m.replyToId = sm.replyToId || null;
                 m.lastSyncedAt = Date.now();
               })
               );
@@ -537,6 +538,7 @@ export class SyncService {
     content: string;
     messageType?: string;
     attachmentUrl?: string;
+    replyToId?: string;
   }): Promise<ChatMessageModel> {
     return database.write(async () => {
       const msg = collections.chatMessages.prepareCreate((m: any) => {
@@ -550,6 +552,7 @@ export class SyncService {
         m.pendingAction = 'send';
         m.messageType = data.messageType || 'text';
         m.attachmentUrl = data.attachmentUrl ?? null;
+        m.replyToId = data.replyToId ?? null;
         m.messageStatus = 'pending';
         m.readByRaw = '[]';
         m.deliveredToRaw = '[]';

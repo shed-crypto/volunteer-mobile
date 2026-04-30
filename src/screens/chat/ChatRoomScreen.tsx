@@ -91,13 +91,45 @@ export default function ChatRoomScreen() {
 
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
-      if (msg.chatId === chatId) {
-        setMessages((prev) => {
-          if (prev.find((m) => m.id === msg.id)) return prev;
-          return [...prev, msg as Message]
-            .sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
-        });
-      }
+      if (msg.chatId !== chatId) return;
+      
+      const newMsg = {
+        ...msg,
+        sentAt: typeof msg.sentAt === 'string' ? msg.sentAt : new Date(msg.sentAt).toISOString(),
+      } as Message;
+
+      setMessages((prev) => {
+        // 1. Спробуємо знайти тимчасове повідомлення за контентом та автором
+        const tempIndex = prev.findIndex(m => 
+          m.id.startsWith('temp-') && 
+          m.content === newMsg.content && 
+          m.senderId === newMsg.senderId
+        );
+
+        if (tempIndex !== -1) {
+          // Замінюємо тимчасове повідомлення серверним
+          const updated = [...prev];
+          updated[tempIndex] = { ...newMsg, replyTo: updated[tempIndex].replyTo };
+          return updated;
+        }
+
+        // 2. Якщо це нове повідомлення
+        if (prev.find((m) => m.id === newMsg.id)) return prev;
+        return [...prev, newMsg];
+      });
+    },
+    onMessagesRead: (data) => {
+      if (data.chatId !== chatId) return;
+      setMessages(prev => prev.map(m => {
+        if (data.messageIds.includes(m.id)) {
+          return {
+            ...m,
+            messageStatus: 'read',
+            readBy: [...(m.readBy || []), data.readerId]
+          };
+        }
+        return m;
+      }));
     },
     onTyping: (data) => {
       if (data.userId !== user?.id) {
@@ -122,32 +154,76 @@ export default function ChatRoomScreen() {
       const existing = await collections.chatMessages
         .query(Q.where('chat_id', chatId))
         .fetch();
-      const existingServerIds = new Set(existing.map((m: any) => m.serverId).filter(Boolean));
+      
+      const operations: any[] = [];
+      
+      for (const msg of msgs) {
+        // Check if we already have this message (by server ID)
+        const existingByServerId = existing.find((m: any) => m.serverId === msg.id);
+        if (existingByServerId) {
+          // Update existing record (e.g., update messageStatus)
+          operations.push(
+            existingByServerId.prepareUpdate((m: any) => {
+              m.messageStatus = (msg as any).messageStatus || 'sent';
+              m.readByRaw = JSON.stringify((msg as any).readBy || []);
+              m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
+              m.lastSyncedAt = Date.now();
+            })
+          );
+          continue;
+        }
+        
+        // Check if we have a temp message that matches (same content, sender, approximate time)
+        const tempMatch = existing.find((m: any) => {
+          if (!m.id.startsWith('temp-')) return false;
+          if (m.content !== msg.content) return false;
+          if (m.senderId !== msg.senderId) return false;
+          // Match within 30 seconds
+          const tempTime = m.sentAt;
+          const serverTime = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
+          return Math.abs(tempTime - serverTime) < 30000;
+        });
+        
+        if (tempMatch) {
+          // Update temp message with server ID
+          operations.push(
+            tempMatch.prepareUpdate((m: any) => {
+              m.serverId = msg.id;
+              m.isSynced = true;
+              m.pendingAction = null;
+              m.messageStatus = (msg as any).messageStatus || 'sent';
+              m.readByRaw = JSON.stringify((msg as any).readBy || []);
+              m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
+              m.lastSyncedAt = Date.now();
+            })
+          );
+        } else {
+          // Create new record
+          operations.push(
+            collections.chatMessages.prepareCreate((m: any) => {
+              m.serverId = msg.id;
+              m.chatId = msg.chatId;
+              m.senderId = msg.senderId;
+              m.senderName = msg.sender?.fullName || null;
+              m.content = msg.content;
+              m.sentAt = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
+              m.isSynced = true;
+              m.pendingAction = null;
+              m.messageType = (msg as any).messageType || 'text';
+              m.attachmentUrl = (msg as any).attachmentUrl || null;
+              m.messageStatus = (msg as any).messageStatus || 'sent';
+              m.readByRaw = JSON.stringify((msg as any).readBy || []);
+              m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
+              m.replyToId = msg.replyToId || null;
+              m.lastSyncedAt = Date.now();
+            })
+          );
+        }
+      }
 
-      const preparedOps = msgs
-        .filter((msg) => !existingServerIds.has(msg.id))
-        .map((msg) =>
-          collections.chatMessages.prepareCreate((m: any) => {
-            m.serverId = msg.id;
-            m.chatId = msg.chatId;
-            m.senderId = msg.senderId;
-            m.senderName = msg.sender?.fullName || null;
-            m.content = msg.content;
-            m.sentAt = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
-            m.isSynced = true;
-            m.pendingAction = null;
-            m.messageType = (msg as any).messageType || 'text';
-            m.attachmentUrl = (msg as any).attachmentUrl || null;
-            m.messageStatus = (msg as any).messageStatus || 'sent';
-            m.readByRaw = JSON.stringify((msg as any).readBy || []);
-            m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
-            m.lastSyncedAt = Date.now();
-          })
-        );
-
-      if (preparedOps.length > 0) {
+      if (operations.length > 0) {
         await database.write(async () => {
-          await database.batch(...preparedOps);
+          await database.batch(...operations);
         });
       }
     } catch (err) {
@@ -158,65 +234,126 @@ export default function ChatRoomScreen() {
   const load = useCallback(async () => {
     if (!chatId || isLoadingRef.current) return;
     isLoadingRef.current = true;
+    setLoading(true);
+    
     try {
-      const localMessages = await Promise.race([
-        collections.chatMessages.query(Q.where('chat_id', chatId)).fetch(),
-        new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 500))
-      ]);
+      // Always load from local DB first
+      const localMessages = await collections.chatMessages
+        .query(Q.where('chat_id', chatId))
+        .fetch();
+      
+      // Map local messages to Message type
+      const mapped = localMessages.map((m: any) => {
+        const sentAtStr = typeof m.sentAt === 'number' 
+          ? new Date(m.sentAt).toISOString() 
+          : (m.sentAt || new Date().toISOString());
+        return {
+          id: m.serverId || m.id,
+          chatId: m.chatId,
+          senderId: m.senderId,
+          content: m.content,
+          sentAt: sentAtStr,
+          messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
+          attachmentUrl: m.attachmentUrl || undefined,
+          messageStatus: m.messageStatus || 'sent',
+          readBy: m.readBy || [],
+          deliveredTo: m.deliveredTo || [],
+          replyToId: m.replyToId || undefined,
+          replyTo: undefined as Message | undefined,
+          sender: {
+            id: m.senderId,
+            fullName: m.senderName || 'Користувач',
+            email: '',
+            systemRole: SystemRole.VOLUNTEER,
+            clearanceLevel: ClearanceLevel.LOCAL,
+            trustScore: 0,
+            isBlocked: false,
+            createdAt: new Date().toISOString(),
+          },
+        } as Message;
+      });
 
-        if (localMessages.length > 0) {
-          const mapped = localMessages
-            .map((m: any) => ({
-              id: m.serverId || m.id,
-              chatId: m.chatId,
-              senderId: m.senderId,
-              content: m.content,
-              sentAt: m.sentAt,
-              messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
-              attachmentUrl: m.attachmentUrl || undefined,
-              messageStatus: m.messageStatus || 'sent',
-              readBy: m.readBy || [],
-              deliveredTo: m.deliveredTo || [],
-              sender: {
-                id: m.senderId,
-                fullName: m.senderName || 'Користувач',
-                email: '',
-                systemRole: SystemRole.VOLUNTEER,
-                clearanceLevel: ClearanceLevel.LOCAL,
-                trustScore: 0,
-                isBlocked: false,
-                createdAt: new Date().toISOString(),
-              },
-            }))
-            .sort((a: any, b: any) => a.sentAt - b.sentAt);
-          setMessages(mapped);
-          setLoading(false);
+      // Build reply references
+      mapped.forEach(m => {
+        if (m.replyToId) {
+          m.replyTo = mapped.find(prev => prev.id === m.replyToId);
         }
+      });
 
-        if (isOnlineRef.current) {
-          try {
-            const data = await chatApi.getMessages(chatId, 50);
-            const sorted = [...data].sort(
-              (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
-            );
-            setMessages(sorted);
-            setLoading(false);
-            saveMessagesToDB(data).catch(() => {});
-            chatApi.markAsRead(chatId).catch(() => {});
-          } catch (apiErr) {
-            if (localMessages.length === 0) {
-              setMessages([]);
-              setLoading(false);
-            }
+      // If online, try to sync with server
+      if (isOnlineRef.current) {
+        try {
+          const data = await chatApi.getMessages(chatId, 100);
+          if (data && data.length > 0) {
+            // Save server messages to DB
+            await saveMessagesToDB(data);
+            
+            // Mark read and update local state
+            chatApi.markAsRead(chatId).then(() => {
+              setMessages(prev => prev.map(m => 
+                (m.senderId !== user?.id && m.messageStatus !== 'read') 
+                  ? { ...m, messageStatus: 'read' } 
+                  : m
+              ));
+            }).catch(() => {});
           }
-        } else if (localMessages.length === 0) {
-        setMessages([]);
-        setLoading(false);
+        } catch (apiErr) {
+          console.warn('[ChatRoomScreen] API sync failed:', apiErr);
+        }
       }
+
+      // Always re-load from DB after potential sync to get merged state
+      const updatedLocal = await collections.chatMessages
+        .query(Q.where('chat_id', chatId))
+        .fetch();
+      
+      const remapped = updatedLocal.map((m: any) => {
+        const sentAtStr = typeof m.sentAt === 'number' 
+          ? new Date(m.sentAt).toISOString() 
+          : (m.sentAt || new Date().toISOString());
+        return {
+          id: m.serverId || m.id,
+          chatId: m.chatId,
+          senderId: m.senderId,
+          content: m.content,
+          sentAt: sentAtStr,
+          messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
+          attachmentUrl: m.attachmentUrl || undefined,
+          messageStatus: m.messageStatus || 'sent',
+          readBy: m.readBy || [],
+          deliveredTo: m.deliveredTo || [],
+          replyToId: m.replyToId || undefined,
+          replyTo: undefined as Message | undefined,
+          sender: {
+            id: m.senderId,
+            fullName: m.senderName || 'Користувач',
+            email: '',
+            systemRole: SystemRole.VOLUNTEER,
+            clearanceLevel: ClearanceLevel.LOCAL,
+            trustScore: 0,
+            isBlocked: false,
+            createdAt: new Date().toISOString(),
+          },
+        } as Message;
+      });
+
+      // Build reply references
+      remapped.forEach(m => {
+        if (m.replyToId) {
+          m.replyTo = remapped.find(prev => prev.id === m.replyToId);
+        }
+      });
+
+      // Sort ASC (oldest first) - newest will be at bottom
+      const sorted = remapped.sort((a, b) => 
+        new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+      );
+      
+      setMessages(sorted);
     } catch (error: any) {
-      setMessages([]);
-      setLoading(false);
+      console.warn('[ChatRoomScreen] Load error:', error);
     } finally {
+      setLoading(false);
       isLoadingRef.current = false;
     }
   }, [chatId, saveMessagesToDB]);
@@ -227,6 +364,7 @@ export default function ChatRoomScreen() {
       if (typingTimer.current) clearTimeout(typingTimer.current);
     };
   }, [load]);
+
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) => {
@@ -245,9 +383,31 @@ export default function ChatRoomScreen() {
     const content = text.trim();
     if (!content || sending) return;
     setSending(true);
+    const repId = replyToMessage?.id;
+    const now = new Date().toISOString(); // Use ISO string for consistency
     setText('');
+    setReplyToMessage(null);
     sendTyping(chatId, false);
-    sendMessage(chatId, content);
+    
+    sendMessage(chatId, content, repId);
+
+    // Додаємо локально відразу для кращого UX - APPEND (ASC: newest at end = bottom)
+    const tempMsg: Message = {
+      id: `temp-${Date.now()}`,
+      chatId,
+      senderId: user?.id || '',
+      content,
+      sentAt: now,
+      readBy: [],
+      messageType: 'text',
+      messageStatus: 'pending',
+      sender: user as any,
+      replyToId: repId,
+      replyTo: replyToMessage || undefined,
+    };
+    // Append - with ASC sort, newest at end appears at bottom of FlatList
+    setMessages(prev => [...prev, tempMsg]);
+
     import('../../db/SyncService')
       .then((module) =>
         module.SyncService.saveMessageOffline({
@@ -255,6 +415,7 @@ export default function ChatRoomScreen() {
           senderId: user?.id || '',
           senderName: user?.fullName,
           content,
+          replyToId: repId,
         })
       )
       .catch((err) => console.warn('[handleSend] saveOffline failed:', err));
@@ -369,7 +530,6 @@ export default function ChatRoomScreen() {
       <FlatList
         ref={flatRef}
         data={messages}
-        inverted={true}
         keyExtractor={(m) => m.id}
         contentContainerStyle={{ padding: 12, paddingBottom: 4 }}
         ListEmptyComponent={
@@ -383,6 +543,12 @@ export default function ChatRoomScreen() {
             message={msg}
             isMine={msg.senderId === user?.id}
             staticBase={STATIC_BASE}
+            onReplyPress={(replyId) => {
+              const target = messages.find(m => m.id === replyId);
+              if (target) {
+                // Scroll to target (optional logic)
+              }
+            }}
             onAvatarPress={(userId) => navigation.navigate('UserProfile', { userId })}
             onMediaPress={(url, type = 'image') => {
               setSelectedMedia({ url, type: type as 'image' | 'video' });
@@ -396,14 +562,18 @@ export default function ChatRoomScreen() {
         )}
         onScroll={(e) => {
           const { contentOffset } = e.nativeEvent;
-          // In inverted FlatList, offset.y = 0 is the bottom (newest messages).
-          // If user scrolls up (to old messages), offset.y increases.
-          isNearBottomRef.current = contentOffset.y < 100;
+          // With normal (non-inverted) FlatList, offset.y = 0 is the top (oldest messages).
+          // If user scrolls down (to new messages), offset.y increases.
+          const contentHeight = e.nativeEvent.contentSize.height;
+          const layoutHeight = e.nativeEvent.layoutMeasurement.height;
+          // Near bottom if we're within 100px of the bottom
+          isNearBottomRef.current = (contentHeight - (contentOffset.y + layoutHeight)) < 100;
         }}
         scrollEventThrottle={100}
         onContentSizeChange={() => {
+          // Scroll to bottom only if user was already near the bottom
           if (isNearBottomRef.current) {
-            flatRef.current?.scrollToOffset({ offset: 0, animated: false });
+            flatRef.current?.scrollToEnd({ animated: true });
           }
         }}
       />
@@ -417,6 +587,17 @@ export default function ChatRoomScreen() {
         onDelete={handleDeleteMessage}
       />
 
+      {replyToMessage && (
+        <View style={styles.replyPreview}>
+          <View style={{ borderLeftWidth: 3, borderLeftColor: Colors.primary, paddingLeft: 8 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.primary }}>Відповідь</Text>
+            <Text style={{ fontSize: 13, color: Colors.text }} numberOfLines={1}>{replyToMessage.content}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setReplyToMessage(null)}>
+            <Text style={{ fontSize: 18, color: Colors.textMuted }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: Math.max(10, keyboardHeight - TAB_BAR_HEIGHT) }]}>
         <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploading}>
           <Text style={{ fontSize: 20 }}>🖼</Text>
@@ -471,7 +652,7 @@ export default function ChatRoomScreen() {
 }
 
 function MessageBubble({
-  message, isMine, staticBase, onAvatarPress, onMediaPress, onLongPress,
+  message, isMine, staticBase, onAvatarPress, onMediaPress, onLongPress, onReplyPress,
 }: {
   message: Message;
   isMine: boolean;
@@ -479,6 +660,7 @@ function MessageBubble({
   onAvatarPress?: (userId: string) => void;
   onMediaPress?: (url: string, type?: 'image' | 'video') => void;
   onLongPress?: (message: Message) => void;
+  onReplyPress?: (replyToId: string) => void;
 }) {
   const isSystem = message.messageType === 'system';
   if (isSystem) {
@@ -490,7 +672,7 @@ function MessageBubble({
   }
 
   const time = new Date(message.sentAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
-  const hasAttachment = !!message.attachmentUrl;
+  const hasAttachment = !!message.attachmentUrl && typeof message.attachmentUrl === 'string' && message.attachmentUrl.length > 5;
   const attachUrl = hasAttachment
     ? message.attachmentUrl!.startsWith('http')
       ? message.attachmentUrl!
@@ -524,6 +706,19 @@ function MessageBubble({
         {!isMine && message.sender && (
           <Text style={styles.senderName}>{message.sender.fullName}</Text>
         )}
+        {message.replyTo && (
+          <TouchableOpacity 
+            style={[styles.replyInBubble, isMine ? styles.replyInBubbleMine : styles.replyInBubbleOther]}
+            onPress={() => message.replyToId && onReplyPress?.(message.replyToId)}
+          >
+            <Text style={[styles.replySender, isMine && { color: '#fff' }]} numberOfLines={1}>
+              {message.replyTo.sender?.fullName || 'Користувач'}
+            </Text>
+            <Text style={[styles.replyText, isMine && { color: 'rgba(255,255,255,0.8)' }]} numberOfLines={2}>
+              {message.replyTo.content}
+            </Text>
+          </TouchableOpacity>
+        )}
         {isImage && attachUrl && (
           <TouchableOpacity onPress={(e) => {
             e.stopPropagation();
@@ -543,7 +738,7 @@ function MessageBubble({
             <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
           </View>
         )}
-        {!hasAttachment && (
+        {(message.content && (!hasAttachment || isImage || isVideo)) && (
           <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
         )}
         <Text style={[styles.bubbleTime, isMine && { color: 'rgba(255,255,255,0.65)' }]}>{time}</Text>
@@ -560,6 +755,10 @@ function MessageBubble({
 }
 
 const styles = StyleSheet.create({
+  replyPreview: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    padding: 8, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.borderLight,
+  },
   typingBar: { paddingHorizontal: 16, paddingVertical: 4 },
   typingText: { fontSize: 12, color: Colors.textMuted, fontStyle: 'italic' },
   inputRow: {
@@ -585,6 +784,23 @@ const styles = StyleSheet.create({
   bubbleText: { fontSize: 15, color: Colors.text, lineHeight: 20 },
   bubbleTextMine: { color: '#fff' },
   bubbleTime: { fontSize: 10, color: Colors.textMuted, marginTop: 4, textAlign: 'right' },
+  replyInBubble: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.primary,
+    padding: 6,
+    borderRadius: 4,
+    marginBottom: 6,
+  },
+  replyInBubbleMine: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderLeftColor: '#fff',
+  },
+  replyInBubbleOther: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  replySender: { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 2 },
+  replyText: { fontSize: 12, color: Colors.textSecondary },
   attachImage: { width: 220, height: 160, borderRadius: 10, marginBottom: 6 },
   attachFile: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },

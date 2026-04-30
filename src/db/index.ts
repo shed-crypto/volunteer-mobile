@@ -14,6 +14,7 @@ import { UserCacheModel } from './models/UserCacheModel';
 import { PendingReport } from './models/PendingReport';
 import { ActionQueueItem } from './models/ActionQueueItem';
 import { TaskReportModel } from './models/TaskReportModel';
+import { SavedRequestModel } from './models/SavedRequestModel';
 
 const adapter = new SQLiteAdapter({
   schema: dbSchema,
@@ -37,6 +38,7 @@ export const database = new Database({
     PendingReport,
     ActionQueueItem,
     TaskReportModel,
+    SavedRequestModel,
   ],
 });
 
@@ -50,5 +52,6 @@ export const collections = {
   usersCache: database.collections.get('users_cache'),
   pendingReports: database.collections.get('pending_reports'),
   taskReports: database.collections.get('task_reports'),
+  savedRequests: database.collections.get('saved_requests'),
   actionQueue: database.collections.get('action_queue'),
 };

@@ -12,6 +12,7 @@ import { chatApi } from '../api/chat.api';
 import RequestsListScreen   from '../screens/requests/RequestsListScreen';
 import RequestDetailScreen  from '../screens/requests/RequestDetailScreen';
 import CreateRequestScreen  from '../screens/requests/CreateRequestScreen';
+import SavedRequestsScreen  from '../screens/requests/SavedRequestsScreen';
 import TaskDetailScreen     from '../screens/tasks/TaskDetailScreen';
 import MapScreen            from '../screens/map/MapScreen';
 import SelectLocationScreen from '../screens/map/SelectLocationScreen';
@@ -45,6 +46,7 @@ function RequestsStackNavigator() {
       <RequestsStack.Screen name="RequestsList"   component={RequestsListScreen} />
       <RequestsStack.Screen name="RequestDetail"  component={RequestDetailScreen} />
       <RequestsStack.Screen name="CreateRequest"  component={CreateRequestScreen} />
+      <RequestsStack.Screen name="SavedRequests"  component={SavedRequestsScreen} />
       <RequestsStack.Screen name="TaskDetail"     component={TaskDetailScreen} />
       <RequestsStack.Screen name="UserProfile"    component={UserProfileScreen} />
       <RequestsStack.Screen name="Kanban"         component={KanbanScreen} />

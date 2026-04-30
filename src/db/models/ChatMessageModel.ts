@@ -22,8 +22,9 @@ export class ChatMessageModel extends Model {
   @field('message_type') messageType!: string | null; // 'text' | 'attachment' | 'system'
   @field('attachment_url') attachmentUrl!: string | null;
   @field('message_status') messageStatus!: string | null; // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
-  @field('read_by_raw') readByRaw!: string | null; // JSON array of user IDs who read the message
-  @field('delivered_to_raw') deliveredToRaw!: string | null; // JSON array of user IDs message was delivered to
+  @field('reply_to_id') replyToId!: string | null;
+  @field('read_by_raw') readByRaw!: string | null;
+  @field('delivered_to_raw') deliveredToRaw!: string | null;
   @field('last_synced_at') lastSyncedAt!: number | null;
 
   /** Зручний геттер для десеріалізованих ID користувачів, які прочитали повідомлення */

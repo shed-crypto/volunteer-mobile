@@ -4,7 +4,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const dbSchema = appSchema({
-  version: 12,
+  version: 14,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -87,6 +87,7 @@ export const dbSchema = appSchema({
         { name: 'message_status', type: 'string', isOptional: true }, // 'sent' | 'delivered' | 'read' | 'pending' | 'failed'
         { name: 'read_by_raw', type: 'string', isOptional: true }, // JSON array of user IDs who read the message
         { name: 'delivered_to_raw', type: 'string', isOptional: true }, // JSON array of user IDs message was delivered to
+        { name: 'reply_to_id', type: 'string', isOptional: true },
         { name: 'last_synced_at', type: 'number', isOptional: true },
       ],
     }),
@@ -131,6 +132,16 @@ export const dbSchema = appSchema({
         { name: 'updated_at', type: 'number' },
         { name: 'is_synced', type: 'boolean' },
         { name: 'last_synced_at', type: 'number', isOptional: true },
+      ],
+    }),
+
+    // ─── Збережені заявки ─────────────────────────────────────────────────────
+    tableSchema({
+      name: 'saved_requests',
+      columns: [
+        { name: 'request_id', type: 'string', isIndexed: true },
+        { name: 'user_id', type: 'string', isIndexed: true },
+        { name: 'saved_at', type: 'number' },
       ],
     }),
 

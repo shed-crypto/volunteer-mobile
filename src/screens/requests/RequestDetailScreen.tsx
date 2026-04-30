@@ -48,6 +48,8 @@ export default function RequestDetailScreen() {
   const [editingInfoId, setEditingInfoId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [savingInfo, setSavingInfo] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [bookmarkLoading, setBookmarkLoading] = useState(false);
 
   // ─── Load tasks from local DB ────────────────────────────────────────────
   const loadTasksLocal = useCallback(async (requestId: string): Promise<Task[]> => {
@@ -255,6 +257,15 @@ export default function RequestDetailScreen() {
   const load = useCallback(async () => {
     OfflineLogger.nav(`RequestDetailScreen.load() called, requestId=${requestId}`);
     
+    // Перевірка статусу збереження
+    try {
+      const savedReqs = await collections.savedRequests.query().fetch();
+      setIsSaved(savedReqs.some((s: any) => s.requestId === requestId));
+    } catch (e) {
+      OfflineLogger.cache('RequestDetail: Failed to check saved status', e);
+      setIsSaved(false);
+    }
+
     try {
       // КРОК 1: Завантажити з локальної БД (з АДАПТИВНИМ таймаутом)
       // Онлайн: 300мс, Офлайн: 2000мс
@@ -363,11 +374,45 @@ export default function RequestDetailScreen() {
     }
   };
 
+  const toggleBookmark = async () => {
+    setBookmarkLoading(true);
+    try {
+      if (isSaved) {
+        await requestsApi.unsave(requestId);
+        // Persist local deletion
+        const saved = await collections.savedRequests.query().fetch();
+        const item = saved.find((s: any) => s.requestId === requestId);
+        if (item) await database.write(() => item.destroyPermanently());
+        setIsSaved(false);
+      } else {
+        await requestsApi.save(requestId);
+        // Persist local creation
+        await database.write(() => 
+          collections.savedRequests.create((s: any) => {
+            s.requestId = requestId;
+            s.userId = user?.id || '';
+            s.savedAt = Date.now();
+          })
+        );
+        setIsSaved(true);
+      }
+    } catch (e) {
+      OfflineLogger.cache('RequestDetail: failed to toggle bookmark', e);
+      Alert.alert('Помилка', 'Не вдалося зберегти заявку');
+    } finally {
+      setBookmarkLoading(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
       <ScreenHeader
         title="Деталі заявки"
         onBack={() => navigation.goBack()}
+        rightAction={{
+          icon: isSaved ? 'bookmark' : 'bookmark-outline',
+          onPress: toggleBookmark,
+        }}
       />
 
       {/* Action buttons row to avoid header overlap */}

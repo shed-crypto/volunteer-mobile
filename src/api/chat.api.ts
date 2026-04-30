@@ -12,8 +12,8 @@ export const chatApi = {
   getMessages: (chatId: string, limit = 50, beforeId?: string): Promise<Message[]> =>
     api.get(`/chats/${chatId}/messages`, { params: { limit, beforeId } }).then((r) => r.data),
 
-  sendMessage: (chatId: string, content: string): Promise<Message> =>
-    api.post(`/chats/${chatId}/messages`, { content }).then((r) => r.data),
+  sendMessage: (chatId: string, content: string, replyToId?: string): Promise<Message> =>
+    api.post(`/chats/${chatId}/messages`, { content, replyToId }).then((r) => r.data),
 
   /**
    * Завантажує файл у чат і повертає URL збереженого файлу.
