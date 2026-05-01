@@ -62,12 +62,20 @@ export default function OrganizationsScreen() {
         title="Організації"
         onBack={() => navigation.goBack()}
         rightAction={
-          <TouchableOpacity
-            style={styles.addBtn}
-            onPress={() => setShowCreate(!showCreate)}
-          >
-            <Text style={{ color: '#fff', fontSize: 24 }}>{showCreate ? '✕' : '+'}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={() => navigation.navigate('OrgSearch')}
+            >
+              <Ionicons name="search" size={20} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={() => setShowCreate(!showCreate)}
+            >
+              <Text style={{ color: '#fff', fontSize: 24 }}>{showCreate ? '✕' : '+'}</Text>
+            </TouchableOpacity>
+          </View>
         }
       />
 

@@ -190,6 +190,32 @@ export interface Organization {
   members?: OrganizationMember[];
   hubs?: Hub[];
   isPublic: boolean;
+  bannerUrl?: string;
+  settings?: OrganizationSettings;
+  joinRequests?: OrganizationJoinRequest[];
+}
+
+export interface OrganizationSettings {
+  id: string;
+  organizationId: string;
+  allowPublicJoin: boolean;
+  requireJoinApproval: boolean;
+  memberInviteAllowed: boolean;
+  subgroupCreationAllowed: boolean;
+  mediaUploadAllowed: boolean;
+  allowedMemberRoles: OrgRole[];
+}
+
+export interface OrganizationJoinRequest {
+  id: string;
+  organizationId: string;
+  userId: string;
+  user?: User;
+  message?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedBy?: string;
+  reviewComment?: string;
+  reviewedAt?: string;
 }
 
 export interface OrganizationMember {

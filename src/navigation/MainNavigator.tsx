@@ -24,6 +24,10 @@ import VehiclesScreen       from '../screens/profile/VehiclesScreen';
 import UserProfileScreen    from '../screens/profile/UserProfileScreen';
 import OrganizationsScreen  from '../screens/organizations/OrganizationsScreen';
 import OrgDetailScreen      from '../screens/organizations/OrgDetailScreen';
+import OrgSearchScreen      from '../screens/organizations/OrganizationSearchScreen';
+import OrgEditScreen        from '../screens/organizations/EditOrganizationScreen';
+import OrgSettingsScreen    from '../screens/organizations/OrganizationSettingsScreen';
+import JoinRequestsScreen   from '../screens/organizations/JoinRequestsScreen';
 import AdminScreen          from '../screens/admin/AdminScreen';
 import AdminCreateUserScreen from '../screens/admin/AdminCreateUserScreen';
 import DevDBInspector       from '../screens/admin/DevDBInspector';
@@ -87,6 +91,10 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="Vehicles"      component={VehiclesScreen} />
       <ProfileStack.Screen name="Organizations" component={OrganizationsScreen} />
       <ProfileStack.Screen name="OrgDetail"     component={OrgDetailScreen} />
+      <ProfileStack.Screen name="OrgSearch"     component={OrgSearchScreen} />
+      <ProfileStack.Screen name="OrgEdit"       component={OrgEditScreen} />
+      <ProfileStack.Screen name="OrgSettings"   component={OrgSettingsScreen} />
+      <ProfileStack.Screen name="OrgJoinRequests" component={JoinRequestsScreen} />
       <ProfileStack.Screen name="UserProfile"   component={UserProfileScreen} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
     </ProfileStack.Navigator>

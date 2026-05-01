@@ -14,9 +14,11 @@ import {
   TouchableOpacity, Alert, ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { Colors } from '../../utils/theme';
 import api from '../../api/axios';
+import { orgsApi } from '../../api/orgs.api';
 import { ScreenHeader } from '../../components/ui';
 
 interface OrgMember {
@@ -129,6 +131,47 @@ export default function OrgDetailScreen() {
         title={org.name}
         subtitle={myMembership ? ORG_ROLE_LABELS[myMembership.orgRole] ?? 'Учасник' : undefined}
         onBack={() => navigation.goBack()}
+        rightAction={
+          isLeaderOrCoord ? (
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity onPress={() => navigation.navigate('OrgJoinRequests', { orgId })}>
+                <Ionicons name="mail" size={24} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('OrgSettings', { orgId })}>
+                <Ionicons name="settings" size={24} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('OrgEdit', { orgId })}>
+                <Ionicons name="create" size={24} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ) : !myMembership ? (
+            <TouchableOpacity
+              style={styles.joinBtn}
+              onPress={() => {
+                Alert.prompt(
+                  'Запит на вступ',
+                  'Напишіть коротке повідомлення для лідерів організації',
+                  [
+                    { text: 'Скасувати', style: 'cancel' },
+                    {
+                      text: 'Надіслати',
+                      onPress: async (msg?: string) => {
+                        try {
+                          await orgsApi.join(orgId, msg);
+                          Alert.alert('Успіх', 'Запит надіслано');
+                        } catch (e: any) {
+                          Alert.alert('Помилка', e?.response?.data?.message || 'Не вдалося надіслати запит');
+                        }
+                      }
+                    }
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.joinBtnText}>Вступити</Text>
+            </TouchableOpacity>
+          ) : null
+        }
       />
 
       {org.description ? (
@@ -286,6 +329,14 @@ const styles = StyleSheet.create({
   stat: { flex: 1, alignItems: 'center', paddingVertical: 12 },
   statNum: { fontSize: 20, fontWeight: '700', color: Colors.primary },
   statLabel: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },
+
+  joinBtn: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  joinBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
   tabs: {
     flexDirection: 'row', marginHorizontal: 16, marginTop: 12,

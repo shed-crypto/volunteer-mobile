@@ -367,7 +367,7 @@ export default function ChatRoomScreen() {
     sendTyping(chatId, false);
     
     if (getServerReachable()) {
-      sendMessage(chatId, content, repId);
+      chatApi.sendMessage(chatId, content).catch(console.warn);
     }
 
     const tempMsg: Message = {

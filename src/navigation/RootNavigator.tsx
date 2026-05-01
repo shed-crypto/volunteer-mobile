@@ -20,6 +20,10 @@ export type RootStackParamList = {
   ChatSettings: { chatId: string; chatName?: string; isGroupChat: boolean };
   Organizations: undefined;
   OrgDetail: { orgId: string };
+  OrgSearch: undefined;
+  OrgEdit: { orgId: string };
+  OrgSettings: { orgId: string };
+  OrgJoinRequests: { orgId: string };
 };
 
 declare global {

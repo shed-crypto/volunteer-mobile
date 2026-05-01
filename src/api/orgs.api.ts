@@ -1,5 +1,12 @@
 import api from './axios';
-import { Organization, OrganizationMember, OrgRole, Hub } from '../types';
+import {
+  Organization,
+  OrganizationMember,
+  OrgRole,
+  Hub,
+  OrganizationSettings,
+  OrganizationJoinRequest,
+} from '../types';
 
 export const orgsApi = {
   getAll: (params?: { parentOrgId?: string }): Promise<Organization[]> =>
@@ -33,4 +40,28 @@ export const orgsApi = {
     data: { name: string; address?: string; latitude?: number; longitude?: number },
   ): Promise<Hub> =>
     api.post(`/organizations/${id}/hubs`, data).then((r) => r.data),
+
+  search: (q: string): Promise<Organization[]> =>
+    api.get('/organizations/search/query', { params: { q } }).then((r) => r.data),
+
+  update: (id: string, data: Partial<Organization>): Promise<Organization> =>
+    api.patch(`/organizations/${id}`, data).then((r) => r.data),
+
+  getSettings: (id: string): Promise<OrganizationSettings> =>
+    api.get(`/organizations/${id}/settings`).then((r) => r.data),
+
+  updateSettings: (id: string, data: Partial<OrganizationSettings>): Promise<OrganizationSettings> =>
+    api.patch(`/organizations/${id}/settings`, data).then((r) => r.data),
+
+  join: (id: string, message?: string): Promise<OrganizationJoinRequest> =>
+    api.post(`/organizations/${id}/join`, { message }).then((r) => r.data),
+
+  getJoinRequests: (id: string): Promise<OrganizationJoinRequest[]> =>
+    api.get(`/organizations/${id}/join-requests`).then((r) => r.data),
+
+  approveRequest: (id: string, requestId: string, comment?: string): Promise<void> =>
+    api.post(`/organizations/${id}/join-requests/${requestId}/approve`, { comment }).then(() => undefined),
+
+  rejectRequest: (id: string, requestId: string, comment?: string): Promise<void> =>
+    api.post(`/organizations/${id}/join-requests/${requestId}/reject`, { comment }).then(() => undefined),
 };
