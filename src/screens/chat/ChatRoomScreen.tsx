@@ -28,7 +28,6 @@ type RouteParams = { ChatRoom: { chatId: string; chatName?: string } };
 const STATIC_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api')
   .replace('/api', '');
 
-// Допоміжний компонент для динамічного відображення фото
 function AdaptiveImage({ uri }: { uri: string }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -85,12 +84,9 @@ export default function ChatRoomScreen() {
   const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
-  const [showForwardModal, setShowForwardModal] = useState(false);
-  const [messageToForward, setMessageToForward] = useState<Message | null>(null);
-  const TAB_BAR_HEIGHT = 65; // Приблизна висота вкладок
+  const TAB_BAR_HEIGHT = 65; 
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
-  const isNearBottomRef = useRef(true);
 
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
@@ -102,7 +98,6 @@ export default function ChatRoomScreen() {
       } as Message;
 
       setMessages((prev) => {
-        // 1. Спробуємо знайти тимчасове повідомлення за контентом та автором
         const tempIndex = prev.findIndex(m => 
           m.id.startsWith('temp-') && 
           m.content === newMsg.content && 
@@ -110,15 +105,20 @@ export default function ChatRoomScreen() {
         );
 
         if (tempIndex !== -1) {
-          // Замінюємо тимчасове повідомлення серверним
           const updated = [...prev];
-          updated[tempIndex] = { ...newMsg, replyTo: updated[tempIndex].replyTo };
+          const oldTemp = updated[tempIndex];
+          updated[tempIndex] = { ...newMsg, replyTo: oldTemp.replyTo };
           return updated;
         }
 
-        // 2. Якщо це нове повідомлення
         if (prev.find((m) => m.id === newMsg.id)) return prev;
-        return [...prev, newMsg];
+
+        if (newMsg.replyToId) {
+          newMsg.replyTo = prev.find(m => m.id === newMsg.replyToId);
+        }
+
+        // PREPEND (DESC order: newest at top of array, bottom of screen)
+        return [newMsg, ...prev];
       });
     },
     onMessagesRead: (data) => {
@@ -161,10 +161,8 @@ export default function ChatRoomScreen() {
       const operations: any[] = [];
       
       for (const msg of msgs) {
-        // Check if we already have this message (by server ID)
         const existingByServerId = existing.find((m: any) => m.serverId === msg.id);
         if (existingByServerId) {
-          // Update existing record (e.g., update messageStatus)
           operations.push(
             existingByServerId.prepareUpdate((m: any) => {
               m.messageStatus = (msg as any).messageStatus || 'sent';
@@ -176,19 +174,16 @@ export default function ChatRoomScreen() {
           continue;
         }
         
-        // Check if we have a temp message that matches (same content, sender, approximate time)
         const tempMatch = existing.find((m: any) => {
           if (!m.id.startsWith('temp-')) return false;
           if (m.content !== msg.content) return false;
           if (m.senderId !== msg.senderId) return false;
-          // Match within 30 seconds
           const tempTime = m.sentAt;
           const serverTime = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
           return Math.abs(tempTime - serverTime) < 30000;
         });
         
         if (tempMatch) {
-          // Update temp message with server ID
           operations.push(
             tempMatch.prepareUpdate((m: any) => {
               m.serverId = msg.id;
@@ -201,7 +196,6 @@ export default function ChatRoomScreen() {
             })
           );
         } else {
-          // Create new record
           operations.push(
             collections.chatMessages.prepareCreate((m: any) => {
               m.serverId = msg.id;
@@ -234,153 +228,92 @@ export default function ChatRoomScreen() {
     }
   }, [chatId]);
 
+  const mapLocalToMessage = (m: any): Message => {
+    const sentAtStr = typeof m.sentAt === 'number' 
+      ? new Date(m.sentAt).toISOString() 
+      : (m.sentAt || new Date().toISOString());
+    return {
+      id: m.serverId || m.id,
+      chatId: m.chatId,
+      senderId: m.senderId,
+      content: m.content,
+      sentAt: sentAtStr,
+      messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
+      attachmentUrl: m.attachmentUrl || undefined,
+      messageStatus: m.messageStatus || 'sent',
+      readBy: m.readBy || [],
+      deliveredTo: m.deliveredTo || [],
+      replyToId: m.replyToId || undefined,
+      replyTo: undefined,
+      sender: {
+        id: m.senderId,
+        fullName: m.senderName || 'Користувач',
+        email: '',
+        systemRole: SystemRole.VOLUNTEER,
+        clearanceLevel: ClearanceLevel.LOCAL,
+        trustScore: 0,
+        isBlocked: false,
+        createdAt: new Date().toISOString(),
+      },
+    } as Message;
+  };
+
   const load = useCallback(async () => {
     if (!chatId || isLoadingRef.current) return;
     isLoadingRef.current = true;
     setLoading(true);
     
     try {
-      // Always load from local DB first
+      // 1. Load from local DB (DESC - newest first for inverted list)
       const localMessages = await collections.chatMessages
-        .query(Q.where('chat_id', chatId))
+        .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
         .fetch();
       
-      // Map local messages to Message type
-      const mapped = localMessages.map((m: any) => {
-        const sentAtStr = typeof m.sentAt === 'number' 
-          ? new Date(m.sentAt).toISOString() 
-          : (m.sentAt || new Date().toISOString());
-        return {
-          id: m.serverId || m.id,
-          chatId: m.chatId,
-          senderId: m.senderId,
-          content: m.content,
-          sentAt: sentAtStr,
-          messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
-          attachmentUrl: m.attachmentUrl || undefined,
-          messageStatus: m.messageStatus || 'sent',
-          readBy: m.readBy || [],
-          deliveredTo: m.deliveredTo || [],
-          replyToId: m.replyToId || undefined,
-          replyTo: undefined as Message | undefined,
-          sender: {
-            id: m.senderId,
-            fullName: m.senderName || 'Користувач',
-            email: '',
-            systemRole: SystemRole.VOLUNTEER,
-            clearanceLevel: ClearanceLevel.LOCAL,
-            trustScore: 0,
-            isBlocked: false,
-            createdAt: new Date().toISOString(),
-          },
-        } as Message;
-      });
+      const mapped = localMessages.map(mapLocalToMessage);
 
-      // Build reply references
       mapped.forEach(m => {
         if (m.replyToId) {
           m.replyTo = mapped.find(prev => prev.id === m.replyToId);
         }
       });
 
-      // If online, try to sync with server
-      const serverReachable = getServerReachable();
-      if (isOnlineRef.current && serverReachable) {
+      setMessages(mapped);
+      setLoading(false);
+
+      if (isOnlineRef.current && getServerReachable()) {
         try {
           const data = await chatApi.getLatestMessages(chatId, 50);
           if (data && data.length > 0) {
-            // Save server messages to DB
             await saveMessagesToDB(data);
             
-            // Mark read and update local state
-            chatApi.markAsRead(chatId).then(() => {
-              setMessages(prev => prev.map(m => 
-                (m.senderId !== user?.id && m.messageStatus !== 'read') 
-                  ? { ...m, messageStatus: 'read' } 
-                  : m
-              ));
-            }).catch(() => {});
+            const updatedLocal = await collections.chatMessages
+              .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
+              .fetch();
+            const remapped = updatedLocal.map(mapLocalToMessage);
+            remapped.forEach(m => {
+              if (m.replyToId) m.replyTo = remapped.find(prev => prev.id === m.replyToId);
+            });
+            setMessages(remapped);
+            setHasMore(remapped.length >= 50);
+            
+            chatApi.markAsRead(chatId).catch(() => {});
           }
-        } catch (apiErr) {
-          console.warn('[ChatRoomScreen] API sync failed:', apiErr);
+        } catch (apiErr: any) {
+          if (apiErr.response?.status === 403) {
+            Alert.alert('Доступ обмежено', 'Ви більше не маєте доступу до цього чату.');
+            navigation.goBack();
+            const toDelete = await collections.chatMessages.query(Q.where('chat_id', chatId)).fetch();
+            await database.write(() => Promise.all(toDelete.map(m => m.destroyPermanently())));
+          }
         }
       }
-
-      // Cleanup: Delete old messages (older than 30 days)
-      try {
-        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        const allMessages = await collections.chatMessages
-          .query(Q.where('chat_id', chatId))
-          .fetch();
-        const toDelete = allMessages.filter((m: any) => {
-          const msgTime = typeof m.sentAt === 'number' ? m.sentAt : new Date(m.sentAt).getTime();
-          return msgTime < thirtyDaysAgo;
-        });
-        if (toDelete.length > 0) {
-          await database.write(async () => {
-            await Promise.all(toDelete.map((m: any) => m.markAsDeleted()));
-          });
-        }
-      } catch (err) {
-        console.warn('[ChatRoomScreen] Cleanup error:', err);
-      }
-
-      // Always re-load from DB after potential sync to get merged state
-      const updatedLocal = await collections.chatMessages
-        .query(Q.where('chat_id', chatId))
-        .fetch();
-      
-      const remapped = updatedLocal.map((m: any) => {
-        const sentAtStr = typeof m.sentAt === 'number' 
-          ? new Date(m.sentAt).toISOString() 
-          : (m.sentAt || new Date().toISOString());
-        return {
-          id: m.serverId || m.id,
-          chatId: m.chatId,
-          senderId: m.senderId,
-          content: m.content,
-          sentAt: sentAtStr,
-          messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
-          attachmentUrl: m.attachmentUrl || undefined,
-          messageStatus: m.messageStatus || 'sent',
-          readBy: m.readBy || [],
-          deliveredTo: m.deliveredTo || [],
-          replyToId: m.replyToId || undefined,
-          replyTo: undefined as Message | undefined,
-          sender: {
-            id: m.senderId,
-            fullName: m.senderName || 'Користувач',
-            email: '',
-            systemRole: SystemRole.VOLUNTEER,
-            clearanceLevel: ClearanceLevel.LOCAL,
-            trustScore: 0,
-            isBlocked: false,
-            createdAt: new Date().toISOString(),
-          },
-        } as Message;
-      });
-
-      // Build reply references
-      remapped.forEach(m => {
-        if (m.replyToId) {
-          m.replyTo = remapped.find(prev => prev.id === m.replyToId);
-        }
-      });
-
-      // Sort ASC (oldest first) - newest will be at bottom
-      const sorted = remapped.sort((a, b) => 
-        new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
-      );
-      
-      setMessages(sorted);
-      setHasMore(sorted.length >= 50);
     } catch (error: any) {
       console.warn('[ChatRoomScreen] Load error:', error);
     } finally {
       setLoading(false);
       isLoadingRef.current = false;
     }
-  }, [chatId, saveMessagesToDB]);
+  }, [chatId, saveMessagesToDB, navigation]);
 
   useEffect(() => {
     load();
@@ -408,17 +341,16 @@ export default function ChatRoomScreen() {
     if (!content || sending) return;
     setSending(true);
     const repId = replyToMessage?.id;
-    const now = new Date().toISOString(); // Use ISO string for consistency
+    const now = new Date().toISOString();
     setText('');
+    const prevReply = replyToMessage;
     setReplyToMessage(null);
     sendTyping(chatId, false);
     
-    const serverReachable = getServerReachable();
-    if (serverReachable) {
+    if (getServerReachable()) {
       sendMessage(chatId, content, repId);
     }
 
-    // Додаємо локально відразу для кращого UX - APPEND (ASC: newest at end = bottom)
     const tempMsg: Message = {
       id: `temp-${Date.now()}`,
       chatId,
@@ -430,10 +362,10 @@ export default function ChatRoomScreen() {
       messageStatus: 'pending',
       sender: user as any,
       replyToId: repId,
-      replyTo: replyToMessage || undefined,
+      replyTo: prevReply || undefined,
     };
-    // Append - with ASC sort, newest at end appears at bottom of FlatList
-    setMessages(prev => [...prev, tempMsg]);
+    
+    setMessages(prev => [tempMsg, ...prev]);
 
     import('../../db/SyncService')
       .then((module) =>
@@ -486,9 +418,8 @@ export default function ChatRoomScreen() {
 
   const handleForwardMessage = () => {
     if (selectedMessage) {
-      setMessageToForward(selectedMessage);
-      setShowForwardModal(true);
       setContextMenuVisible(false);
+      Alert.alert('Незабаром', 'Функція пересилання в розробці');
     }
   };
 
@@ -541,7 +472,7 @@ export default function ChatRoomScreen() {
     }
   };
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <View style={{ flex: 1, backgroundColor: Colors.background }}>
         <ScreenHeader title={chatName ?? 'Чат'} onBack={() => navigation.navigate('ChatsList')} />
@@ -558,12 +489,15 @@ export default function ChatRoomScreen() {
         ref={flatRef}
         data={messages}
         keyExtractor={(m) => m.id}
+        inverted={true}
         contentContainerStyle={{ padding: 12, paddingBottom: 4 }}
         ListEmptyComponent={
-          <View style={{ alignItems: 'center', padding: 40 }}>
-            <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
-            <Text style={{ color: Colors.textSecondary }}>Повідомлень поки немає</Text>
-          </View>
+          !loading ? (
+            <View style={{ alignItems: 'center', padding: 40 }}>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text>
+              <Text style={{ color: Colors.textSecondary }}>Повідомлень поки немає</Text>
+            </View>
+          ) : null
         }
         renderItem={({ item: msg }) => (
           <MessageBubble
@@ -571,9 +505,9 @@ export default function ChatRoomScreen() {
             isMine={msg.senderId === user?.id}
             staticBase={STATIC_BASE}
             onReplyPress={(replyId) => {
-              const target = messages.find(m => m.id === replyId);
-              if (target) {
-                // Scroll to target (optional logic)
+              const targetIndex = messages.findIndex(m => m.id === replyId);
+              if (targetIndex !== -1) {
+                flatRef.current?.scrollToIndex({ index: targetIndex, animated: true });
               }
             }}
             onAvatarPress={(userId) => navigation.navigate('UserProfile', { userId })}
@@ -589,44 +523,6 @@ export default function ChatRoomScreen() {
         )}
         onEndReached={async () => {
           if (loadingMore || !hasMore || messages.length === 0) return;
-          setLoadingMore(true);
-          try {
-            const oldest = messages[0];
-            const data = await chatApi.getMessages(chatId, 50, oldest.id, 'DESC');
-            if (data && data.length > 0) {
-              await saveMessagesToDB(data);
-              const remapped = data.map((m: any) => ({
-                ...m,
-                id: m.id,
-                sentAt: typeof m.sentAt === 'string' ? m.sentAt : new Date(m.sentAt).toISOString(),
-              }));
-              setMessages(prev => [...remapped.reverse(), ...prev]);
-            } else {
-              setHasMore(false);
-            }
-          } catch (err) {
-            console.warn('Load more error:', err);
-          } finally {
-            setLoadingMore(false);
-          }
-        }}
-        onEndReachedThreshold={0.3}
-        ListFooterComponent={loadingMore ? <ActivityIndicator /> : null}
-        onScroll={(e) => {
-          const { contentOffset } = e.nativeEvent;
-          // With normal (non-inverted) FlatList, offset.y = 0 is the top (oldest messages).
-          // If user scrolls down (to new messages), offset.y increases.
-          const contentHeight = e.nativeEvent.contentSize.height;
-          const layoutHeight = e.nativeEvent.layoutMeasurement.height;
-          // Near bottom if we're within 100px of the bottom
-          isNearBottomRef.current = (contentHeight - (contentOffset.y + layoutHeight)) < 100;
-        }}
-        scrollEventThrottle={100}
-        onContentSizeChange={() => {
-          // Scroll to bottom only if user was already near the bottom
-          if (isNearBottomRef.current) {
-            flatRef.current?.scrollToEnd({ animated: true });
-          }
         }}
       />
 
