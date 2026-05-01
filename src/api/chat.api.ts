@@ -9,8 +9,11 @@ export const chatApi = {
   getOrCreateDirect: (targetUserId: string): Promise<Chat> =>
     api.post('/chats/direct', { targetUserId }).then((r) => r.data),
 
-  getMessages: (chatId: string, limit = 50, beforeId?: string): Promise<Message[]> =>
-    api.get(`/chats/${chatId}/messages`, { params: { limit, beforeId } }).then((r) => r.data),
+  getMessages: (chatId: string, limit = 50, beforeId?: string, sort: 'ASC' | 'DESC' = 'ASC'): Promise<Message[]> =>
+    api.get(`/chats/${chatId}/messages`, { params: { limit, beforeId, sort } }).then((r) => r.data),
+
+  getLatestMessages: (chatId: string, limit = 50): Promise<Message[]> =>
+    api.get(`/chats/${chatId}/messages`, { params: { limit, sort: 'DESC' } }).then((r) => r.data),
 
   sendMessage: (chatId: string, content: string, replyToId?: string): Promise<Message> =>
     api.post(`/chats/${chatId}/messages`, { content, replyToId }).then((r) => r.data),

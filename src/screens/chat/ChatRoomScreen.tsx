@@ -12,6 +12,7 @@ import { chatApi } from '../../api/chat.api';
 import { Message, SystemRole, ClearanceLevel } from '../../types';
 import { Colors } from '../../utils/theme';
 import { fileUtils } from '../../utils/fileUtils';
+import { getServerReachable } from '../../api/axios';
 import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket, emitWhenReady } from '../../hooks/useSocket';
@@ -72,6 +73,8 @@ export default function ChatRoomScreen() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [text, setText] = useState('');
   const [typing, setTyping] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -281,9 +284,10 @@ export default function ChatRoomScreen() {
       });
 
       // If online, try to sync with server
-      if (isOnlineRef.current) {
+      const serverReachable = getServerReachable();
+      if (isOnlineRef.current && serverReachable) {
         try {
-          const data = await chatApi.getMessages(chatId, 100);
+          const data = await chatApi.getLatestMessages(chatId, 50);
           if (data && data.length > 0) {
             // Save server messages to DB
             await saveMessagesToDB(data);
@@ -300,6 +304,25 @@ export default function ChatRoomScreen() {
         } catch (apiErr) {
           console.warn('[ChatRoomScreen] API sync failed:', apiErr);
         }
+      }
+
+      // Cleanup: Delete old messages (older than 30 days)
+      try {
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const allMessages = await collections.chatMessages
+          .query(Q.where('chat_id', chatId))
+          .fetch();
+        const toDelete = allMessages.filter((m: any) => {
+          const msgTime = typeof m.sentAt === 'number' ? m.sentAt : new Date(m.sentAt).getTime();
+          return msgTime < thirtyDaysAgo;
+        });
+        if (toDelete.length > 0) {
+          await database.write(async () => {
+            await Promise.all(toDelete.map((m: any) => m.markAsDeleted()));
+          });
+        }
+      } catch (err) {
+        console.warn('[ChatRoomScreen] Cleanup error:', err);
       }
 
       // Always re-load from DB after potential sync to get merged state
@@ -350,6 +373,7 @@ export default function ChatRoomScreen() {
       );
       
       setMessages(sorted);
+      setHasMore(sorted.length >= 50);
     } catch (error: any) {
       console.warn('[ChatRoomScreen] Load error:', error);
     } finally {
@@ -389,7 +413,10 @@ export default function ChatRoomScreen() {
     setReplyToMessage(null);
     sendTyping(chatId, false);
     
-    sendMessage(chatId, content, repId);
+    const serverReachable = getServerReachable();
+    if (serverReachable) {
+      sendMessage(chatId, content, repId);
+    }
 
     // Додаємо локально відразу для кращого UX - APPEND (ASC: newest at end = bottom)
     const tempMsg: Message = {
@@ -560,6 +587,31 @@ export default function ChatRoomScreen() {
             }}
           />
         )}
+        onEndReached={async () => {
+          if (loadingMore || !hasMore || messages.length === 0) return;
+          setLoadingMore(true);
+          try {
+            const oldest = messages[0];
+            const data = await chatApi.getMessages(chatId, 50, oldest.id, 'DESC');
+            if (data && data.length > 0) {
+              await saveMessagesToDB(data);
+              const remapped = data.map((m: any) => ({
+                ...m,
+                id: m.id,
+                sentAt: typeof m.sentAt === 'string' ? m.sentAt : new Date(m.sentAt).toISOString(),
+              }));
+              setMessages(prev => [...remapped.reverse(), ...prev]);
+            } else {
+              setHasMore(false);
+            }
+          } catch (err) {
+            console.warn('Load more error:', err);
+          } finally {
+            setLoadingMore(false);
+          }
+        }}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={loadingMore ? <ActivityIndicator /> : null}
         onScroll={(e) => {
           const { contentOffset } = e.nativeEvent;
           // With normal (non-inverted) FlatList, offset.y = 0 is the top (oldest messages).

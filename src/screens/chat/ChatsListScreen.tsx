@@ -123,9 +123,18 @@ export default function ChatsListScreen() {
   const saveChatsToDB = useCallback(async (chatsData: Chat[]) => {
     try {
       const existing = await collections.chats.query().fetch();
+      const serverIds = new Set(chatsData.map(c => c.id));
       const existingMap = new Map(existing.map((c: any) => [c.serverId, c]));
       const operations: any[] = [];
 
+      // 1. Видалити локальні чати, яких немає на сервері (синхронізація видалених)
+      for (const localChat of existing) {
+        if (!serverIds.has(localChat.serverId)) {
+          operations.push(localChat.prepareMarkAsDeleted());
+        }
+      }
+
+      // 2. Оновити або створити чати з сервера
       for (const chat of chatsData) {
         const existingChat = existingMap.get(chat.id);
         if (existingChat) {
@@ -162,7 +171,7 @@ export default function ChatsListScreen() {
         await database.write(async () => {
           await database.batch(...operations);
         });
-        OfflineLogger.cache(`ChatsList: saved ${operations.length} chats to DB`);
+        OfflineLogger.cache(`ChatsList: synced ${operations.length} operations to DB`);
       }
     } catch (e) {
       OfflineLogger.cache('ChatsList: save to DB failed', e);
@@ -354,7 +363,7 @@ export default function ChatsListScreen() {
           return (
             <TouchableOpacity
               style={styles.chatRow}
-              onPress={() => handleOpenChat(chat)}
+              onPress={() => handleOpenChat({ ...chat, id: chat.id || (chat as any).serverId })}
               activeOpacity={0.75}
             >
               <View style={[styles.avatar, { backgroundColor: getChatColor(chat) }]}>
