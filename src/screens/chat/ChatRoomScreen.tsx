@@ -19,7 +19,6 @@ import { useSocket, emitWhenReady } from '../../hooks/useSocket';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { database, collections } from '../../db/index';
 import { MessageStatusIcon } from '../../components/MessageStatusIcon';
-import { NetworkStatusIndicator } from '../../components/NetworkStatusIndicator';
 import { MediaViewer, VideoThumbnail } from '../../components/MediaViewer';
 import { MessageContextMenu } from '../../components/MessageContextMenu';
 
@@ -74,6 +73,7 @@ export default function ChatRoomScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [text, setText] = useState('');
   const [typing, setTyping] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -117,7 +117,6 @@ export default function ChatRoomScreen() {
           newMsg.replyTo = prev.find(m => m.id === newMsg.replyToId);
         }
 
-        // PREPEND (DESC order: newest at top of array, bottom of screen)
         return [newMsg, ...prev];
       });
     },
@@ -264,7 +263,6 @@ export default function ChatRoomScreen() {
     setLoading(true);
     
     try {
-      // 1. Load from local DB (DESC - newest first for inverted list)
       const localMessages = await collections.chatMessages
         .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
         .fetch();
@@ -291,7 +289,7 @@ export default function ChatRoomScreen() {
               .fetch();
             const remapped = updatedLocal.map(mapLocalToMessage);
             remapped.forEach(m => {
-              if (m.replyToId) m.replyTo = remapped.find(prev => prev.id === m.replyToId);
+              if (m.replyToId) m.replyTo = remapped.find(prev => remapped.find(x => x.id === m.replyToId));
             });
             setMessages(remapped);
             setHasMore(remapped.length >= 50);
@@ -322,6 +320,27 @@ export default function ChatRoomScreen() {
     };
   }, [load]);
 
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || messages.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const oldestMsg = messages[messages.length - 1];
+      const older = await chatApi.getMessages(chatId, 25, oldestMsg.id, 'DESC');
+      if (older.length > 0) {
+        setMessages(prev => {
+          const uniqueNew = older.filter(o => !prev.some(p => p.id === o.id));
+          return [...prev, ...uniqueNew];
+        });
+        setHasMore(older.length >= 25);
+      } else {
+        setHasMore(false);
+      }
+    } catch (e) {
+      console.warn('[loadMore] error:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [chatId, messages, loadingMore, hasMore]);
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) => {
@@ -490,6 +509,12 @@ export default function ChatRoomScreen() {
         data={messages}
         keyExtractor={(m) => m.id}
         inverted={true}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        onScroll={(e) => {
+          const offset = e.nativeEvent.contentOffset.y;
+          setShowScrollToBottom(offset > 600);
+        }}
         contentContainerStyle={{ padding: 12, paddingBottom: 4 }}
         ListEmptyComponent={
           !loading ? (
@@ -521,10 +546,17 @@ export default function ChatRoomScreen() {
             }}
           />
         )}
-        onEndReached={async () => {
-          if (loadingMore || !hasMore || messages.length === 0) return;
-        }}
       />
+
+      {showScrollToBottom && (
+        <TouchableOpacity 
+          style={styles.scrollToBottom} 
+          onPress={() => flatRef.current?.scrollToOffset({ offset: 0, animated: true })}
+          activeOpacity={0.9}
+        >
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>▼</Text>
+        </TouchableOpacity>
+      )}
 
       <MessageContextMenu
         visible={contextMenuVisible}
@@ -599,7 +631,7 @@ export default function ChatRoomScreen() {
   );
 }
 
-function MessageBubble({
+const MessageBubble = React.memo(({
   message, isMine, staticBase, onAvatarPress, onMediaPress, onLongPress, onReplyPress,
 }: {
   message: Message;
@@ -609,7 +641,7 @@ function MessageBubble({
   onMediaPress?: (url: string, type?: 'image' | 'video') => void;
   onLongPress?: (message: Message) => void;
   onReplyPress?: (replyToId: string) => void;
-}) {
+}) => {
   const isSystem = message.messageType === 'system';
   if (isSystem) {
     return (
@@ -700,15 +732,13 @@ function MessageBubble({
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 const styles = StyleSheet.create({
   replyPreview: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     padding: 8, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.borderLight,
   },
-  typingBar: { paddingHorizontal: 16, paddingVertical: 4 },
-  typingText: { fontSize: 12, color: Colors.textMuted, fontStyle: 'italic' },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 6,
     padding: 10, backgroundColor: Colors.surface,
@@ -755,4 +785,10 @@ const styles = StyleSheet.create({
   attachFileName: { flex: 1, fontSize: 13, color: Colors.text },
   systemMsg: { alignSelf: 'center', backgroundColor: Colors.borderLight, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   systemMsgText: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center' },
+  scrollToBottom: {
+    position: 'absolute', bottom: 100, right: 20, width: 44, height: 44,
+    borderRadius: 22, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+    elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3,
+    zIndex: 10,
+  },
 });
