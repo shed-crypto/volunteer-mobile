@@ -12,19 +12,21 @@
  *    Також: urgency у бекенді lowercase ('low','high'), але urgencyColor/Label
  *    використовував UPPERCASE ключі — виправлено.
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Platform, Linking, TextInput,
+  ActivityIndicator, Platform, Linking, TextInput, Alert, ScrollView,
 } from 'react-native';
 import MapView, { Marker, Circle, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Colors } from '../../utils/theme';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Colors, categoryLabels, statusColors } from '../../utils/theme';
 import { requestsApi } from '../../api/requests.api';
-import { Request } from '../../types';
+import { Request, RequestCategory, RequestStatus, RequestUrgency } from '../../types';
 
 type RootStackParamList = {
   MapMain: undefined;
@@ -53,8 +55,58 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.5,
 };
 
+const MAX_RADIUS_KM = 100;
+const RADIUS_PRESETS = [5, 10, 25, 50, 100];
+
+type MapMode = 'radius' | 'bounds' | 'all';
+
+type SearchSuggestion = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  latitude: number;
+  longitude: number;
+};
+
+type MapFilters = {
+  category?: RequestCategory;
+  urgency?: RequestUrgency;
+  status?: RequestStatus;
+};
+
+const allCategories = Object.values(RequestCategory);
+const allUrgencies = Object.values(RequestUrgency);
+const allStatuses = [
+  RequestStatus.OPEN,
+  RequestStatus.IN_PROGRESS,
+  RequestStatus.PENDING_REVIEW,
+  RequestStatus.COMPLETED,
+];
+
+const statusLabel: Record<string, string> = Object.fromEntries(
+  Object.entries(statusColors).map(([key, value]) => [key, value.label]),
+);
+
+const activeFilterCount = (filters: MapFilters) =>
+  [filters.category, filters.urgency, filters.status].filter(Boolean).length;
+
+const compactCategoryLabel = (category: RequestCategory) =>
+  (categoryLabels[category] ?? category).replace(/^[^\s]+\s/, '').slice(0, 11);
+
+const getPinCoordinate = (pin: Request) => {
+  if (pin.latitude == null || pin.longitude == null) return null;
+
+  const latitude = Number(pin.latitude);
+  const longitude = Number(pin.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+
+  return { latitude, longitude };
+};
+
 export default function MapScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
   // region у ref щоб не тригерити useCallback при кожному русі карти
@@ -68,8 +120,13 @@ export default function MapScreen() {
   const [loading, setLoading]           = useState(false);
   const [loadError, setLoadError]       = useState(false);
   const [selected, setSelected]         = useState<Request | null>(null);
-  const [mapMode, setMapMode]           = useState<'radius' | 'bounds' | 'all'>('radius');
+  const [mapMode, setMapMode]           = useState<MapMode>('radius');
+  const [filters, setFilters]           = useState<MapFilters>({});
+  const [filtersOpen, setFiltersOpen]   = useState(false);
   const [searchQuery, setSearchQuery]   = useState('');
+  const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   
   // Reverse geocoding state
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
@@ -78,24 +135,137 @@ export default function MapScreen() {
 
   // Debounce ref для слайдера
   const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadSeqRef = useRef(0);
+
+  const topOffset = insets.top + 8;
+  const bottomOffset = insets.bottom + 12;
+  const topPanelHeight = mapMode === 'radius' ? 156 : 98;
+  const bottomPanelHeight = filtersOpen ? 252 : 98;
+  const selectedCardBottom = bottomOffset + bottomPanelHeight + 10;
+
+  useEffect(() => {
+    return () => {
+      if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
+
+  const commitRadius = useCallback((value: number) => {
+    const boundedValue = Math.max(1, Math.min(Math.round(value), MAX_RADIUS_KM));
+    setSliderValue(boundedValue);
+    setRadiusKm(boundedValue);
+  }, []);
 
   // Обробник зміни радіусу через текстове поле
   const handleRadiusChange = (text: string) => {
-    const value = parseInt(text) || 1;
-    // Обмежуємо максимальне значення радіусу щоб уникнути помилок API
-    const maxRadius = 500; // Максимальний радіус 50 км (зменшено для уникнення помилок API)
-    const boundedValue = Math.min(value, maxRadius);
+    const numeric = Number.parseInt(text.replace(/[^\d]/g, ''), 10);
+    const value = Number.isFinite(numeric) ? numeric : 1;
+    const boundedValue = Math.max(1, Math.min(value, MAX_RADIUS_KM));
     setSliderValue(boundedValue);
-    // Оновлюємо радіус одразу для кращої UX
     if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
     sliderDebounceRef.current = setTimeout(() => {
       setRadiusKm(boundedValue);
-    }, 500);
+    }, 250);
   };
+
+  const fetchSearchSuggestions = useCallback(async (query: string) => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+
+    setSuggestionsLoading(true);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=4&accept-language=uk&q=${encodeURIComponent(trimmed)}`,
+        {
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': 'VolunteerApp/1.0',
+          },
+        },
+      );
+      const results = await response.json();
+      if (!Array.isArray(results)) {
+        setSearchSuggestions([]);
+        return;
+      }
+
+      const suggestions = results
+        .map((item: any, index: number): SearchSuggestion | null => {
+          const latitude = Number(item.lat);
+          const longitude = Number(item.lon);
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+          const address = item.address ?? {};
+          const title =
+            address.city ||
+            address.town ||
+            address.village ||
+            address.municipality ||
+            address.county ||
+            item.name ||
+            item.display_name?.split(',')[0] ||
+            trimmed;
+          const subtitleParts = [
+            address.state,
+            address.country,
+          ].filter(Boolean);
+
+          return {
+            id: String(item.place_id ?? `${latitude}_${longitude}_${index}`),
+            title,
+            subtitle: subtitleParts.join(', '),
+            latitude,
+            longitude,
+          };
+        })
+        .filter(Boolean) as SearchSuggestion[];
+
+      setSearchSuggestions(suggestions);
+    } catch (error) {
+      console.error('Search suggestions error:', error);
+      setSearchSuggestions([]);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, []);
+
+  const handleSearchQueryChange = (text: string) => {
+    setSearchQuery(text);
+    setSelected(null);
+    setFiltersOpen(false);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      fetchSearchSuggestions(text);
+    }, 350);
+  };
+
+  const goToSuggestion = useCallback((suggestion: SearchSuggestion) => {
+    const region: Region = {
+      latitude: suggestion.latitude,
+      longitude: suggestion.longitude,
+      latitudeDelta: 0.12,
+      longitudeDelta: 0.12,
+    };
+    setSearchQuery([suggestion.title, suggestion.subtitle].filter(Boolean).join(', '));
+    setSearchSuggestions([]);
+    setSearchFocused(false);
+    regionRef.current = region;
+    setMapBounds(region);
+    mapRef.current?.animateToRegion(region, 700);
+  }, []);
 
   // Функція пошуку за адресою
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return;
+
+    if (searchSuggestions.length > 0) {
+      goToSuggestion(searchSuggestions[0]);
+      return;
+    }
 
     try {
       const location = await Location.geocodeAsync(searchQuery);
@@ -108,13 +278,18 @@ export default function MapScreen() {
           longitudeDelta: 0.1,
         };
         regionRef.current = region;
+        setMapBounds(region);
+        setSearchFocused(false);
+        setSearchSuggestions([]);
         mapRef.current?.animateToRegion(region, 1000);
+      } else {
+        Alert.alert('Нічого не знайдено', 'Спробуйте уточнити місто, країну або адресу.');
       }
     } catch (error) {
       console.error('Geocode error:', error);
-      alert('Не вдалося знайти місце за цим запитом');
+      Alert.alert('Пошук недоступний', 'Не вдалося знайти місце за цим запитом');
     }
-  }, [searchQuery]);
+  }, [goToSuggestion, searchQuery, searchSuggestions]);
 
   // Функція отримання адреси за координатами (reverse geocoding)
   const fetchAddress = useCallback(async (latitude: number, longitude: number, isLocationHidden: boolean = false) => {
@@ -156,6 +331,7 @@ export default function MapScreen() {
         setUserLocation(coords);
         const newRegion: Region = { ...coords, latitudeDelta: 0.15, longitudeDelta: 0.15 };
         regionRef.current = newRegion;
+        setMapBounds(newRegion);
         mapRef.current?.animateToRegion(newRegion, 800);
       } catch {
         // GPS може бути недоступний — продовжуємо з DEFAULT_REGION
@@ -164,13 +340,14 @@ export default function MapScreen() {
   }, []);
 
   // Оновлюємо межі карти при зміні регіону
-  const handleRegionChange = (region: Region) => {
+  const handleRegionChange = useCallback((region: Region) => {
     regionRef.current = region;
     setMapBounds(region);
-  };
+  }, []);
 
   // ─── Завантаження заявок ──────────────────────────────────────────────────
   const loadRequests = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setLoadError(false);
     try {
@@ -181,48 +358,54 @@ export default function MapScreen() {
           latitude:  regionRef.current.latitude,
           longitude: regionRef.current.longitude,
         };
-        data = await requestsApi.getNearby({ ...center, radiusKm });
-    } else if (mapMode === 'bounds' && mapBounds) {
+        data = await requestsApi.getAll({ ...filters, ...center, radiusKm, limit: 100 });
+    } else if (mapMode === 'bounds') {
       // Для режиму меж отримуємо всі заявки та фільтруємо клієнтське
       // (backend не підтримує параметри latitude/longitude в getAll endpoint)
-      data = await requestsApi.getAll({ limit: 1000 });
+      data = await requestsApi.getAll({ ...filters, limit: 200 });
       
       // Фільтруємо за межами карти клієнтське
+      const bounds = mapBounds ?? regionRef.current;
       if (data.length > 0) {
-        const { latitude: centerLat, longitude: centerLng, latitudeDelta: latDelta, longitudeDelta: lngDelta } = mapBounds;
+        const { latitude: centerLat, longitude: centerLng, latitudeDelta: latDelta, longitudeDelta: lngDelta } = bounds;
         const latMin = centerLat - latDelta/2;
         const latMax = centerLat + latDelta/2;
         const lngMin = centerLng - lngDelta/2;
         const lngMax = centerLng + lngDelta/2;
         
-        data = data.filter(pin => 
-          pin.latitude !== undefined && 
-          pin.longitude !== undefined &&
-          pin.latitude >= latMin && 
-          pin.latitude <= latMax &&
-          pin.longitude >= lngMin &&
-          pin.longitude <= lngMax
-        );
+        data = data.filter((pin) => {
+          const coordinate = getPinCoordinate(pin);
+          return Boolean(
+            coordinate &&
+            coordinate.latitude >= latMin &&
+            coordinate.latitude <= latMax &&
+            coordinate.longitude >= lngMin &&
+            coordinate.longitude <= lngMax
+          );
+        });
       }
      } else {
          // Режим 'all' - отримуємо всі заявки
          //Backend має обмеження на limit не більше 200
-         data = await requestsApi.getAll({ limit: 200 });
+         data = await requestsApi.getAll({ ...filters, limit: 200 });
        }
       
-      setPins(data);
+      if (seq === loadSeqRef.current) {
+        setPins(data);
+      }
     } catch (err) {
       console.error('Failed to load requests:', err);
-      setLoadError(true);
+      if (seq === loadSeqRef.current) {
+        setLoadError(true);
+      }
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
-  }, [userLocation, radiusKm, mapMode, mapBounds]);
+  }, [userLocation, radiusKm, mapMode, mapBounds, filters]);
 
-  // Завантажуємо при зміні параметрів
-  useEffect(() => { loadRequests(); }, [loadRequests]);
-
-  // Перезавантажуємо коли таб стає активним (після переходу з інших екранів)
+  // Перезавантажуємо коли таб активний і змінюються параметри карти/фільтрів.
   useFocusEffect(useCallback(() => { loadRequests(); }, [loadRequests]));
 
   // ─── Обробник слайдера з debounce ─────────────────────────────────────────
@@ -232,7 +415,7 @@ export default function MapScreen() {
     if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
     sliderDebounceRef.current = setTimeout(() => {
       setRadiusKm(rounded);
-    }, 500);
+    }, 350);
   };
 
   const openInMaps = (lat: number, lng: number, title: string) => {
@@ -246,23 +429,43 @@ export default function MapScreen() {
     );
   };
 
+  const visiblePins = useMemo(
+    () => pins.filter((pin) => Boolean(getPinCoordinate(pin))),
+    [pins],
+  );
+
+  const setFilter = useCallback(<K extends keyof MapFilters>(key: K, value: MapFilters[K]) => {
+    setFilters((current) => ({
+      ...current,
+      [key]: current[key] === value ? undefined : value,
+    }));
+  }, []);
+
+  const clearFilters = useCallback(() => setFilters({}), []);
+
+  const handleModeChange = useCallback((mode: MapMode) => {
+    setSelected(null);
+    setSearchFocused(false);
+    setMapMode(mode);
+  }, []);
+
   // Функція кластеризації маркерів
   const renderClusteredMarkers = () => {
     // Якщо мало точок, показуємо їх всіх окремо
-    if (pins.length <= 10) {
-      return pins.map((pin) => {
-        if (!pin.latitude || !pin.longitude) return null;
-        const lat = Number(pin.latitude);
-        const lng = Number(pin.longitude);
-        if (isNaN(lat) || isNaN(lng)) return null;
+    if (visiblePins.length <= 10) {
+      return visiblePins.map((pin) => {
+        const coordinate = getPinCoordinate(pin);
+        if (!coordinate) return null;
         const urgencyKey = (pin.urgency ?? '').toLowerCase();
         return (
           <Marker
             key={pin.id}
-            coordinate={{ latitude: lat, longitude: lng }}
+            coordinate={coordinate}
             onPress={async () => {
+              setFiltersOpen(false);
               setSelected(pin);
-              await fetchAddress(lat, lng, pin.isLocationHidden);
+              setSelectedAddress(null);
+              await fetchAddress(coordinate.latitude, coordinate.longitude, pin.isLocationHidden);
             }}
           >
             <View style={[styles.markerDot, { backgroundColor: urgencyColor[urgencyKey] ?? '#999' }]}>
@@ -274,62 +477,76 @@ export default function MapScreen() {
     }
 
     // Проста кластеризація: групуємо точки, що близько один до одного
-    const clusteredPins: Array<{ pin: Request; count: number }> = [];
+    const clusteredPins: Array<{ coordinate: { latitude: number; longitude: number }; pins: Request[] }> = [];
     const used = new Set<number>();
     
-    for (let i = 0; i < pins.length; i++) {
+    for (let i = 0; i < visiblePins.length; i++) {
       if (used.has(i)) continue;
       
-      const pin1 = pins[i];
-      if (!pin1.latitude || !pin1.longitude) continue;
+      const pin1 = visiblePins[i];
+      const coordinate1 = getPinCoordinate(pin1);
+      if (!coordinate1) continue;
       
-      let count = 1;
-      let sumLat = Number(pin1.latitude);
-      let sumLng = Number(pin1.longitude);
+      const clusterPins = [pin1];
+      let sumLat = coordinate1.latitude;
+      let sumLng = coordinate1.longitude;
       
-      for (let j = i + 1; j < pins.length; j++) {
+      for (let j = i + 1; j < visiblePins.length; j++) {
         if (used.has(j)) continue;
         
-        const pin2 = pins[j];
-        if (!pin2.latitude || !pin2.longitude) continue;
-        
-        const lat1 = Number(pin1.latitude);
-        const lng1 = Number(pin1.longitude);
-        const lat2 = Number(pin2.latitude);
-        const lng2 = Number(pin2.longitude);
+        const pin2 = visiblePins[j];
+        const coordinate2 = getPinCoordinate(pin2);
+        if (!coordinate2) continue;
         
         // Якщо відстань менше 0.05 градусов (приблизно 5km), групуємо
-        if (Math.abs(lat1 - lat2) < 0.05 && Math.abs(lng1 - lng2) < 0.05) {
-          count++;
-          sumLat += lat2;
-          sumLng += lng2;
+        if (
+          Math.abs(coordinate1.latitude - coordinate2.latitude) < 0.05 &&
+          Math.abs(coordinate1.longitude - coordinate2.longitude) < 0.05
+        ) {
+          clusterPins.push(pin2);
+          sumLat += coordinate2.latitude;
+          sumLng += coordinate2.longitude;
           used.add(j);
         }
       }
       
       used.add(i);
       clusteredPins.push({
-        pin: {
-          ...pin1,
-          latitude: sumLat / count,
-          longitude: sumLng / count
-        } as Request,
-        count
+        coordinate: {
+          latitude: sumLat / clusterPins.length,
+          longitude: sumLng / clusterPins.length,
+        },
+        pins: clusterPins,
       });
     }
     
-    return clusteredPins.map(({ pin, count }, index) => {
-      if (!pin.latitude || !pin.longitude) return null;
-      const lat = Number(pin.latitude);
-      const lng = Number(pin.longitude);
-      if (isNaN(lat) || isNaN(lng)) return null;
-      const urgencyKey = (pin.urgency ?? '').toLowerCase();
+    return clusteredPins.map(({ coordinate, pins: clusterPins }, index) => {
+      const firstPin = clusterPins[0];
+      const count = clusterPins.length;
+      const urgencyKey = (firstPin.urgency ?? '').toLowerCase();
       
       return (
         <Marker
-          key={pin.id + '_cluster_' + index}
-          coordinate={{ latitude: lat, longitude: lng }}
-          onPress={() => setSelected(pin)}
+          key={firstPin.id + '_cluster_' + index}
+          coordinate={coordinate}
+          onPress={async () => {
+            if (count > 1) {
+              const region: Region = {
+                ...coordinate,
+                latitudeDelta: Math.max(regionRef.current.latitudeDelta / 2, 0.03),
+                longitudeDelta: Math.max(regionRef.current.longitudeDelta / 2, 0.03),
+              };
+              regionRef.current = region;
+              setMapBounds(region);
+              mapRef.current?.animateToRegion(region, 450);
+              return;
+            }
+
+            setSelected(firstPin);
+            setFiltersOpen(false);
+            setSelectedAddress(null);
+            await fetchAddress(coordinate.latitude, coordinate.longitude, firstPin.isLocationHidden);
+          }}
         >
           <View style={[styles.clusterDot, { backgroundColor: urgencyColor[urgencyKey] ?? '#999' }]}>
             {count > 1 && <Text style={styles.clusterText}>{count}</Text>}
@@ -346,13 +563,19 @@ export default function MapScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <MapView
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_GOOGLE}
         initialRegion={DEFAULT_REGION}
-        onRegionChangeComplete={(r) => { regionRef.current = r; }}
+        mapPadding={{
+          top: topOffset + topPanelHeight + 12,
+          right: 10,
+          bottom: bottomOffset + bottomPanelHeight + 12,
+          left: 10,
+        }}
+        onRegionChangeComplete={handleRegionChange}
         showsUserLocation
         showsMyLocationButton={false}
       >
@@ -372,60 +595,218 @@ export default function MapScreen() {
       </MapView>
 
       {/* Поле вводу радіусу та вибір режиму */}
-      <View style={styles.radiusCard}>
-        <TextInput
-          placeholder="Радіус (км)"
-          style={styles.radiusInput}
-          value={sliderValue.toString()}
-          onChangeText={handleRadiusChange}
-          keyboardType="numeric"
-        />
-        <Text style={styles.radiusValueText}>км</Text>
-      </View>
-      
-      {/* Пошук за адресою */}
-      <View style={styles.searchCard}>
-        <TextInput
-          placeholder="Шукати за адресою..."
-          style={styles.searchInput}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={handleSearch}
-        />
-        <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-          <Text style={styles.searchButtonText}>Знайти</Text>
-        </TouchableOpacity>
+      <View style={[styles.controlsCard, { top: topOffset }]}>
+        <View style={styles.searchRow}>
+          <TextInput
+            placeholder="Шукати адресу або місто"
+            placeholderTextColor={Colors.textMuted}
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={handleSearchQueryChange}
+            onSubmitEditing={handleSearch}
+            onFocus={() => {
+              setSearchFocused(true);
+              setSelected(null);
+              setFiltersOpen(false);
+            }}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+            <Text style={styles.searchButtonText}>Пошук</Text>
+          </TouchableOpacity>
+        </View>
+
+        {searchFocused && (searchSuggestions.length > 0 || suggestionsLoading) && (
+          <View style={styles.suggestionsMenu}>
+            {suggestionsLoading && (
+              <View style={styles.suggestionRow}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.suggestionTitle}>Шукаємо місця...</Text>
+              </View>
+            )}
+            {searchSuggestions.map((suggestion) => (
+              <TouchableOpacity
+                key={suggestion.id}
+                style={styles.suggestionRow}
+                onPress={() => goToSuggestion(suggestion)}
+              >
+                <Text style={styles.suggestionIcon}>⌕</Text>
+                <View style={styles.suggestionTextBlock}>
+                  <Text style={styles.suggestionTitle} numberOfLines={1}>{suggestion.title}</Text>
+                  {suggestion.subtitle ? (
+                    <Text style={styles.suggestionSubtitle} numberOfLines={1}>{suggestion.subtitle}</Text>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {mapMode === 'radius' && (
+          <View style={styles.radiusSection}>
+            <View style={styles.radiusHeader}>
+              <Text style={styles.mapSummaryText}>📍 {visiblePins.length} заявок</Text>
+              <Text style={styles.radiusLabel}>Радіус</Text>
+              <TextInput
+                style={styles.radiusInput}
+                value={sliderValue.toString()}
+                onChangeText={handleRadiusChange}
+                keyboardType="number-pad"
+                maxLength={3}
+              />
+              <Text style={styles.radiusValueText}>км</Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={1}
+              maximumValue={MAX_RADIUS_KM}
+              step={1}
+              value={sliderValue}
+              minimumTrackTintColor={Colors.primary}
+              maximumTrackTintColor={Colors.border}
+              thumbTintColor={Colors.primary}
+              onValueChange={handleSliderChange}
+              onSlidingComplete={commitRadius}
+            />
+            <View style={styles.radiusPresetRow}>
+              {RADIUS_PRESETS.map((value) => (
+                <TouchableOpacity
+                  key={value}
+                  style={[styles.radiusPreset, radiusKm === value && styles.radiusPresetActive]}
+                  onPress={() => commitRadius(value)}
+                >
+                  <Text style={[styles.radiusPresetText, radiusKm === value && styles.radiusPresetTextActive]}>
+                    {value}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+        {mapMode !== 'radius' && (
+          <View style={styles.mapSummaryRow}>
+            <Text style={styles.mapSummaryText}>📍 {visiblePins.length} заявок</Text>
+            <Text style={styles.mapSummaryMuted}>
+              {mapMode === 'bounds' ? 'У видимій області' : 'Усі доступні'}
+            </Text>
+          </View>
+        )}
       </View>
       
       {/* Вибір режиму карти - переміщено вниз */}
-      <View style={styles.modeCardBottom}>
+      <View style={[styles.bottomPanel, { bottom: bottomOffset }]}>
         <View style={styles.modeSelectorBottom}>
           <TouchableOpacity 
             style={[styles.modeButton, mapMode === 'radius' && styles.modeButtonActive]}
-            onPress={() => setMapMode('radius')}
+            onPress={() => handleModeChange('radius')}
           >
-            <Text style={styles.modeButtonText}>Радіус</Text>
+            <Text style={[styles.modeButtonText, mapMode === 'radius' && styles.modeButtonTextActive]}>Радіус</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={[styles.modeButton, mapMode === 'bounds' && styles.modeButtonActive]}
-            onPress={() => setMapMode('bounds')}
+            onPress={() => handleModeChange('bounds')}
           >
-            <Text style={styles.modeButtonText}>Межі</Text>
+            <Text style={[styles.modeButtonText, mapMode === 'bounds' && styles.modeButtonTextActive]}>У межах</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={[styles.modeButton, mapMode === 'all' && styles.modeButtonActive]}
-            onPress={() => setMapMode('all')}
+            onPress={() => handleModeChange('all')}
           >
-            <Text style={styles.modeButtonText}>Все</Text>
+            <Text style={[styles.modeButtonText, mapMode === 'all' && styles.modeButtonTextActive]}>Усі</Text>
           </TouchableOpacity>
         </View>
+
+        <View style={styles.filterHeader}>
+          <TouchableOpacity
+            style={[styles.filterToggle, filtersOpen && styles.filterToggleActive]}
+            onPress={() => {
+              setSelected(null);
+              setSearchFocused(false);
+              setFiltersOpen((value) => !value);
+            }}
+          >
+            <Ionicons
+              name="options-outline"
+              size={16}
+              color={filtersOpen ? '#fff' : Colors.primary}
+            />
+            <Text style={[styles.filterToggleText, filtersOpen && styles.filterToggleTextActive]}>
+              Фільтри{activeFilterCount(filters) ? ` (${activeFilterCount(filters)})` : ''}
+            </Text>
+          </TouchableOpacity>
+          {activeFilterCount(filters) > 0 && (
+            <TouchableOpacity onPress={clearFilters}>
+              <Text style={styles.clearFiltersText}>Скинути</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {filtersOpen && (
+          <View style={styles.filtersBlock}>
+            <Text style={styles.filterGroupTitle}>Категорія</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
+              {allCategories.map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={[styles.filterChip, filters.category === category && styles.filterChipActive]}
+                  onPress={() => setFilter('category', category)}
+                >
+                  <Text style={[styles.filterChipText, filters.category === category && styles.filterChipTextActive]} numberOfLines={1}>
+                    {compactCategoryLabel(category)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={styles.filterGroupTitle}>Терміновість</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
+              {allUrgencies.map((urgency) => (
+                <TouchableOpacity
+                  key={urgency}
+                  style={[styles.filterChip, filters.urgency === urgency && styles.filterChipActive]}
+                  onPress={() => setFilter('urgency', urgency)}
+                >
+                  <Text style={[styles.filterChipText, filters.urgency === urgency && styles.filterChipTextActive]}>
+                    {urgencyLabel[urgency]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={styles.filterGroupTitle}>Статус</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
+              {allStatuses.map((status) => (
+                <TouchableOpacity
+                  key={status}
+                  style={[styles.filterChip, filters.status === status && styles.filterChipActive]}
+                  onPress={() => setFilter('status', status)}
+                >
+                  <Text style={[styles.filterChipText, filters.status === status && styles.filterChipTextActive]}>
+                    {statusLabel[status] ?? status}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {!filtersOpen && (
+          <View style={styles.legendInline}>
+            {Object.entries(urgencyLabel).map(([key, label]) => (
+              <View key={key} style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: urgencyColor[key] }]} />
+                <Text style={styles.legendText}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        )}
       </View>
       
       {/* Inline помилка — НЕ Alert щоб не блокувати UI */}
       {loadError && (
-        <View style={styles.errorBanner}>
+        <View style={[styles.errorBanner, { top: topOffset + 148 }]}>
           <Text style={styles.errorText}>Не вдалося завантажити заявки</Text>
           <TouchableOpacity onPress={loadRequests}>
             <Text style={styles.retryText}>Повторити</Text>
@@ -435,24 +816,22 @@ export default function MapScreen() {
 
       {/* Кнопка "Моя локація" */}
       <TouchableOpacity
-        style={styles.myLocationBtn}
+        style={[
+          styles.myLocationBtn,
+          { bottom: selected ? selectedCardBottom + 168 : bottomOffset + bottomPanelHeight + 12 },
+        ]}
         onPress={() => {
           if (userLocation) {
             const r: Region = { ...userLocation, latitudeDelta: 0.1, longitudeDelta: 0.1 };
             regionRef.current = r;
+            setMapBounds(r);
             mapRef.current?.animateToRegion(r, 500);
           }
         }}
+        disabled={!userLocation}
       >
-        <Text style={styles.myLocationIcon}>◎</Text>
+        <Text style={[styles.myLocationIcon, !userLocation && styles.myLocationIconDisabled]}>◎</Text>
       </TouchableOpacity>
-
-      {/* Лічильник заявок */}
-      {!loading && pins.length > 0 && (
-        <View style={styles.pinsCounter}>
-          <Text style={styles.pinsCounterText}>📍 {pins.length} заявок</Text>
-        </View>
-      )}
 
       {loading && (
         <View style={styles.loadingOverlay}>
@@ -463,8 +842,9 @@ export default function MapScreen() {
       {/* Картка вибраної заявки */}
       {selected && (() => {
         const urgencyKey = (selected.urgency ?? '').toLowerCase();
+        const selectedCoordinate = getPinCoordinate(selected);
         return (
-          <View style={styles.infoCard}>
+          <View style={[styles.infoCard, { bottom: selectedCardBottom }]}>
             <View style={styles.infoCardHeader}>
               <View style={[styles.urgencyBadge, { backgroundColor: urgencyColor[urgencyKey] ?? '#999' }]}>
                 <Text style={styles.urgencyBadgeText}>{urgencyLabel[urgencyKey] ?? selected.urgency}</Text>
@@ -483,32 +863,32 @@ export default function MapScreen() {
             ) : null}
 
             {/* Показ location information */}
-            {selected.latitude && selected.longitude && (
-              <View style={{ marginVertical: 8 }}>
+            {selectedCoordinate && (
+              <View style={styles.addressBlock}>
                 {geocodingLoading ? (
-                  <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center' }}>
+                  <Text style={styles.addressText}>
                     Визначаємо місцезнаходження...
                   </Text>
                 ) : geocodingError ? (
-                  <Text style={{ fontSize: 13, color: '#C62828', textAlign: 'center' }}>
+                  <Text style={styles.addressErrorText}>
                     {geocodingError}
                   </Text>
                 ) : selectedAddress ? (
-                  <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center' }}>
+                  <Text style={styles.addressText}>
                     📍 {selectedAddress}{selected.isLocationHidden ? ' (приблизно)' : ''}
                   </Text>
                 ) : (
-                  <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center' }}>
-                    📍 {Number(selected.latitude).toFixed(4)}, {Number(selected.longitude).toFixed(4)}{selected.isLocationHidden ? ' (приблизно)' : ''}
+                  <Text style={styles.addressText}>
+                    📍 {selectedCoordinate.latitude.toFixed(4)}, {selectedCoordinate.longitude.toFixed(4)}{selected.isLocationHidden ? ' (приблизно)' : ''}
                   </Text>
                 )}
               </View>
             )}
 
-            {selected.latitude && !selected.isLocationHidden && (
+            {selectedCoordinate && !selected.isLocationHidden && (
               <TouchableOpacity
                 style={styles.mapsBtn}
-                onPress={() => openInMaps(Number(selected.latitude), Number(selected.longitude), selected.title)}
+                onPress={() => openInMaps(selectedCoordinate.latitude, selectedCoordinate.longitude, selected.title)}
               >
                 <Text style={styles.mapsBtnText}>🗺 Відкрити в картах</Text>
               </TouchableOpacity>
@@ -527,16 +907,7 @@ export default function MapScreen() {
         );
       })()}
 
-      {/* Легенда */}
-      <View style={styles.legend}>
-        {Object.entries(urgencyLabel).map(([key, label]) => (
-          <View key={key} style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: urgencyColor[key] }]} />
-            <Text style={styles.legendText}>{label}</Text>
-          </View>
-        ))}
-      </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -544,51 +915,127 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   map:       { flex: 1 },
 
-   sliderCard: {
-     position: 'absolute', top: 12, left: 12, right: 12,
-     backgroundColor: 'white', borderRadius: 12, padding: 12,
-     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-     shadowOpacity: 0.15, shadowRadius: 4, elevation: 5,
-   },
-   sliderLabel:  { fontSize: 14, fontWeight: '600', color: '#333', textAlign: 'center', marginBottom: 2 },
-   slider:       { width: '100%', height: 40 },
-   sliderLimits: { flexDirection: 'row', justifyContent: 'space-between' },
-   sliderLimit:  { fontSize: 11, color: '#888' },
-
-   searchCard: {
-     position: 'absolute', top: 70, left: 12, right: 12,
-     backgroundColor: 'white', borderRadius: 12, padding: 12,
-     flexDirection: 'row',
-     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-     shadowOpacity: 0.15, shadowRadius: 4, elevation: 5,
-   },
-   searchInput: {
-     flex: 1,
-     fontSize: 14,
-     paddingVertical: 8,
-     paddingHorizontal: 12,
-     borderWidth: 1,
-     borderColor: '#ddd',
-     borderRadius: 6,
-     color: '#333',
-   },
-   searchButton: {
-     backgroundColor: Colors.primary,
-     borderRadius: 6,
-     paddingVertical: 8,
-     paddingHorizontal: 12,
-     marginLeft: 8,
-     justifyContent: 'center',
-     alignItems: 'center'
-   },
-   searchButtonText: {
-     color: 'white',
-     fontWeight: '600',
-     fontSize: 14,
-   },
+  controlsCard: {
+    position: 'absolute', left: 12, right: 12,
+    backgroundColor: Colors.surface, borderRadius: 10, padding: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.16, shadowRadius: 8, elevation: 6,
+  },
+  searchRow: { flexDirection: 'row', alignItems: 'center' },
+  searchInput: {
+    flex: 1,
+    minHeight: 42,
+    fontSize: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    color: Colors.text,
+    backgroundColor: Colors.background,
+  },
+  searchButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+    minHeight: 42,
+    paddingHorizontal: 14,
+    marginLeft: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  suggestionsMenu: {
+    marginTop: 8,
+    maxHeight: 190,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: Colors.surface,
+  },
+  suggestionRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+    gap: 8,
+  },
+  suggestionIcon: { width: 18, fontSize: 16, color: Colors.primary, textAlign: 'center' },
+  suggestionTextBlock: { flex: 1, minWidth: 0 },
+  suggestionTitle: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  suggestionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
+  mapSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+    gap: 8,
+  },
+  mapSummaryText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
+  mapSummaryMuted: { flex: 1, textAlign: 'right', fontSize: 12, color: Colors.textSecondary },
+  radiusSection: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+    paddingTop: 8,
+  },
+  radiusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  radiusLabel: { fontSize: 13, fontWeight: '700', color: Colors.text },
+  radiusInput: {
+    width: 44,
+    minHeight: 30,
+    fontSize: 14,
+    fontWeight: '700',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 7,
+    color: Colors.text,
+    textAlign: 'right',
+    backgroundColor: Colors.surface,
+  },
+  radiusValueText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  slider: { width: '100%', height: 34 },
+  radiusPresetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  radiusPreset: {
+    flex: 1,
+    minHeight: 28,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+  },
+  radiusPresetActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+  },
+  radiusPresetText: { fontSize: 12, fontWeight: '700', color: Colors.textSecondary },
+  radiusPresetTextActive: { color: Colors.primary },
 
    errorBanner: {
-     position: 'absolute', top: 120, left: 12, right: 12,
+     position: 'absolute', left: 12, right: 12,
      backgroundColor: '#FFEBEE', borderRadius: 10, padding: 10,
      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
      borderWidth: 1, borderColor: '#EF9A9A', elevation: 4,
@@ -597,22 +1044,14 @@ const styles = StyleSheet.create({
    retryText:  { fontSize: 13, fontWeight: '700', color: Colors.primary, marginLeft: 8 },
 
    myLocationBtn: {
-     position: 'absolute', right: 16, bottom: 112,
+     position: 'absolute', right: 16,
      width: 44, height: 44, borderRadius: 22,
      backgroundColor: 'white', alignItems: 'center', justifyContent: 'center',
      shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
      shadowOpacity: 0.2, shadowRadius: 3, elevation: 4,
    },
    myLocationIcon: { fontSize: 22, color: Colors.primary },
-
-   pinsCounter: {
-     position: 'absolute', top: 12, alignSelf: 'center',
-     backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 20,
-     paddingHorizontal: 14, paddingVertical: 6,
-     shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-     shadowOpacity: 0.15, shadowRadius: 2, elevation: 3,
-   },
-   pinsCounterText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
+   myLocationIconDisabled: { color: Colors.textMuted },
 
    loadingOverlay: {
      ...StyleSheet.absoluteFillObject,
@@ -621,8 +1060,8 @@ const styles = StyleSheet.create({
    },
 
    infoCard: {
-     position: 'absolute', bottom: 80, left: 12, right: 12,
-     backgroundColor: 'white', borderRadius: 16, padding: 16,
+     position: 'absolute', left: 12, right: 12,
+     backgroundColor: 'white', borderRadius: 12, padding: 16,
      shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
      shadowOpacity: 0.2, shadowRadius: 8, elevation: 8,
    },
@@ -633,6 +1072,9 @@ const styles = StyleSheet.create({
   closeBtn:          { fontSize: 18, color: '#999', padding: 4 },
   infoCardTitle:     { fontSize: 16, fontWeight: '700', color: '#222', marginBottom: 4 },
   infoCardDesc:      { fontSize: 13, color: '#666', marginBottom: 8 },
+  addressBlock:      { marginVertical: 8 },
+  addressText:       { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
+  addressErrorText:  { fontSize: 13, color: '#C62828', textAlign: 'center' },
   mapsBtn: {
     backgroundColor: '#E8F5E9', borderRadius: 8,
     paddingVertical: 8, alignItems: 'center', marginBottom: 8,
@@ -642,9 +1084,11 @@ const styles = StyleSheet.create({
   detailsBtn:  { backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   detailsBtnText: { color: 'white', fontWeight: '700', fontSize: 14 },
 
-  legend: {
-    position: 'absolute', bottom: 16, left: 12,
-    backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 10, padding: 8,
+  legendInline: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
     flexDirection: 'row', gap: 8, flexWrap: 'wrap',
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -658,31 +1102,22 @@ const styles = StyleSheet.create({
   },
   markerLock: { fontSize: 8, color: 'white' },
 
-   // Нові стилі для вибору режиму та пошуку
-   modeSelector: {
-     flexDirection: 'row',
-     justifyContent: 'space-around',
-     marginTop: 8,
-     backgroundColor: 'rgba(255,255,255,0.8)',
-     borderRadius: 8,
-     padding: 4,
-   },
    modeButton: {
-     paddingVertical: 6,
-     paddingHorizontal: 12,
-     borderRadius: 4,
-     backgroundColor: 'rgba(0,0,0,0.05)', // Фоновий колір для кращої видимості
-     borderWidth: 1,
-     borderColor: 'rgba(0,0,0,0.1)',
+     flex: 1,
+     paddingVertical: 9,
+     paddingHorizontal: 8,
+     borderRadius: 7,
+     alignItems: 'center',
    },
    modeButtonActive: {
      backgroundColor: Colors.primary,
    },
    modeButtonText: {
-     color: 'white',
-     fontWeight: '600',
+     color: Colors.textSecondary,
+     fontWeight: '700',
      fontSize: 12,
    },
+   modeButtonTextActive: { color: 'white' },
    
    // Стилі для кластеризації
    clusterDot: {
@@ -696,42 +1131,62 @@ const styles = StyleSheet.create({
      fontSize: 10,
    },
    
-   // Нові стилі для поля вводу радіусу та нижнього меню
-   radiusCard: {
-     position: 'absolute', top: 12, left: 12, right: 12,
-     backgroundColor: 'white', borderRadius: 12, padding: 12,
-     flexDirection: 'row', alignItems: 'center',
-     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-     shadowOpacity: 0.15, shadowRadius: 4, elevation: 5,
-   },
-   radiusInput: {
-     flex: 1,
-     fontSize: 16,
-     paddingVertical: 8,
-     paddingHorizontal: 12,
-     borderWidth: 1,
-     borderColor: '#ddd',
-     borderRadius: 6,
-     color: '#333',
-   },
-   radiusValueText: {
-     fontSize: 16,
-     fontWeight: '600',
-     color: '#333',
-     marginLeft: 4,
-   },
-   
-   modeCardBottom: {
-     position: 'absolute', bottom: 62, left: 12, right: 12,
-     backgroundColor: 'white', borderRadius: 12, padding: 12,
+   bottomPanel: {
+     position: 'absolute', left: 12, right: 12,
+     backgroundColor: 'white', borderRadius: 10, padding: 6,
      shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
      shadowOpacity: 0.15, shadowRadius: 4, elevation: 5,
    },
    modeSelectorBottom: {
      flexDirection: 'row',
-     justifyContent: 'space-around',
-     backgroundColor: 'rgba(255,255,255,0.8)',
+     backgroundColor: Colors.background,
      borderRadius: 8,
-     padding: 4,
+     padding: 3,
    },
+   filterHeader: {
+     minHeight: 40,
+     flexDirection: 'row',
+     alignItems: 'center',
+     justifyContent: 'space-between',
+     paddingHorizontal: 4,
+     marginTop: 4,
+   },
+   filterToggle: {
+     minHeight: 34,
+     flexDirection: 'row',
+     alignItems: 'center',
+     justifyContent: 'center',
+     gap: 6,
+     paddingHorizontal: 12,
+     borderRadius: 8,
+     borderWidth: 1,
+     borderColor: Colors.primary,
+     backgroundColor: Colors.primaryLight,
+   },
+   filterToggleActive: {
+     backgroundColor: Colors.primary,
+   },
+   filterToggleText: { color: Colors.primary, fontSize: 13, fontWeight: '800' },
+   filterToggleTextActive: { color: '#fff' },
+   clearFiltersText: { color: Colors.primary, fontSize: 12, fontWeight: '700', paddingHorizontal: 8 },
+   filtersBlock: { gap: 4, paddingHorizontal: 4 },
+   filterGroupTitle: { fontSize: 11, fontWeight: '700', color: Colors.textMuted, marginTop: 2 },
+   filterChipsRow: { gap: 6, paddingRight: 8 },
+   filterChip: {
+     minHeight: 30,
+     maxWidth: 150,
+     borderRadius: 15,
+     borderWidth: 1,
+     borderColor: Colors.border,
+     paddingHorizontal: 10,
+     alignItems: 'center',
+     justifyContent: 'center',
+     backgroundColor: Colors.surface,
+   },
+   filterChipActive: {
+     borderColor: Colors.primary,
+     backgroundColor: Colors.primary,
+   },
+   filterChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
+   filterChipTextActive: { color: '#fff' },
 });
