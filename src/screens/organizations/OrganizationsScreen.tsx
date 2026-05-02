@@ -161,7 +161,10 @@ function OrgCard({ org }: { org: Organization }) {
             <TouchableOpacity
               key={child.id}
               style={styles.childRow}
-              onPress={() => navigation.push('OrgDetail', { orgId: child.id })}
+              onPress={() => navigation.push('OrgDetail', {
+                orgId: child.id,
+                parentPath: [{ id: org.id, name: org.name, parentOrgId: org.parentOrgId }],
+              })}
             >
               <Text style={styles.childDot}>↳</Text>
               <Text style={styles.childName}>{child.name}</Text>
