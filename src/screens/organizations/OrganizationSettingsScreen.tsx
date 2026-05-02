@@ -40,9 +40,22 @@ export default function OrganizationSettingsScreen() {
 
   const handleSave = async () => {
     if (!settings) return;
+
+    const allowedKeys = [
+      'allowPublicJoin',
+      'requireJoinApproval',
+      'memberInviteAllowed',
+      'subgroupCreationAllowed',
+      'mediaUploadAllowed',
+    ];
+
+    const payload = Object.fromEntries(
+      Object.entries(settings).filter(([key]) => allowedKeys.includes(key))
+    );
+
     setSaving(true);
     try {
-      await orgsApi.updateSettings(orgId, settings);
+      await orgsApi.updateSettings(orgId, payload);
       Alert.alert('Успіх', 'Налаштування збережено');
       navigation.goBack();
     } catch (e: any) {
@@ -97,6 +110,24 @@ export default function OrganizationSettingsScreen() {
             style={{ marginTop: 24 }}
           />
         </Card>
+
+        <Card style={styles.dangerZone}>
+          <Text style={styles.dangerTitle}>⚠️ Небезпечні дії</Text>
+          <Button 
+            title="Видалити" 
+            variant="danger" 
+            onPress={() => Alert.alert('Видалення', 'Ви впевнені?', [
+              { text: 'Ні' },
+              { text: 'Так', style: 'destructive', onPress: async () => {
+                try {
+                  await orgsApi.delete(orgId);
+                  Alert.alert('Успіх', 'Видалено');
+                  navigation.navigate('Organizations');
+                } catch (e) { Alert.alert('Помилка', 'Не вдалося видалити'); }
+              }}
+            ])} 
+          />
+        </Card>
       </ScrollView>
     </View>
   );
@@ -132,4 +163,6 @@ const styles = StyleSheet.create({
   },
   rowLabel: { fontSize: 16, fontWeight: '600', color: Colors.text },
   rowDesc: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
+  dangerZone: { borderColor: Colors.danger, borderWidth: 1, marginTop: 20 },
+  dangerTitle: { fontSize: 16, fontWeight: '700', color: Colors.danger, marginBottom: 12 },
 });

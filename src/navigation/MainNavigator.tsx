@@ -28,6 +28,8 @@ import OrgSearchScreen      from '../screens/organizations/OrganizationSearchScr
 import OrgEditScreen        from '../screens/organizations/EditOrganizationScreen';
 import OrgSettingsScreen    from '../screens/organizations/OrganizationSettingsScreen';
 import JoinRequestsScreen   from '../screens/organizations/JoinRequestsScreen';
+import AddHubScreen         from '../screens/organizations/AddHubScreen';
+import HubDetailScreen      from '../screens/organizations/HubDetailScreen';
 import AdminScreen          from '../screens/admin/AdminScreen';
 import AdminCreateUserScreen from '../screens/admin/AdminCreateUserScreen';
 import DevDBInspector       from '../screens/admin/DevDBInspector';
@@ -95,6 +97,8 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="OrgEdit"       component={OrgEditScreen} />
       <ProfileStack.Screen name="OrgSettings"   component={OrgSettingsScreen} />
       <ProfileStack.Screen name="OrgJoinRequests" component={JoinRequestsScreen} />
+      <ProfileStack.Screen name="AddHub"        component={AddHubScreen} />
+      <ProfileStack.Screen name="HubDetail"     component={HubDetailScreen} />
       <ProfileStack.Screen name="UserProfile"   component={UserProfileScreen} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
     </ProfileStack.Navigator>

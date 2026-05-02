@@ -262,6 +262,7 @@ export interface Hub {
   latitude?: number;
   longitude?: number;
   description?: string;
+  isPublic: boolean;
 }
 
 export interface TaskDelegation {
@@ -309,7 +310,7 @@ export interface CreateRequestDto {
   description?: string;
   category?: RequestCategory;
   urgency?: RequestUrgency;
-  requiredClearance?: ClearanceLevel;
+  requiredClearanceLevel?: ClearanceLevel;
   latitude?: number;
   longitude?: number;
   isLocationHidden?: boolean;

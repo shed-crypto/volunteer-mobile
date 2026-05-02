@@ -53,6 +53,18 @@ export const orgsApi = {
   updateSettings: (id: string, data: Partial<OrganizationSettings>): Promise<OrganizationSettings> =>
     api.patch(`/organizations/${id}/settings`, data).then((r) => r.data),
 
+  delete: (id: string): Promise<void> =>
+    api.delete(`/organizations/${id}`).then(() => undefined),
+
+  leave: (id: string): Promise<void> =>
+    api.post(`/organizations/${id}/leave`).then(() => undefined),
+
+  updateMemberRole: (orgId: string, userId: string, role: string): Promise<OrganizationMember> =>
+    api.patch(`/organizations/${orgId}/members/${userId}/role`, { role }).then((r) => r.data),
+
+  deleteHub: (orgId: string, hubId: string): Promise<void> =>
+    api.delete(`/organizations/${orgId}/hubs/${hubId}`).then(() => undefined),
+
   join: (id: string, message?: string): Promise<OrganizationJoinRequest> =>
     api.post(`/organizations/${id}/join`, { message }).then((r) => r.data),
 

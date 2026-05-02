@@ -105,7 +105,7 @@ export default function OrganizationsScreen() {
         data={orgs}
         keyExtractor={(o) => o.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={Colors.primary} />}
-        contentContainerStyle={{ paddingTop: 8, paddingBottom: 32 }}
+        contentContainerStyle={{ paddingTop: 8, paddingBottom: 32, paddingHorizontal: 16 }}
         ListEmptyComponent={
           <EmptyState icon="🏢" title="Організацій немає" subtitle='Натисніть "+" щоб створити першу' />
         }
@@ -118,12 +118,11 @@ export default function OrganizationsScreen() {
 function OrgCard({ org }: { org: Organization }) {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
-  const [joining, setJoining] = useState(false);
 
   const isMember = org.members?.some((m) => m.userId === user?.id);
 
   return (
-    <Card>
+    <Card style={{ marginBottom: 12, padding: 16 }}>
       {/* Tap header → OrgDetailScreen (FR-03b) */}
       <TouchableOpacity
         onPress={() => navigation.navigate('OrgDetail', { orgId: org.id })}
@@ -162,7 +161,7 @@ function OrgCard({ org }: { org: Organization }) {
             <TouchableOpacity
               key={child.id}
               style={styles.childRow}
-              onPress={() => navigation.navigate('OrgDetail', { orgId: child.id })}
+              onPress={() => navigation.push('OrgDetail', { orgId: child.id })}
             >
               <Text style={styles.childDot}>↳</Text>
               <Text style={styles.childName}>{child.name}</Text>

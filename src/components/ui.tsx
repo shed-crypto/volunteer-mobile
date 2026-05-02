@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
-  StyleSheet, ViewStyle, TextStyle, TextInput, TextInputProps,
+  StyleSheet, ViewStyle, TextStyle, TextInput, TextInputProps, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, urgencyColors, statusColors } from '../utils/theme';
@@ -69,7 +69,69 @@ export function Button({
   );
 }
 
-// ─── Card ─────────────────────────────────────────────────────────────────────
+// ─── ConfirmDeleteModal ──────────────────────────────────────────────────────
+
+interface ConfirmDeleteModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  targetName: string;
+  title?: string;
+  description?: string;
+}
+
+export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({ 
+  visible, onClose, onConfirm, targetName, 
+  title = 'Видалити?', 
+  description = `Введіть "${targetName}" для підтвердження` 
+}) => {
+  const [text, setText] = useState('');
+
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={modalStyles.overlay}>
+        <View style={modalStyles.container}>
+          <Text style={modalStyles.title}>{title}</Text>
+          <Text style={modalStyles.desc}>{description}</Text>
+          <TextInput 
+            style={modalStyles.input} 
+            value={text} 
+            onChangeText={setText} 
+            placeholder="Введіть назву тут..."
+          />
+          <View style={modalStyles.buttons}>
+            <TouchableOpacity style={[modalStyles.button, modalStyles.cancel]} onPress={onClose}>
+              <Text>Скасувати</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[modalStyles.button, modalStyles.confirm, text !== targetName && modalStyles.disabled]} 
+              onPress={() => { onConfirm(); setText(''); }}
+              disabled={text !== targetName}
+            >
+              <Text style={modalStyles.confirmText}>Видалити</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+const modalStyles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  container: { backgroundColor: '#fff', padding: 20, borderRadius: 12 },
+  title: { fontSize: 18, fontWeight: '700', marginBottom: 10 },
+  desc: { marginBottom: 15, color: '#666' },
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 20 },
+  buttons: { flexDirection: 'row', gap: 10 },
+  button: { flex: 1, padding: 12, alignItems: 'center', borderRadius: 8 },
+  cancel: { backgroundColor: '#eee' },
+  confirm: { backgroundColor: Colors.danger },
+  disabled: { opacity: 0.5 },
+  confirmText: { color: '#fff', fontWeight: '600' }
+});
+
+// ─── Other Components ──────────────────────────────────────────────────────
 
 export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   return (
@@ -79,14 +141,11 @@ export function Card({ children, style }: { children: React.ReactNode; style?: V
   );
 }
 
-// ─── Badge ────────────────────────────────────────────────────────────────────
-
 interface BadgeProps {
   label: string;
   colorScheme?: 'urgency' | 'status' | 'neutral';
   value?: string;
   size?: 'sm' | 'md';
-  /** Direct hex color — overrides colorScheme */
   color?: string;
 }
 
@@ -112,25 +171,17 @@ export function Badge({ label, colorScheme = 'neutral', value, size = 'md', colo
   );
 }
 
-// ─── Screen Header ────────────────────────────────────────────────────────────
-
 interface HeaderProps {
   title: string;
   subtitle?: string;
   onBack?: () => void;
-  /** Either a ReactNode or a shorthand { icon, onPress } object */
   rightAction?: React.ReactNode | { icon: string; onPress: () => void };
 }
 
 export function ScreenHeader({ title, subtitle, onBack, rightAction }: HeaderProps) {
-  // Resolve rightAction: if it's a plain object with icon+onPress, render an icon button
   let rightNode: React.ReactNode = null;
   if (rightAction) {
-    if (
-      typeof rightAction === 'object' &&
-      'icon' in (rightAction as any) &&
-      'onPress' in (rightAction as any)
-    ) {
+    if (typeof rightAction === 'object' && 'icon' in (rightAction as any) && 'onPress' in (rightAction as any)) {
       const { icon, onPress } = rightAction as { icon: string; onPress: () => void };
       rightNode = (
         <TouchableOpacity onPress={onPress} style={{ padding: 6 }}>
@@ -158,8 +209,6 @@ export function ScreenHeader({ title, subtitle, onBack, rightAction }: HeaderPro
   );
 }
 
-// ─── Empty State ──────────────────────────────────────────────────────────────
-
 export function EmptyState({ icon, title, subtitle }: { icon: string; title: string; subtitle?: string }) {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
@@ -169,8 +218,6 @@ export function EmptyState({ icon, title, subtitle }: { icon: string; title: str
     </View>
   );
 }
-
-// ─── Input ────────────────────────────────────────────────────────────────────
 
 interface InputProps extends TextInputProps {
   label?: string;
@@ -225,8 +272,6 @@ export function Input({ label, error, hint, containerStyle, style, ...props }: I
   );
 }
 
-// ─── Loading overlay ──────────────────────────────────────────────────────────
-
 export function LoadingScreen() {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background }}>
@@ -234,8 +279,6 @@ export function LoadingScreen() {
     </View>
   );
 }
-
-// ─── Progress bar ─────────────────────────────────────────────────────────────
 
 export function ProgressBar({ value, total, color = Colors.primary }: { value: number; total: number; color?: string }) {
   const pct = total > 0 ? Math.min((value / total) * 100, 100) : 0;
