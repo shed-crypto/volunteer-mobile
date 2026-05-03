@@ -3,6 +3,16 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Alert } from 'react-native';
+import { API_BASE_URL } from '../api/axios';
+
+export function getMediaUrl(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (/^(https?:|file:|content:|data:)/i.test(url)) return url;
+
+  const serverRoot = API_BASE_URL.replace(/\/api\/?$/, '');
+  const normalizedPath = url.startsWith('/') ? url : `/${url}`;
+  return `${serverRoot}${normalizedPath}`;
+}
 
 export const fileUtils = {
   // Завантаження та відкриття файлу через системний діалог

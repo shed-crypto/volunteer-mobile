@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
   TouchableOpacity, Alert, ActivityIndicator, RefreshControl,
+  Image,
 } from 'react-native';
 import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +11,7 @@ import { Colors } from '../../utils/theme';
 import api from '../../api/axios';
 import { orgsApi } from '../../api/orgs.api';
 import { Button, ConfirmDeleteModal, EmptyState, ScreenHeader } from '../../components/ui';
+import { getMediaUrl } from '../../utils/fileUtils';
 
 interface OrgMember {
   id: string;
@@ -31,6 +33,7 @@ interface Hub {
   latitude?: number;
   longitude?: number;
   description?: string;
+  mediaUrl?: string;
 }
 
 interface OrgNode {
@@ -44,6 +47,7 @@ interface OrgDetail {
   id: string;
   name: string;
   description?: string;
+  logoUrl?: string;
   chatId?: string;
   parentOrgId?: string;
   parentOrg?: OrgNode;
@@ -230,7 +234,11 @@ export default function OrgDetailScreen() {
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={styles.orgIcon}>
-              <Ionicons name={isSubgroup ? 'git-branch-outline' : 'business-outline'} size={26} color={Colors.primary} />
+              {org.logoUrl ? (
+                <Image source={{ uri: getMediaUrl(org.logoUrl) }} style={styles.orgLogo} />
+              ) : (
+                <Ionicons name={isSubgroup ? 'git-branch-outline' : 'business-outline'} size={26} color={Colors.primary} />
+              )}
             </View>
             <View style={styles.heroTextWrap}>
               <Text style={styles.kicker}>{isSubgroup ? 'Підгрупа' : 'Організація'}</Text>
@@ -327,9 +335,13 @@ export default function OrgDetailScreen() {
               <EmptyState icon="📦" title="Хабів ще немає" />
             ) : org.hubs.map((hub) => (
               <TouchableOpacity key={hub.id} style={styles.listCard} onPress={() => navigation.navigate('HubDetail', { orgId, hubId: hub.id })}>
-                <View style={styles.listIcon}>
-                  <Ionicons name="cube-outline" size={19} color={Colors.secondary} />
-                </View>
+                {hub.mediaUrl ? (
+                  <Image source={{ uri: getMediaUrl(hub.mediaUrl) }} style={styles.hubThumb} />
+                ) : (
+                  <View style={styles.listIcon}>
+                    <Ionicons name="cube-outline" size={19} color={Colors.secondary} />
+                  </View>
+                )}
                 <View style={styles.cardText}>
                   <Text style={styles.cardTitle}>{hub.name}</Text>
                   {hub.address ? <Text style={styles.cardSubtitle}>{hub.address}</Text> : null}
@@ -407,7 +419,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
+  orgLogo: { width: '100%', height: '100%' },
   heroTextWrap: { flex: 1 },
   kicker: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   heroTitle: { color: Colors.text, fontSize: 21, fontWeight: '800', marginTop: 2 },
@@ -502,6 +516,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Colors.borderLight,
   },
+  hubThumb: { width: 42, height: 42, borderRadius: 10, backgroundColor: Colors.borderLight },
   cardText: { flex: 1 },
   cardTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
   cardSubtitle: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },

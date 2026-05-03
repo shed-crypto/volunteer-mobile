@@ -7,6 +7,29 @@ import {
   OrganizationSettings,
   OrganizationJoinRequest,
 } from '../types';
+import { fileUtils, getMediaUrl } from '../utils/fileUtils';
+
+type HubPayload = {
+  name: string;
+  address?: string;
+  description?: string;
+  latitude?: number;
+  longitude?: number;
+  isPublic?: boolean;
+  mediaUrl?: string | null;
+};
+
+type UpdateOrganizationPayload = Omit<Partial<Organization>, 'logoUrl'> & {
+  logoUrl?: string | null;
+};
+
+async function appendImage(formData: FormData, fileUri: string, fallbackName: string) {
+  const rawName = fileUri.split('/').pop() || fallbackName;
+  const ext = rawName.split('.').pop()?.toLowerCase();
+  const fallbackType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  const file = await fileUtils.normalizeImagePickerAsset(fileUri, rawName, fallbackType);
+  formData.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+}
 
 export const orgsApi = {
   getAll: (params?: { parentOrgId?: string }): Promise<Organization[]> =>
@@ -37,14 +60,17 @@ export const orgsApi = {
 
   createHub: (
     id: string,
-    data: { name: string; address?: string; latitude?: number; longitude?: number },
+    data: HubPayload,
   ): Promise<Hub> =>
     api.post(`/organizations/${id}/hubs`, data).then((r) => r.data),
+
+  updateHub: (orgId: string, hubId: string, data: Partial<HubPayload>): Promise<Hub> =>
+    api.patch(`/organizations/${orgId}/hubs/${hubId}`, data).then((r) => r.data),
 
   search: (q: string): Promise<Organization[]> =>
     api.get('/organizations/search/query', { params: { q } }).then((r) => r.data),
 
-  update: (id: string, data: Partial<Organization>): Promise<Organization> =>
+  update: (id: string, data: UpdateOrganizationPayload): Promise<Organization> =>
     api.patch(`/organizations/${id}`, data).then((r) => r.data),
 
   getSettings: (id: string): Promise<OrganizationSettings> =>
@@ -76,4 +102,22 @@ export const orgsApi = {
 
   rejectRequest: (id: string, requestId: string, comment?: string): Promise<void> =>
     api.post(`/organizations/${id}/join-requests/${requestId}/reject`, { comment }).then(() => undefined),
+
+  uploadLogo: async (id: string, fileUri: string): Promise<{ url: string }> => {
+    const formData = new FormData();
+    await appendImage(formData, fileUri, 'logo.jpg');
+    return api.post(`/organizations/${id}/upload-logo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
+
+  uploadHubMedia: async (orgId: string, hubId: string, fileUri: string): Promise<{ url: string }> => {
+    const formData = new FormData();
+    await appendImage(formData, fileUri, 'hub.jpg');
+    return api.post(`/organizations/${orgId}/hubs/${hubId}/upload-media`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
+
+  resolveMediaUrl: getMediaUrl,
 };

@@ -262,6 +262,7 @@ export interface Hub {
   latitude?: number;
   longitude?: number;
   description?: string;
+  mediaUrl?: string;
   isPublic: boolean;
 }
 

@@ -1,19 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, StyleSheet, Alert, ScrollView
+  View, Text, TextInput, StyleSheet, Alert, ScrollView, Image, TouchableOpacity,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { orgsApi } from '../../api/orgs.api';
 import { Colors } from '../../utils/theme';
 import { ScreenHeader, Button, Card, LoadingScreen } from '../../components/ui';
+import { getMediaUrl } from '../../utils/fileUtils';
 
 export default function EditOrganizationScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { orgId, parentOrgId } = route.params;
+  const { orgId, parentOrgId } = route.params ?? {};
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [logo, setLogo] = useState<string | null>(null);
+  const [logoChanged, setLogoChanged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -30,11 +34,36 @@ export default function EditOrganizationScreen() {
       const org = await orgsApi.getOne(orgId);
       setName(org.name);
       setDescription(org.description || '');
+      setLogo(org.logoUrl || null);
+      setLogoChanged(false);
     } catch (e) {
       Alert.alert('Помилка', 'Не вдалося завантажити дані організації');
       navigation.goBack();
     } finally {
       setLoading(false);
+    }
+  };
+
+  const pickLogo = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Помилка', 'Потрібен дозвіл на доступ до галереї');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'] as any,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setLogo(result.assets[0].uri);
+        setLogoChanged(true);
+      }
+    } catch (e) {
+      console.error('Error opening gallery:', e);
+      Alert.alert('Помилка', 'Не вдалося відкрити галерею');
     }
   };
 
@@ -46,20 +75,27 @@ export default function EditOrganizationScreen() {
 
     setSaving(true);
     try {
-      if (orgId) {
+      let currentOrgId = orgId;
+      if (!orgId) {
+        const newOrg = await orgsApi.create({
+          name: name.trim(),
+          description: description.trim() || undefined,
+          parentOrgId,
+        });
+        currentOrgId = newOrg.id;
+      } else {
         await orgsApi.update(orgId, {
           name: name.trim(),
           description: description.trim() || undefined,
+          logoUrl: logo === null && logoChanged ? null : undefined,
         });
-        Alert.alert('Успіх', 'Організацію оновлено');
-      } else {
-        await orgsApi.create({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          parentOrgId: parentOrgId,
-        });
-        Alert.alert('Успіх', 'Підгрупу створено');
       }
+
+      if (currentOrgId && logo && logoChanged) {
+        await orgsApi.uploadLogo(currentOrgId, logo);
+      }
+
+      Alert.alert('Успіх', orgId ? 'Організацію оновлено' : 'Організацію створено');
       navigation.goBack();
     } catch (e: any) {
       Alert.alert('Помилка', e?.response?.data?.message || 'Не вдалося зберегти зміни');
@@ -72,9 +108,29 @@ export default function EditOrganizationScreen() {
 
   return (
     <View style={styles.container}>
-      <ScreenHeader title="Редагування" onBack={() => navigation.goBack()} />
+      <ScreenHeader title={orgId ? 'Редагування' : 'Нова організація'} onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content}>
         <Card>
+          <TouchableOpacity onPress={pickLogo} style={styles.logoPicker}>
+            {logo ? (
+              <Image source={{ uri: getMediaUrl(logo) }} style={styles.logo} />
+            ) : (
+              <Text style={styles.logoText}>Додати логотип</Text>
+            )}
+          </TouchableOpacity>
+
+          {logo ? (
+            <Button
+              title="Прибрати логотип"
+              variant="ghost"
+              onPress={() => {
+                setLogo(null);
+                setLogoChanged(true);
+              }}
+              style={styles.removeLogoBtn}
+            />
+          ) : null}
+
           <Text style={styles.label}>Назва організації *</Text>
           <TextInput
             style={styles.input}
@@ -111,6 +167,25 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: 16 },
   label: { fontSize: 14, fontWeight: '700', color: Colors.text, marginBottom: 8, marginTop: 12 },
+  logoPicker: { 
+    width: 120,
+    height: 120, 
+    alignSelf: 'center',
+    backgroundColor: '#f0f0f0', 
+    borderRadius: 10, 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  logo: { 
+    width: '100%', 
+    height: '100%', 
+    borderRadius: 10,
+    resizeMode: 'cover',
+  },
+  logoText: { color: Colors.textSecondary, fontWeight: '600' },
+  removeLogoBtn: { marginBottom: 8 },
   input: {
     borderWidth: 1.5,
     borderColor: Colors.border,
