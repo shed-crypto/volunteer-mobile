@@ -232,6 +232,9 @@ export default function OrgDetailScreen() {
         }
       >
         <View style={styles.hero}>
+          {org.bannerUrl && (
+            <Image source={{ uri: getMediaUrl(org.bannerUrl) }} style={styles.banner} />
+          )}
           <View style={styles.heroTop}>
             <View style={styles.orgIcon}>
               {org.logoUrl ? (
@@ -422,6 +425,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   orgLogo: { width: '100%', height: '100%' },
+  banner: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    borderRadius: 10,
+    marginBottom: 16,
+    resizeMode: 'cover',
+  },
   heroTextWrap: { flex: 1 },
   kicker: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   heroTitle: { color: Colors.text, fontSize: 21, fontWeight: '800', marginTop: 2 },

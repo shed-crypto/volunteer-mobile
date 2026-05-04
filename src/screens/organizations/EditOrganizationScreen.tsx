@@ -18,6 +18,8 @@ export default function EditOrganizationScreen() {
   const [description, setDescription] = useState('');
   const [logo, setLogo] = useState<string | null>(null);
   const [logoChanged, setLogoChanged] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
+  const [bannerChanged, setBannerChanged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -36,6 +38,8 @@ export default function EditOrganizationScreen() {
       setDescription(org.description || '');
       setLogo(org.logoUrl || null);
       setLogoChanged(false);
+      setBanner(org.bannerUrl || null);
+      setBannerChanged(false);
     } catch (e) {
       Alert.alert('Помилка', 'Не вдалося завантажити дані організації');
       navigation.goBack();
@@ -67,6 +71,29 @@ export default function EditOrganizationScreen() {
     }
   };
 
+  const pickBanner = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Помилка', 'Потрібен дозвіл на доступ до галереї');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'] as any,
+        allowsEditing: true,
+        aspect: [16, 9],
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setBanner(result.assets[0].uri);
+        setBannerChanged(true);
+      }
+    } catch (e) {
+      console.error('Error opening gallery:', e);
+      Alert.alert('Помилка', 'Не вдалося відкрити галерею');
+    }
+  };
+
   const handleSave = async () => {
     if (!name.trim()) {
       Alert.alert('Помилка', 'Назва не може бути порожньою');
@@ -88,11 +115,15 @@ export default function EditOrganizationScreen() {
           name: name.trim(),
           description: description.trim() || undefined,
           logoUrl: logo === null && logoChanged ? null : undefined,
+          bannerUrl: banner === null && bannerChanged ? null : undefined,
         });
       }
 
       if (currentOrgId && logo && logoChanged) {
         await orgsApi.uploadLogo(currentOrgId, logo);
+      }
+      if (currentOrgId && banner && bannerChanged) {
+        await orgsApi.uploadBanner(currentOrgId, banner);
       }
 
       Alert.alert('Успіх', orgId ? 'Організацію оновлено' : 'Організацію створено');
@@ -111,6 +142,7 @@ export default function EditOrganizationScreen() {
       <ScreenHeader title={orgId ? 'Редагування' : 'Нова організація'} onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content}>
         <Card>
+          <Text style={styles.label}>Логотип</Text>
           <TouchableOpacity onPress={pickLogo} style={styles.logoPicker}>
             {logo ? (
               <Image source={{ uri: getMediaUrl(logo) }} style={styles.logo} />
@@ -126,6 +158,27 @@ export default function EditOrganizationScreen() {
               onPress={() => {
                 setLogo(null);
                 setLogoChanged(true);
+              }}
+              style={styles.removeLogoBtn}
+            />
+          ) : null}
+
+          <Text style={styles.label}>Банер</Text>
+          <TouchableOpacity onPress={pickBanner} style={styles.bannerPicker}>
+            {banner ? (
+              <Image source={{ uri: getMediaUrl(banner) }} style={styles.banner} />
+            ) : (
+              <Text style={styles.logoText}>Додати банер</Text>
+            )}
+          </TouchableOpacity>
+
+          {banner ? (
+            <Button
+              title="Прибрати банер"
+              variant="ghost"
+              onPress={() => {
+                setBanner(null);
+                setBannerChanged(true);
               }}
               style={styles.removeLogoBtn}
             />
@@ -181,6 +234,22 @@ const styles = StyleSheet.create({
   logo: { 
     width: '100%', 
     height: '100%', 
+    borderRadius: 10,
+    resizeMode: 'cover',
+  },
+  bannerPicker: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  banner: {
+    width: '100%',
+    height: '100%',
     borderRadius: 10,
     resizeMode: 'cover',
   },

@@ -111,6 +111,23 @@ export const orgsApi = {
     }).then((r) => r.data);
   },
 
+  uploadBanner: async (id: string, fileUri: string): Promise<{ url: string }> => {
+    const formData = new FormData();
+    await appendImage(formData, fileUri, 'banner.jpg');
+    return api.post(`/organizations/${id}/upload-banner`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
+
+  getMemberPrivileges: (id: string): Promise<{ 
+    canEdit: boolean; 
+    canDelete: boolean; 
+    canManageMembers: boolean;
+    canManageHubs: boolean;
+    isLeader: boolean;
+    isCoordinator: boolean;
+  }> => api.get(`/organizations/${id}/members/me/privileges`).then((r) => r.data),
+
   uploadHubMedia: async (orgId: string, hubId: string, fileUri: string): Promise<{ url: string }> => {
     const formData = new FormData();
     await appendImage(formData, fileUri, 'hub.jpg');
