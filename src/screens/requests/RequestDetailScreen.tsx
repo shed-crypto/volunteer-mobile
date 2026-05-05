@@ -48,8 +48,6 @@ export default function RequestDetailScreen() {
   const [editingInfoId, setEditingInfoId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [savingInfo, setSavingInfo] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
-  const [bookmarkLoading, setBookmarkLoading] = useState(false);
 
   // ─── Load tasks from local DB ────────────────────────────────────────────
   const loadTasksLocal = useCallback(async (requestId: string): Promise<Task[]> => {
@@ -257,15 +255,6 @@ export default function RequestDetailScreen() {
   const load = useCallback(async () => {
     OfflineLogger.nav(`RequestDetailScreen.load() called, requestId=${requestId}`);
     
-    // Перевірка статусу збереження
-    try {
-      const savedReqs = await collections.savedRequests.query().fetch();
-      setIsSaved(savedReqs.some((s: any) => s.requestId === requestId));
-    } catch (e) {
-      OfflineLogger.cache('RequestDetail: Failed to check saved status', e);
-      setIsSaved(false);
-    }
-
     try {
       // КРОК 1: Завантажити з локальної БД (з АДАПТИВНИМ таймаутом)
       // Онлайн: 300мс, Офлайн: 2000мс
@@ -374,45 +363,11 @@ export default function RequestDetailScreen() {
     }
   };
 
-  const toggleBookmark = async () => {
-    setBookmarkLoading(true);
-    try {
-      if (isSaved) {
-        await requestsApi.unsave(requestId);
-        // Persist local deletion
-        const saved = await collections.savedRequests.query().fetch();
-        const item = saved.find((s: any) => s.requestId === requestId);
-        if (item) await database.write(() => item.destroyPermanently());
-        setIsSaved(false);
-      } else {
-        await requestsApi.save(requestId);
-        // Persist local creation
-        await database.write(() => 
-          collections.savedRequests.create((s: any) => {
-            s.requestId = requestId;
-            s.userId = user?.id || '';
-            s.savedAt = Date.now();
-          })
-        );
-        setIsSaved(true);
-      }
-    } catch (e) {
-      OfflineLogger.cache('RequestDetail: failed to toggle bookmark', e);
-      Alert.alert('Помилка', 'Не вдалося зберегти заявку');
-    } finally {
-      setBookmarkLoading(false);
-    }
-  };
-
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
       <ScreenHeader
         title="Деталі заявки"
         onBack={() => navigation.goBack()}
-        rightAction={{
-          icon: isSaved ? 'bookmark' : 'bookmark-outline',
-          onPress: toggleBookmark,
-        }}
       />
 
       {/* Action buttons row to avoid header overlap */}
@@ -465,7 +420,7 @@ export default function RequestDetailScreen() {
           {/* Meta rows */}
           <View style={styles.metaList}>
             <MetaRow icon="🔒" label="Допуск" value={clearanceLabels[request.requiredClearance] ?? request.requiredClearance} />
-            {request.deadline && (
+            {!!request.deadline && (
               <MetaRow icon="⏰" label="Дедлайн" value={new Date(request.deadline).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' })} />
             )}
             {request.latitude ? (
@@ -478,7 +433,7 @@ export default function RequestDetailScreen() {
                 </Text>
               </View>
             )}
-            {request.fundraisingUrl && (
+            {!!request.fundraisingUrl && (
               <TouchableOpacity onPress={() => Linking.openURL(request.fundraisingUrl!)}>
                 <MetaRow icon="💳" label="Збір" value="Перейти до збору коштів →" highlight />
               </TouchableOpacity>
@@ -511,7 +466,7 @@ export default function RequestDetailScreen() {
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                     <Text style={styles.additionalInfoDate}>
                       📅 {createdAt.toLocaleString('uk-UA')}
-                      {info.updatedAt && ' (ред.)'}
+                      {!!info.updatedAt && ' (ред.)'}
                     </Text>
                     {canEditInfo && editingInfoId !== info.id && (
                       <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -793,7 +748,7 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
           {task.requiredRoles?.filter(Boolean).length > 0 && (
             <Text style={styles.taskMetaText}>🎭 {task.requiredRoles.filter(Boolean).join(', ')}</Text>
           )}
-          {task.deadline && (
+          {!!task.deadline && (
             <Text style={[styles.taskMetaText, { color: Colors.warning }]}>
               ⏰ {new Date(task.deadline).toLocaleDateString('uk-UA')}
             </Text>

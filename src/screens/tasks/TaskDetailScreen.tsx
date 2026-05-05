@@ -587,6 +587,7 @@ export default function TaskDetailScreen() {
   // Оскільки request може бути не завантажений, ми перевіряємо чи є creatorId у заявці
   const isOwner = user?.id === (task as any).request?.creatorId;
   const isCoordOrAdmin = isCoord || isAdmin || isOwner;
+  const isParticipant = activeAssignments.some(a => a.userId === user?.id);
 const statusLabels: Record<string, string> = {
   en_route: 'В дорозі',
   on_site: 'На місці',
@@ -629,7 +630,7 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                 🎭 {task.requiredRoles.filter(Boolean).join(', ')}
               </Text>
             )}
-            {task.deadline && (
+            {!!task.deadline && (
               <Text style={{ fontSize: 13, color: Colors.warning, fontWeight: '600' }}>
                 ⏰ {new Date(task.deadline).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' })}
               </Text>
@@ -844,24 +845,39 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                 <Text style={{ fontSize: 14, color: Colors.text }}>{r.comment}</Text>
                 {r.attachments?.length > 0 && (
                   <View style={{ marginTop: 8 }}>
-                    {r.attachments.map((a: any, j: number) => (
-                      <TouchableOpacity
-                        key={j}
-                        onPress={() => {
-                          const absoluteUrl = buildFileUrl(a.url);
-                          const isImage = a.type?.startsWith('image/');
-                          const isVideo = a.type?.startsWith('video/');
-                          if (isImage || isVideo) {
-                            setSelectedMedia({
-                              url: absoluteUrl,
-                              type: isImage ? 'image' : 'video',
-                            });
-                            setMediaViewerVisible(true);
-                          } else {
-                            handleOpenAttachment(a);
-                          }
-                        }}
-                      >
+                    {r.attachments.map((a: any, j: number) => {
+                      const isImage = a.type?.startsWith('image/');
+                      const isVideo = a.type?.startsWith('video/');
+                      
+                      const canViewMedia = isOwner || isCoordOrAdmin || isParticipant;
+                      const isHidden = (task as any).request?.isLocationHidden && !canViewMedia;
+
+                      if (isHidden) {
+                        return (
+                          <View key={j} style={{ padding: 8, backgroundColor: Colors.warningLight, borderRadius: 8, marginTop: 6 }}>
+                            <Text style={{ fontSize: 13, color: Colors.warning }}>🔒 Медіа приховано (локація захищена)</Text>
+                          </View>
+                        );
+                      }
+
+                      return (
+                        <TouchableOpacity
+                          key={j}
+                          onPress={() => {
+                            const absoluteUrl = buildFileUrl(a.url);
+                            const isImage = a.type?.startsWith('image/');
+                            const isVideo = a.type?.startsWith('video/');
+                            if (isImage || isVideo) {
+                              setSelectedMedia({
+                                url: absoluteUrl,
+                                type: isImage ? 'image' : 'video',
+                              });
+                              setMediaViewerVisible(true);
+                            } else {
+                              handleOpenAttachment(a);
+                            }
+                          }}
+                        >
                         <View
                           style={{
                             flexDirection: 'row',
@@ -879,10 +895,9 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                           </Text>
                         </View>
                       </TouchableOpacity>
-                    ))}
+                    )})}
                   </View>
                 )}
-                {/* Кнопки Редагування/Видалення (тільки для автора звіту) */}
                 {/* Кнопки Редагування/Видалення (тільки для автора звіту) */}
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
                   {r.userId === user?.id && (
