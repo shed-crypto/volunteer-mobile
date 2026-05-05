@@ -111,7 +111,7 @@ export interface Request {
   fundraisingUrl?: string;
   tags: string[];
   reportUrls: string[];
-  additionalInfo: Array<{ id: string; text: string; createdAt: string; updatedAt?: string }>;
+  additionalInfo: Array<{ id: string; text: string; attachments: any[]; createdAt: string; updatedAt?: string }>;
   creatorId: string;
   creator?: User;
   tasks?: Task[];
