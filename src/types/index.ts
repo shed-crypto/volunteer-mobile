@@ -226,6 +226,7 @@ export interface OrganizationMember {
   orgRole: OrgRole;
   joinedAt: string;
   isActive: boolean;
+  isDeputy?: boolean;
 }
 
 // ─── Vehicle (FR-01g, FR-07) ──────────────────────────────────────────────────

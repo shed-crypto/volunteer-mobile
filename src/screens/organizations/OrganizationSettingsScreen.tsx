@@ -15,6 +15,7 @@ export default function OrganizationSettingsScreen() {
 
   const [settings, setSettings] = useState<OrganizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [privileges, setPrivileges] = useState<any>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -24,7 +25,9 @@ export default function OrganizationSettingsScreen() {
   const loadSettings = async () => {
     try {
       const data = await orgsApi.getSettings(orgId);
+      const priv = await orgsApi.getMemberPrivileges(orgId);
       setSettings(data);
+      setPrivileges(priv);
     } catch (e) {
       Alert.alert('Помилка', 'Не вдалося завантажити налаштування');
       navigation.goBack();

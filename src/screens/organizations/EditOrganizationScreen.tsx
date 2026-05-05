@@ -102,6 +102,11 @@ export default function EditOrganizationScreen() {
 
     setSaving(true);
     try {
+      const priv = orgId ? await orgsApi.getMemberPrivileges(orgId) : null;
+      if (orgId && !priv?.canEdit && user?.systemRole !== 'admin') {
+        throw new Error('Недостатньо прав для редагування');
+      }
+
       let currentOrgId = orgId;
       if (!orgId) {
         const newOrg = await orgsApi.create({

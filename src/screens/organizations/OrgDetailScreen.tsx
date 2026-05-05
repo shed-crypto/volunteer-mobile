@@ -18,6 +18,7 @@ interface OrgMember {
   userId: string;
   orgRole: string;
   isActive: boolean;
+  isDeputy?: boolean;
   user?: {
     id: string;
     fullName: string;
@@ -48,6 +49,7 @@ interface OrgDetail {
   name: string;
   description?: string;
   logoUrl?: string;
+  bannerUrl?: string;
   chatId?: string;
   parentOrgId?: string;
   parentOrg?: OrgNode;
@@ -109,6 +111,7 @@ export default function OrgDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<OrgTab>('members');
+  const [privileges, setPrivileges] = useState<any>(null);
   const hasLoadedRef = useRef(false);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; targetName: string; onConfirm: () => void; title?: string }>({
     visible: false,
@@ -127,11 +130,14 @@ export default function OrgDetailScreen() {
 
     try {
       const { data } = await api.get<OrgDetail>(`/organizations/${orgId}`);
+      console.log('Org members data:', data.members?.map(m => ({ userId: m.userId, isDeputy: m.isDeputy })));
       const hasParentContext = data.ancestors?.length || data.parentOrg || data.parent || parentPath.length;
       if (!hasParentContext && data.parentOrgId) {
         data.ancestors = await loadAncestorPath(data.parentOrgId);
       }
       setOrg(data);
+      const priv = await orgsApi.getMemberPrivileges(orgId);
+      setPrivileges(priv);
       hasLoadedRef.current = true;
     } catch (e: any) {
       Alert.alert('Помилка', e?.response?.data?.message || 'Не вдалося завантажити організацію');
@@ -153,11 +159,9 @@ export default function OrgDetailScreen() {
     fetchOrg({ showLoader: false });
   }, [fetchOrg]);
 
-  const myMembership = org?.members?.find((m) => m.userId === user?.id);
   const isAdmin = user?.systemRole === 'admin';
-  const isLeaderOrCoord = myMembership?.orgRole === 'leader' || myMembership?.orgRole === 'coordinator';
-  const isLeader = myMembership?.orgRole === 'leader';
-  const canManage = isLeaderOrCoord || isAdmin;
+  const canManage = isAdmin || (privileges?.canEdit ?? false);
+  const isLeader = privileges?.isLeader ?? false;
   const activeMembers = useMemo(() => org?.members?.filter((m) => m.isActive !== false) ?? [], [org?.members]);
   const lineage = useMemo(() => {
     if (!org) return [];
@@ -189,6 +193,7 @@ export default function OrgDetailScreen() {
   if (loading) return <ActivityIndicator size="large" color={Colors.primary} style={{ flex: 1 }} />;
   if (!org) return null;
 
+  const myMembership = org?.members?.find((m) => m.userId === user?.id);
   const roleLabel = myMembership ? ORG_ROLE_LABELS[myMembership.orgRole] ?? 'Учасник' : undefined;
   const isSubgroup = lineage.length > 1;
 
@@ -316,15 +321,30 @@ export default function OrgDetailScreen() {
                 </View>
                 <View style={styles.cardText}>
                   <Text style={styles.cardTitle}>{m.user?.fullName ?? 'Без імені'}</Text>
-                  <Text style={styles.cardSubtitle}>{ORG_ROLE_LABELS[m.orgRole] ?? 'Учасник'}</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {ORG_ROLE_LABELS[m.orgRole] ?? 'Учасник'}{m.isDeputy ? ' (Заступник)' : ''}
+                  </Text>
                 </View>
                 {canManage && (
-                  <TouchableOpacity onPress={() => Alert.alert('Видалити?', 'Видалити учасника з організації?', [
-                    { text: 'Ні' },
-                    { text: 'Так', style: 'destructive', onPress: () => api.delete(`/organizations/${orgId}/members/${m.userId}`).then(() => fetchOrg({ showLoader: false })) },
-                  ])}>
-                    <Ionicons name="trash-outline" size={20} color={Colors.danger} />
-                  </TouchableOpacity>
+                  <View style={styles.memberActions}>
+                    <TouchableOpacity onPress={() => navigation.navigate('EditMember', { 
+                      orgId, 
+                      userId: m.userId, 
+                      orgName: org.name, 
+                      currentRole: m.orgRole, 
+                      isDeputy: m.isDeputy 
+                    })}>
+                      <Ionicons name="create-outline" size={20} color={Colors.primary} />
+                    </TouchableOpacity>
+                    {m.orgRole !== 'leader' && m.userId !== user?.id && (
+                      <TouchableOpacity onPress={() => Alert.alert('Видалити?', 'Видалити учасника з організації?', [
+                        { text: 'Ні' },
+                        { text: 'Так', style: 'destructive', onPress: () => api.delete(`/organizations/${orgId}/members/${m.userId}`).then(() => fetchOrg({ showLoader: false })) },
+                      ])}>
+                        <Ionicons name="trash-outline" size={20} color={Colors.danger} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 )}
               </View>
             ))}
@@ -384,7 +404,7 @@ export default function OrgDetailScreen() {
 
         {!myMembership && <Button title="Вступити" onPress={() => orgsApi.join(orgId).then(() => Alert.alert('Успіх', 'Запит на вступ надіслано'))} />}
 
-        {isAdmin && !isLeaderOrCoord && <Text style={styles.adminNote}>Адміністраторський доступ</Text>}
+        {isAdmin && !privileges?.isLeader && <Text style={styles.adminNote}>Адміністраторський доступ</Text>}
         {myMembership && !isLeader && <Button title="Покинути" variant="danger" onPress={() => orgsApi.leave(orgId).then(goBack)} />}
 
         <ConfirmDeleteModal
@@ -530,5 +550,6 @@ const styles = StyleSheet.create({
   cardText: { flex: 1 },
   cardTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
   cardSubtitle: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
+  memberActions: { flexDirection: 'row', gap: 16, alignItems: 'center' },
   adminNote: { textAlign: 'center', color: Colors.primary, marginBottom: 10, fontWeight: '700' },
 });

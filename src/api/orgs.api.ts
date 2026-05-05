@@ -50,11 +50,9 @@ export const orgsApi = {
   removeMember: (id: string, userId: string): Promise<void> =>
     api.delete(`/organizations/${id}/members/${userId}`).then(() => undefined),
 
-  /** FR-03d: запросити учасника за email */
   inviteMember: (id: string, email: string): Promise<OrganizationMember> =>
     api.post(`/organizations/${id}/invite`, { email }).then((r) => r.data),
 
-  /** FR-03f: хаби / склади організації */
   getHubs: (id: string): Promise<Hub[]> =>
     api.get(`/organizations/${id}/hubs`).then((r) => r.data),
 
@@ -85,8 +83,8 @@ export const orgsApi = {
   leave: (id: string): Promise<void> =>
     api.post(`/organizations/${id}/leave`).then(() => undefined),
 
-  updateMemberRole: (orgId: string, userId: string, role: string): Promise<OrganizationMember> =>
-    api.patch(`/organizations/${orgId}/members/${userId}/role`, { role }).then((r) => r.data),
+  updateMemberRole: (orgId: string, userId: string, role: string, isDeputy?: boolean): Promise<OrganizationMember> =>
+    api.patch(`/organizations/${orgId}/members/${userId}/role`, { role, isDeputy }).then((r) => r.data),
 
   deleteHub: (orgId: string, hubId: string): Promise<void> =>
     api.delete(`/organizations/${orgId}/hubs/${hubId}`).then(() => undefined),
@@ -126,6 +124,7 @@ export const orgsApi = {
     canManageHubs: boolean;
     isLeader: boolean;
     isCoordinator: boolean;
+    isDeputy: boolean;
   }> => api.get(`/organizations/${id}/members/me/privileges`).then((r) => r.data),
 
   uploadHubMedia: async (orgId: string, hubId: string, fileUri: string): Promise<{ url: string }> => {

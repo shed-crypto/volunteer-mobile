@@ -24,6 +24,7 @@ import VehiclesScreen       from '../screens/profile/VehiclesScreen';
 import UserProfileScreen    from '../screens/profile/UserProfileScreen';
 import OrganizationsScreen  from '../screens/organizations/OrganizationsScreen';
 import OrgDetailScreen      from '../screens/organizations/OrgDetailScreen';
+import EditMemberScreen     from '../screens/organizations/EditMemberScreen';
 import OrgSearchScreen      from '../screens/organizations/OrganizationSearchScreen';
 import OrgEditScreen        from '../screens/organizations/EditOrganizationScreen';
 import OrgSettingsScreen    from '../screens/organizations/OrganizationSettingsScreen';
@@ -93,6 +94,7 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="Vehicles"      component={VehiclesScreen} />
       <ProfileStack.Screen name="Organizations" component={OrganizationsScreen} />
       <ProfileStack.Screen name="OrgDetail"     component={OrgDetailScreen} />
+      <ProfileStack.Screen name="EditMember"    component={EditMemberScreen} />
       <ProfileStack.Screen name="OrgSearch"     component={OrgSearchScreen} />
       <ProfileStack.Screen name="OrgEdit"       component={OrgEditScreen} />
       <ProfileStack.Screen name="OrgSettings"   component={OrgSettingsScreen} />
