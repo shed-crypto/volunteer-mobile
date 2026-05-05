@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Alert, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, Input } from '../../components/ui';
@@ -13,32 +13,14 @@ type Route = RouteProp<AuthStackParamList, 'ResetPassword'>;
 export default function ResetPasswordScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<Route>();
-  const token = route.params?.token;
+  const { token } = route.params;
+
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!token) {
-      Alert.alert('Помилка', 'Недійсний токен');
-      navigation.goBack();
-    }
-  }, [token]);
-
-  const handleSubmit = async () => {
-    if (!token) return;
-    if (!password.trim() || !confirmPassword.trim()) {
-      Alert.alert('Помилка', 'Заповніть всі поля');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Помилка', 'Паролі не співпадають');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Помилка', 'Пароль має бути мінімум 6 символів');
+  const handleReset = async () => {
+    if (password.length < 8) {
+      Alert.alert('Помилка', 'Пароль повинен бути щонайменше 8 символів');
       return;
     }
 
@@ -47,8 +29,8 @@ export default function ResetPasswordScreen() {
       const response = await authApi.resetPassword(token, password);
       Alert.alert('Успіх', response.message);
       navigation.navigate('Login');
-    } catch (error: any) {
-      const msg = error?.response?.data?.message || 'Не вдалося скинути пароль';
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Не вдалося скинути пароль';
       Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : msg);
     } finally {
       setLoading(false);
@@ -59,28 +41,20 @@ export default function ResetPasswordScreen() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.form}>
-          <Text style={styles.formTitle}>Встановлення пароля</Text>
-          <Text style={styles.subtitle}>Введіть новий пароль для вашого акаунту.</Text>
+          <Text style={styles.formTitle}>Новий пароль</Text>
+          <Text style={styles.subtitle}>Введіть новий пароль для вашого акаунта.</Text>
 
           <Input
             label="Новий пароль"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
-            autoCapitalize="none"
-          />
-
-          <Input
-            label="Підтвердження"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry
-            autoCapitalize="none"
+            placeholder="••••••••"
           />
 
           <Button
-            title="Змінити пароль"
-            onPress={handleSubmit}
+            title="Зберегти"
+            onPress={handleReset}
             loading={loading}
             size="lg"
             style={{ marginTop: 20 }}
