@@ -7,15 +7,17 @@
  *   2. Ручне введення координат (два TextInput) — fallback при РЕБ
  *   3. Без локації — якщо не потрібна або небезпечно вказувати
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   Alert, StyleSheet, KeyboardAvoidingView, Platform,
-  TextInput as RNTextInput,
+  TextInput as RNTextInput, Image,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import { requestsApi } from '../../api/requests.api';
+import { API_BASE_URL } from '../../api/axios';
 import { RequestCategory, RequestUrgency, ClearanceLevel } from '../../types';
 import { Colors, categoryLabels, urgencyColors, clearanceLabels } from '../../utils/theme';
 import { Button, Input, ScreenHeader } from '../../components/ui';
@@ -72,6 +74,7 @@ export default function CreateRequestScreen() {
   const [locLoading, setLocLoading] = useState(false);
   // Доповнення (для режиму редагування/доповнення)
   const [additionalInfo, setAdditionalInfo] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
   // Для ручного введення
   const [manualLat, setManualLat] = useState('');
   const [manualLng, setManualLng] = useState('');
@@ -146,22 +149,39 @@ export default function CreateRequestScreen() {
     return Object.keys(e).length === 0;
   };
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     if (!validate()) return;
     setLoading(true);
     try {
-      const req = await requestsApi.create({
-        title: title.trim(),
-        description: description.trim() || undefined,
-        category,
-        urgency,
-        requiredClearance: clearance,
-        isLocationHidden: isHidden,
-        fundraisingUrl: fundraisingUrl.trim() || undefined,
-        latitude,
-        longitude,
-      });
-      navigation.replace('RequestDetail', { requestId: req.id });
+        if (isEditMode) {
+        await requestsApi.update(route.params.requestId, {
+          title: title.trim(),
+          description: description.trim() || undefined,
+          category,
+          urgency,
+          requiredClearance: clearance,
+          isLocationHidden: isHidden,
+          fundraisingUrl: fundraisingUrl.trim() || undefined,
+          latitude,
+          longitude,
+          attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
+        });
+        navigation.goBack();
+      } else {
+        const req = await requestsApi.create({
+          title: title.trim(),
+          description: description.trim() || undefined,
+          category,
+          urgency,
+          requiredClearance: clearance,
+          isLocationHidden: isHidden,
+          fundraisingUrl: fundraisingUrl.trim() || undefined,
+          latitude,
+          longitude,
+          attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
+        });
+        navigation.replace('RequestDetail', { requestId: req.id });
+      }
     } catch (e: any) {
       const msg = e?.response?.data?.message;
       Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : (msg ?? 'Щось пішло не так'));
@@ -174,7 +194,7 @@ export default function CreateRequestScreen() {
     if (!additionalInfo.trim()) return;
     setLoading(true);
     try {
-      await requestsApi.addInfo(route.params?.requestId, additionalInfo.trim());
+      await requestsApi.addInfo(route.params?.requestId, additionalInfo.trim(), selectedFiles);
       navigation.goBack();
     } catch (e: any) {
       const msg = e?.response?.data?.message;
@@ -204,6 +224,14 @@ export default function CreateRequestScreen() {
             setLongitude(Number(req.longitude));
             setLocMode('gps');
           }
+          // Pre-populate selectedFiles from existing mediaUrls
+          if (req.mediaUrls && Array.isArray(req.mediaUrls)) {
+            setSelectedFiles(req.mediaUrls.map((m: any) => ({
+              uri: m.url?.startsWith('http') ? m.url : `${API_BASE_URL.replace('/api', '')}${m.url}`,
+              name: m.name || 'file',
+              type: m.type || 'application/octet-stream',
+            })));
+          }
           setInitialDataLoaded(true);
         } catch (e) {
           Alert.alert('Помилка', 'Не вдалося завантажити дані для редагування');
@@ -215,20 +243,65 @@ export default function CreateRequestScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScreenHeader title={isAdditionalMode ? "Доповнити заявку" : "Нова заявка"} onBack={() => {
-        if (navigation.canGoBack()) navigation.goBack();
-      }} />
+      <ScreenHeader
+        title={isAdditionalMode ? "Доповнити заявку" : isEditMode ? "Редагувати заявку" : "Нова заявка"}
+        onBack={() => {
+          if (navigation.canGoBack()) navigation.goBack();
+        }}
+      />
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         {isAdditionalMode ? (
-          <Input
-            label="Додаткова інформація *"
-            value={additionalInfo}
-            onChangeText={setAdditionalInfo}
-            placeholder="Введіть нові деталі тут..."
-            multiline
-            style={{ minHeight: 120, textAlignVertical: 'top' }}
-          />
+          <>
+            <Input
+              label="Додаткова інформація *"
+              value={additionalInfo}
+              onChangeText={setAdditionalInfo}
+              placeholder="Введіть нові деталі тут..."
+              multiline
+              style={{ minHeight: 120, textAlignVertical: 'top' }}
+            />
+            <View style={{ marginTop: 16 }}>
+              <Text style={styles.label}>Вкладення (необов'язково)</Text>
+              <TouchableOpacity onPress={async () => {
+                const res = await DocumentPicker.getDocumentAsync({ multiple: true });
+                if (!res.canceled) setSelectedFiles(res.assets.map(a => ({ uri: a.uri, name: a.name, type: (a as any).mimeType || 'application/octet-stream' })));
+              }} style={{ padding: 12, backgroundColor: Colors.borderLight, borderRadius: 8, alignItems: 'center' }}>
+                <Text style={{ color: Colors.primary }}>{selectedFiles.length > 0 ? `Вибрано файлів: ${selectedFiles.length}` : '+ Додати зображення / файли'}</Text>
+              </TouchableOpacity>
+              {selectedFiles.length > 0 && (
+                <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {selectedFiles.map((f, i) => {
+                    const isImage = f.type?.startsWith('image/');
+                    const isVideo = f.type?.startsWith('video/');
+                    return (
+                      <View key={i} style={{ width: 120, height: 120, borderRadius: 8, overflow: 'hidden', backgroundColor: Colors.borderLight }}>
+                        {isImage ? (
+                          <Image source={{ uri: f.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        ) : isVideo ? (
+                          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+                            <Text style={{ fontSize: 32 }}>▶️</Text>
+                            <Text style={{ fontSize: 10, color: '#fff', marginTop: 4 }}>Відео</Text>
+                          </View>
+                        ) : (
+                          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 4 }}>
+                            <Text style={{ fontSize: 24 }}>📄</Text>
+                            <Text style={{ fontSize: 10, marginTop: 2, textAlign: 'center' }} numberOfLines={1}>{f.name}</Text>
+                          </View>
+                        )}
+                        <TouchableOpacity 
+                          onPress={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                          style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 12 }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          </>
         ) : (
           <>
             <Input
@@ -369,9 +442,9 @@ export default function CreateRequestScreen() {
             {latitude != null && longitude != null && (
               <View style={styles.locationBox}>
                 <View style={{ flex: 1 }}>
-            <Text style={styles.locationText}>
-              📍 {Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}
-            </Text>
+                  <Text style={styles.locationText}>
+                    📍 {Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}
+                  </Text>
                   <Text style={styles.locationHint}>
                     {locMode === 'gps' ? 'GPS' : 'Введено вручну'}
                   </Text>
@@ -403,14 +476,55 @@ export default function CreateRequestScreen() {
               autoCapitalize="none"
               error={errors.fundraisingUrl}
             />
+
+            <View style={{ marginTop: 16 }}>
+              <Text style={styles.label}>Вкладення (необов'язково)</Text>
+              <TouchableOpacity onPress={async () => {
+                const res = await DocumentPicker.getDocumentAsync({ multiple: true });
+                if (!res.canceled) setSelectedFiles(res.assets.map(a => ({ uri: a.uri, name: a.name, type: (a as any).mimeType || 'application/octet-stream' })));
+              }} style={{ padding: 12, backgroundColor: Colors.borderLight, borderRadius: 8, alignItems: 'center' }}>
+                <Text style={{ color: Colors.primary }}>{selectedFiles.length > 0 ? `Вибрано файлів: ${selectedFiles.length}` : '+ Додати зображення / файли'}</Text>
+              </TouchableOpacity>
+              {selectedFiles.length > 0 && (
+                <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {selectedFiles.map((f, i) => {
+                    const isImage = f.type?.startsWith('image/');
+                    const isVideo = f.type?.startsWith('video/');
+                    return (
+                      <View key={i} style={{ width: 120, height: 120, borderRadius: 8, overflow: 'hidden', backgroundColor: Colors.borderLight }}>
+                        {isImage ? (
+                          <Image source={{ uri: f.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        ) : isVideo ? (
+                          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+                            <Text style={{ fontSize: 32 }}>▶️</Text>
+                            <Text style={{ fontSize: 10, color: '#fff', marginTop: 4 }}>Відео</Text>
+                          </View>
+                        ) : (
+                          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 4 }}>
+                            <Text style={{ fontSize: 24 }}>📄</Text>
+                            <Text style={{ fontSize: 10, marginTop: 2, textAlign: 'center' }} numberOfLines={1}>{f.name}</Text>
+                          </View>
+                        )}
+                        <TouchableOpacity 
+                          onPress={() => setSelectedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                          style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 12 }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
           </>
         )}
 
         <Button
-          title={isAdditionalMode ? "Відправити доповнення" : "Опублікувати заявку"} 
-          onPress={isAdditionalMode ? handleAddInfo : handleCreate} 
-          loading={loading} 
-          size="lg" 
+          title={isAdditionalMode ? "Відправити доповнення" : isEditMode ? "Зберегти зміни" : "Опублікувати заявку"}
+          onPress={isAdditionalMode ? handleAddInfo : handleSave}
+          loading={loading}
+          size="lg"
         />
         <Button
           title="Скасувати"

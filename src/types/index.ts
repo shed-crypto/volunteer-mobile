@@ -111,6 +111,7 @@ export interface Request {
   fundraisingUrl?: string;
   tags: string[];
   reportUrls: string[];
+  mediaUrls?: Array<{ url: string; name: string; type: string }>;
   additionalInfo: Array<{ id: string; text: string; attachments: any[]; createdAt: string; updatedAt?: string }>;
   creatorId: string;
   creator?: User;
@@ -312,12 +313,14 @@ export interface CreateRequestDto {
   description?: string;
   category?: RequestCategory;
   urgency?: RequestUrgency;
-  requiredClearanceLevel?: ClearanceLevel;
+  requiredClearance?: ClearanceLevel;
   latitude?: number;
   longitude?: number;
   isLocationHidden?: boolean;
   deadline?: string;
   fundraisingUrl?: string;
+  mediaUrls?: Array<{ url: string; name: string; type: string }>;
+  attachments?: Array<{ uri: string; name: string; type: string }>;
 }
 
 export interface FindRequestsDto {

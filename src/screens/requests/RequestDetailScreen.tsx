@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Alert, Platform,
-  RefreshControl, StyleSheet, Linking,
+  RefreshControl, StyleSheet, Linking, Modal, FlatList, Image,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
+import { API_BASE_URL } from '../../api/axios';
+import { MediaViewer } from '../../components/MediaViewer';
 import { requestsApi } from '../../api/requests.api';
 import { tasksApi } from '../../api/tasks.api';
 import { Request, Task, TaskStatus, SystemRole, RequestStatus } from '../../types';
@@ -24,6 +27,30 @@ import { collections } from '../../db/index';
 import { database } from '../../db/index';
 
 type RouteParams = { RequestDetail: { requestId: string } };
+
+function getMimeType(url: string): string {
+  if (!url) return 'application/octet-stream';
+  const ext = url.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'mp4':
+      return 'video/mp4';
+    case 'mov':
+      return 'video/quicktime';
+    case 'avi':
+      return 'video/x-msvideo';
+    default:
+      return 'application/octet-stream';
+  }
+}
 
 const KANBAN_COLS: { status: TaskStatus; label: string; color: string }[] = [
   { status: TaskStatus.TODO,           label: 'До роботи',    color: Colors.textMuted },
@@ -48,6 +75,10 @@ export default function RequestDetailScreen() {
   const [editingInfoId, setEditingInfoId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [savingInfo, setSavingInfo] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
+  const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
+  const [isUploading, setIsUploading] = useState(false);
 
   // ─── Load tasks from local DB ────────────────────────────────────────────
   const loadTasksLocal = useCallback(async (requestId: string): Promise<Task[]> => {
@@ -417,6 +448,51 @@ export default function RequestDetailScreen() {
             <Text style={styles.description}>{request.description}</Text>
           ) : null}
 
+          {/* Request media files (main) */}
+          {(request as any).mediaUrls?.length > 0 && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.text, marginBottom: 8 }}>📎 Вкладення</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {(request as any).mediaUrls.map((file: any, idx: number) => {
+                  const isImage = (file.type || '').startsWith('image/');
+                  const isVideo = (file.type || '').startsWith('video/');
+                  const fileUrl = file.url?.startsWith('http') ? file.url : `${API_BASE_URL.replace('/api', '')}${file.url}`;
+                  return (
+                    <TouchableOpacity
+                      key={idx}
+                      onPress={() => {
+                        if (isImage || isVideo) {
+                          setSelectedMedia({ url: fileUrl, type: isImage ? 'image' : 'video' });
+                          setMediaViewerVisible(true);
+                        } else {
+                          Linking.openURL(fileUrl).catch(() => Alert.alert('Помилка', 'Не вдалося відкрити файл'));
+                        }
+                      }}
+                    >
+                      {isImage ? (
+                        <Image
+                          source={{ uri: fileUrl }}
+                          style={{ width: 120, height: 120, borderRadius: 8, backgroundColor: Colors.borderLight }}
+                          resizeMode="cover"
+                        />
+                      ) : isVideo ? (
+                        <View style={{ width: 120, height: 120, borderRadius: 8, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+                          <Text style={{ fontSize: 32 }}>▶️</Text>
+                          <Text style={{ fontSize: 10, color: '#fff', marginTop: 4 }}>Відео</Text>
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, backgroundColor: Colors.borderLight, borderRadius: 8 }}>
+                          <Text>📄</Text>
+                          <Text style={{ fontSize: 13, flex: 1 }} numberOfLines={1}>{file.name}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
           {/* Meta rows */}
           <View style={styles.metaList}>
             <MetaRow icon="🔒" label="Допуск" value={clearanceLabels[request.requiredClearance] ?? request.requiredClearance} />
@@ -473,6 +549,16 @@ export default function RequestDetailScreen() {
                         <TouchableOpacity onPress={() => {
                           setEditingInfoId(info.id);
                           setEditingText(info.text);
+                          // Pre-fill existing attachments to avoid losing them during edit
+                          if (info.attachments?.length > 0) {
+                            setSelectedFiles(info.attachments.map((att: any) => ({
+                              uri: att.url?.startsWith('http') ? att.url : `http://10.0.2.2:3000${att.url}`,
+                              name: att.name || 'file',
+                              type: getMimeType(att.url),
+                            })));
+                          } else {
+                            setSelectedFiles([]);
+                          }
                         }}>
                           <Text style={{ fontSize: 12, color: Colors.primary }}>✏️</Text>
                         </TouchableOpacity>
@@ -503,22 +589,39 @@ export default function RequestDetailScreen() {
                         multiline
                         autoFocus
                       />
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                      <View style={{ marginTop: 8 }}>
+                        <TouchableOpacity onPress={async () => {
+                          const res = await DocumentPicker.getDocumentAsync({ multiple: true });
+                          if (!res.canceled) setSelectedFiles(res.assets.map(a => ({ uri: a.uri, name: a.name, type: (a as any).mimeType || 'application/octet-stream' })));
+                        }} style={{ padding: 8, backgroundColor: Colors.borderLight, borderRadius: 8, alignItems: 'center' }}>
+                          <Text style={{ color: Colors.primary, fontWeight: '600' }}>+ Додати файли</Text>
+                        </TouchableOpacity>
+                        {selectedFiles.map((file, idx) => (
+                          <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, padding: 6, backgroundColor: Colors.surface, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 12, flex: 1 }}>{file.name}</Text>
+                            <TouchableOpacity onPress={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))}>
+                              <Text style={{ color: Colors.danger }}>✕</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                         <Button
                           title="Зберегти"
                           size="sm"
-                          loading={savingInfo}
+                          loading={savingInfo || isUploading}
                           onPress={async () => {
                             if (!editingText.trim()) return;
-                            setSavingInfo(true);
+                            setIsUploading(true);
                             try {
-                              await requestsApi.updateAdditionalInfo(request.id, info.id, editingText.trim());
+                              await requestsApi.updateAdditionalInfo(request.id, info.id, editingText.trim(), selectedFiles);
                               setEditingInfoId(null);
+                              setSelectedFiles([]);
                               load();
                             } catch (e) {
                               Alert.alert('Помилка', 'Не вдалося зберегти');
                             } finally {
-                              setSavingInfo(false);
+                              setIsUploading(false);
                             }
                           }}
                         />
@@ -526,12 +629,54 @@ export default function RequestDetailScreen() {
                           title="Скасувати"
                           variant="ghost"
                           size="sm"
-                          onPress={() => setEditingInfoId(null)}
+                          onPress={() => { setEditingInfoId(null); setSelectedFiles([]); }}
                         />
                       </View>
                     </View>
                   ) : (
-                    <Text style={styles.additionalInfoText}>{info.text}</Text>
+                    <View>
+                      <Text style={styles.additionalInfoText}>{info.text}</Text>
+                      {info.attachments?.length > 0 && (
+                        <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                          {info.attachments.map((file: any, fileIdx: number) => {
+                            const isImage = file.type?.startsWith('image/');
+                            const isVideo = file.type?.startsWith('video/');
+                            const fileUrl = file.url?.startsWith('http') ? file.url : `${API_BASE_URL.replace('/api', '')}${file.url}`;
+                            return (
+                              <TouchableOpacity
+                                key={fileIdx}
+                                onPress={() => {
+                                  if (isImage || isVideo) {
+                                    setSelectedMedia({ url: fileUrl, type: isImage ? 'image' : 'video' });
+                                    setMediaViewerVisible(true);
+                                  } else {
+                                    Linking.openURL(fileUrl).catch(() => Alert.alert('Помилка', 'Не вдалося відкрити файл'));
+                                  }
+                                }}
+                              >
+                                {isImage ? (
+                                  <Image 
+                                    source={{ uri: fileUrl }} 
+                                    style={{ width: 120, height: 120, borderRadius: 8, backgroundColor: Colors.borderLight }}
+                                    resizeMode="cover"
+                                  />
+                                ) : isVideo ? (
+                                  <View style={{ width: 120, height: 120, borderRadius: 8, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 32 }}>▶️</Text>
+                                    <Text style={{ fontSize: 10, color: '#fff', marginTop: 4 }}>Відео</Text>
+                                  </View>
+                                ) : (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, backgroundColor: Colors.borderLight, borderRadius: 8 }}>
+                                    <Text>📄</Text>
+                                    <Text style={{ fontSize: 13, flex: 1 }} numberOfLines={1}>{file.name}</Text>
+                                  </View>
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
                   )}
                 </View>
               );
@@ -595,6 +740,20 @@ export default function RequestDetailScreen() {
           })
         )}
 
+        {/* Media Viewer Modal */}
+        {selectedMedia && (
+          <Modal visible={mediaViewerVisible} transparent={true} onRequestClose={() => setMediaViewerVisible(false)}>
+            <MediaViewer
+              visible={mediaViewerVisible}
+              url={selectedMedia.url}
+              type={selectedMedia.type as any}
+              onClose={() => {
+                setMediaViewerVisible(false);
+                setSelectedMedia(null);
+              }}
+            />
+          </Modal>
+        )}
         {/* Actions */}
         <View style={{ marginHorizontal: 16, marginTop: 8, gap: 8 }}>
           {request.status === RequestStatus.IN_PROGRESS && (canManage || canSubmitReview) && (
