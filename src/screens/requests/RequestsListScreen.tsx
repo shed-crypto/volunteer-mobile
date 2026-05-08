@@ -87,24 +87,26 @@ export default function RequestsListScreen() {
       const savedRequests = await collections.savedRequests.query().fetch();
       const savedIds = new Set(savedRequests.map((s: any) => s.requestId));
       
-      const mapped = localReqs.map((r: any) => ({
-        id: r.serverId || r.id,
-        title: r.title,
-        description: r.description ?? '',
-        category: r.category,
-        urgency: r.urgency,
-        status: r.status,
-        requiredClearance: r.requiredClearance,
-        latitude: r.latitude ?? undefined,
-        longitude: r.longitude ?? undefined,
-        isLocationHidden: r.isLocationHidden ?? false,
-        tags: r.tags ?? [],
-        creatorId: r.creatorId ?? '',
-        createdAt: r.createdAtServer
-          ? new Date(r.createdAtServer).toISOString()
-          : new Date().toISOString(),
-        isSaved: savedIds.has(r.serverId || r.id),
-      }));
+       const mapped = localReqs.map((r: any) => ({
+         id: r.serverId || r.id,
+         title: r.title,
+         description: r.description ?? '',
+         category: r.category,
+         urgency: r.urgency,
+         status: r.status,
+         requiredClearance: r.requiredClearance,
+         latitude: r.latitude ?? undefined,
+         longitude: r.longitude ?? undefined,
+         isLocationHidden: r.isLocationHidden ?? false,
+         tags: r.tags ?? [],
+         additionalInfo: r.additionalInfo ?? [],
+         mediaUrls: r.mediaUrls ?? [],
+         creatorId: r.creatorId ?? '',
+         createdAt: r.createdAtServer
+           ? new Date(r.createdAtServer).toISOString()
+           : new Date().toISOString(),
+         isSaved: savedIds.has(r.serverId || r.id),
+       }));
       
       // Apply filters locally
       return mapped.filter((r: any) => {
@@ -149,6 +151,8 @@ export default function RequestsListScreen() {
               r.longitude = req.longitude ?? null;
               r.isLocationHidden = req.isLocationHidden ?? false;
               r.tagsRaw = JSON.stringify(req.tags ?? []);
+              r.additionalInfoRaw = JSON.stringify(req.additionalInfo ?? []);
+              r.mediaUrlsRaw = JSON.stringify(req.mediaUrls ?? []);
               r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
               r.isSynced = true;
               r.pendingAction = null;
@@ -170,6 +174,8 @@ export default function RequestsListScreen() {
               r.longitude = req.longitude ?? null;
               r.isLocationHidden = req.isLocationHidden ?? false;
               r.tagsRaw = JSON.stringify(req.tags ?? []);
+              r.additionalInfoRaw = JSON.stringify(req.additionalInfo ?? []);
+              r.mediaUrlsRaw = JSON.stringify(req.mediaUrls ?? []);
               r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
               r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
               r.isSynced = true;

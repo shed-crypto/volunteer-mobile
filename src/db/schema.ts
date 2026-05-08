@@ -30,7 +30,9 @@ export const dbSchema = appSchema({
         { name: 'is_synced', type: 'boolean' },
         { name: 'pending_action', type: 'string', isOptional: true },
         { name: 'last_synced_at', type: 'number', isOptional: true }, // Додано для відстеження останньої синхронізації
-      ],
+        { name: 'additional_info_raw', type: 'string', isOptional: true }, // JSON array of objects
+        { name: 'media_urls_raw', type: 'string', isOptional: true }, // JSON array of objects
+       ],
     }),
 
     // ─── Задачі / підзадачі ──────────────────────────────────────────────────

@@ -224,28 +224,53 @@ export class SyncService {
 
     for (const sr of serverRequests) {
       const existing = localRequestsMap.get(sr.id);
-      if (existing) {
-        if (existing.isSynced) {
+        if (existing) {
+          if (existing.isSynced) {
+            preparedOperations.push(
+              existing.prepareUpdate((r: any) => {
+                r.status = sr.status;
+                r.title = sr.title;
+                r.description = sr.description ?? null;
+                r.category = sr.category;
+                r.urgency = sr.urgency;
+                r.requiredClearance = sr.requiredClearance ?? 'local';
+                r.latitude = sr.latitude ?? null;
+                r.longitude = sr.longitude ?? null;
+                r.isLocationHidden = sr.isLocationHidden ?? false;
+                r.tagsRaw = JSON.stringify(sr.tags ?? []);
+                r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
+                r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
+                r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
+                r.lastSyncedAt = Date.now();
+              })
+            );
+            count++;
+          }
+        } else {
           preparedOperations.push(
-            existing.prepareUpdate((r: any) => {
-              r.status = sr.status;
+            collections.requests.prepareCreate((r: any) => {
+              r.serverId = sr.id;
               r.title = sr.title;
+              r.description = sr.description ?? null;
+              r.category = sr.category;
+              r.urgency = sr.urgency;
+              r.status = sr.status;
+              r.requiredClearance = sr.requiredClearance ?? 'local';
+              r.creatorId = sr.creatorId ?? null;
+              r.latitude = sr.latitude ?? null;
+              r.longitude = sr.longitude ?? null;
+              r.isLocationHidden = sr.isLocationHidden ?? false;
+              r.tagsRaw = JSON.stringify(sr.tags ?? []);
+              r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
+              r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
+              r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
+              r.createdAtServer = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
+              r.isSynced = true;
               r.lastSyncedAt = Date.now();
             })
           );
           count++;
         }
-      } else {
-        preparedOperations.push(
-          collections.requests.prepareCreate((r: any) => {
-            r.serverId = sr.id;
-            r.title = sr.title;
-            r.isSynced = true;
-            r.lastSyncedAt = Date.now();
-          })
-        );
-        count++;
-      }
     }
 
       // Note: We no longer delete local requests based on incomplete server list

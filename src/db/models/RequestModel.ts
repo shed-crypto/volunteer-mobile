@@ -26,11 +26,31 @@ export class RequestModel extends Model {
   @field('is_synced') isSynced!: boolean;
   @field('pending_action') pendingAction!: string | null;
   @field('last_synced_at') lastSyncedAt!: number | null; // Додано для відстеження останньої синхронізації
+  @field('additional_info_raw') additionalInfoRaw!: string | null; // JSON array of objects
+  @field('media_urls_raw') mediaUrlsRaw!: string | null; // JSON array of objects
 
   /** Зручний геттер для десеріалізованих тегів */
   get tags(): string[] {
     try {
       return JSON.parse(this.tagsRaw || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  /** Зручний геттер для additionalInfo */
+  get additionalInfo(): Array<{ id: string; text: string; attachments: any[]; createdAt: Date; updatedAt?: Date }> {
+    try {
+      return JSON.parse(this.additionalInfoRaw || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  /** Зручний геттер для mediaUrls */
+  get mediaUrls(): Array<{ url: string; name: string; type: string }> {
+    try {
+      return JSON.parse(this.mediaUrlsRaw || '[]');
     } catch {
       return [];
     }
