@@ -75,6 +75,32 @@ export default function RequestDetailScreen() {
   const [editingInfoId, setEditingInfoId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [savingInfo, setSavingInfo] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [bookmarkLoading, setBookmarkLoading] = useState(false);
+
+  // ─── Check saved status from server (source of truth) ───────────────────
+  const checkSavedStatus = useCallback(async () => {
+    try {
+      // Server is source of truth for saved status
+      if (!isOffline) {
+        const savedIds = await requestsApi.getSavedIds();
+        setIsSaved(savedIds.includes(requestId));
+      } else {
+        // Fallback to local DB when offline
+        const saved = await collections.savedRequests.query().fetch();
+        setIsSaved(saved.some((s: any) => s.requestId === requestId));
+      }
+    } catch (e) {
+      OfflineLogger.cache('RequestDetail: Failed to check saved status', e);
+      // Fallback to local DB on error
+      try {
+        const saved = await collections.savedRequests.query().fetch();
+        setIsSaved(saved.some((s: any) => s.requestId === requestId));
+      } catch {
+        setIsSaved(false);
+      }
+    }
+  }, [requestId, isOffline]);
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
@@ -351,6 +377,51 @@ export default function RequestDetailScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Check saved status when requestId changes
+  useEffect(() => {
+    checkSavedStatus();
+  }, [checkSavedStatus]);
+
+  // ─── Toggle bookmark (save/unsave request) ───────────────────────────────
+  const toggleBookmark = async () => {
+    if (bookmarkLoading) return;
+    setBookmarkLoading(true);
+    try {
+      if (isSaved) {
+        await requestsApi.unsave(requestId);
+        // Remove from local DB quietly (don't block UI on error)
+        try {
+          const saved = await collections.savedRequests.query().fetch();
+          const item = saved.find((s: any) => s.requestId === requestId);
+          if (item) await database.write(() => item.destroyPermanently());
+        } catch (localErr) {
+          OfflineLogger.cache('RequestDetail: failed to remove local bookmark entry', localErr);
+        }
+        setIsSaved(false);
+      } else {
+        await requestsApi.save(requestId);
+        // Add to local DB quietly (don't block UI on error)
+        try {
+          await database.write(() =>
+            collections.savedRequests.create((s: any) => {
+              s.requestId = requestId;
+              s.userId = user?.id || '';
+              s.savedAt = Date.now();
+            })
+          );
+        } catch (localErr) {
+          OfflineLogger.cache('RequestDetail: failed to insert local bookmark entry', localErr);
+        }
+        setIsSaved(true);
+      }
+    } catch (e) {
+      OfflineLogger.cache('RequestDetail: failed to toggle bookmark', e);
+      Alert.alert('Помилка', 'Не вдалося зберегти заявку');
+    } finally {
+      setBookmarkLoading(false);
+    }
+  };
+
   const handleCancelRequest = async () => {
     Alert.alert('Скасувати заявку?', 'Цю дію неможливо відмінити.', [
       { text: 'Ні' },
@@ -399,6 +470,17 @@ export default function RequestDetailScreen() {
       <ScreenHeader
         title="Деталі заявки"
         onBack={() => navigation.goBack()}
+        rightAction={
+          <TouchableOpacity
+            onPress={toggleBookmark}
+            disabled={bookmarkLoading}
+            style={{ padding: 8 }}
+          >
+            <Text style={{ fontSize: 24, opacity: bookmarkLoading ? 0.5 : 1 }}>
+              {isSaved ? '🔖' : '📎'}
+            </Text>
+          </TouchableOpacity>
+        }
       />
 
       {/* Action buttons row to avoid header overlap */}

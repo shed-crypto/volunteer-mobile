@@ -2,8 +2,11 @@ import api from './axios';
 import { Request, CreateRequestDto, FindRequestsDto } from '../types';
 
 export const requestsApi = {
-  getAll: (params?: FindRequestsDto): Promise<Request[]> =>
+  getAll: (params?: FindRequestsDto & { latitude?: number; longitude?: number }): Promise<any[]> =>
     api.get('/requests', { params }).then((r) => r.data),
+
+  getSavedIds: (): Promise<string[]> =>
+    api.get('/requests/saved-ids').then((r) => r.data),
 
   getOne: (id: string): Promise<Request> =>
     api.get(`/requests/${id}`).then((r) => r.data),

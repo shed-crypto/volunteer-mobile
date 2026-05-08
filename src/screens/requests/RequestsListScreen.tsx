@@ -214,24 +214,29 @@ export default function RequestsListScreen() {
       }
 
       // КРОК 2: If online, update from server AND save to DB
-      if (!isOffline) {
-        try {
-          const params: any = {
-            search: search || undefined,
-            urgency: urgencyFilter,
-            category: categoryFilter,
-            limit: 50,
-          };
-          if (statusFilter === 'my') {
-            params.creatorId = user?.id;
-          } else if (statusFilter === 'all') {
-            params.excludeCreatorId = user?.id;
-          } else if (statusFilter) {
-            params.status = statusFilter;
-          }
+          if (!isOffline) {
+            try {
+              let latitude, longitude;
+              try {
+                const loc = await Location.getLastKnownPositionAsync({});
+                if (loc) {
+                  latitude = loc.coords.latitude;
+                  longitude = loc.coords.longitude;
+                }
+              } catch {}
 
-          const data = await requestsApi.getAll(params);
-          setRequests(data);
+              const params: any = {
+                limit: 50,
+                latitude,
+                longitude,
+              };
+              if (search) params.search = search;
+              if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my') params.status = statusFilter;
+              if (urgencyFilter) params.urgency = urgencyFilter;
+              if (categoryFilter) params.category = categoryFilter;
+
+              const data = await requestsApi.getAll(params);
+              setRequests(data);
           OfflineLogger.nav(`RequestsList: loaded ${data.length} from server`);
           
           // ЗБЕРЕГТИ в БД для офлайн-роботи
@@ -526,10 +531,73 @@ export function RequestCard({ request, onPress }: { request: Request; onPress: (
   const urgency = urgencyColors[request.urgency];
   const status  = statusColors[request.status];
   
+  // Saved / bookmark state
+  const [isSaved, setIsSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
   // Location state for this specific request card
   const [requestLocationName, setRequestLocationName] = useState<string | null>(null);
   const [requestGeocodingLoading, setRequestGeocodingLoading] = useState(false);
   const [requestGeocodingError, setRequestGeocodingError]   = useState<string | null>(null);
+
+  // Sync saved status with server on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const savedIds = await requestsApi.getSavedIds();
+        if (mounted) setIsSaved(savedIds.includes(request.id));
+      } catch (err) {
+        try {
+          const localSaved = await collections.savedRequests.query().fetch();
+          if (mounted) setIsSaved(localSaved.some((s: any) => s.requestId === request.id));
+        } catch (localErr) {
+          if (mounted) setIsSaved(false);
+        }
+      }
+    })();
+    return () => { mounted = false; };
+  }, [request.id]);
+
+  // Handle save / unsave
+  const handleToggleSave = async (e: any) => {
+    e.stopPropagation();
+    if (saving) return;
+    setSaving(true);
+    try {
+      if (isSaved) {
+        await requestsApi.unsave(request.id);
+        setIsSaved(false);
+        // Remove from local DB quietly
+        try {
+          const localSaved = await collections.savedRequests.query().fetch();
+          const item = localSaved.find((s: any) => s.requestId === request.id);
+          if (item) await database.write(() => item.destroyPermanently());
+        } catch (localErr) {
+          OfflineLogger.cache('RequestCard: failed to remove local bookmark', localErr);
+        }
+      } else {
+        await requestsApi.save(request.id);
+        setIsSaved(true);
+        // Add to local DB quietly
+        try {
+          await database.write(() =>
+            collections.savedRequests.create((s: any) => {
+              s.requestId = request.id;
+              s.userId = user?.id || '';
+              s.savedAt = Date.now();
+            })
+          );
+        } catch (localErr) {
+          OfflineLogger.cache('RequestCard: failed to insert local bookmark', localErr);
+        }
+      }
+    } catch (err) {
+      OfflineLogger.network('RequestCard: save toggle failed', err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Fetch location name when request coordinates change
   useEffect(() => {
@@ -594,6 +662,11 @@ export function RequestCard({ request, onPress }: { request: Request; onPress: (
             <Text style={styles.cardCategory}>{categoryLabels[request.category] ?? request.category}</Text>
           </View>
           <View style={{ gap: 4, alignItems: 'flex-end' }}>
+            <TouchableOpacity onPress={handleToggleSave} style={{ padding: 4 }}>
+              <Text style={{ fontSize: 20, opacity: saving ? 0.5 : 1 }}>
+                {isSaved ? '🔖' : '📎'}
+              </Text>
+            </TouchableOpacity>
             <Badge label={urgency?.label ?? request.urgency} colorScheme="urgency" value={request.urgency} size="sm" />
             <Badge label={status?.label ?? request.status}   colorScheme="status"  value={request.status}  size="sm" />
           </View>

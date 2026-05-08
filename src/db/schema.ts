@@ -4,7 +4,9 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const dbSchema = appSchema({
-  version: 14,
+  // NOTE: migrations were reset in development. Version was lowered to 1
+  // so WatermelonDB recreates the database from the current schema.
+  version: 1,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -135,7 +137,7 @@ export const dbSchema = appSchema({
       ],
     }),
 
-    // ─── Збережені заявки ─────────────────────────────────────────────────────
+    // ─── Збережені заявки (для офлайн) ──────────────────────────────────────
     tableSchema({
       name: 'saved_requests',
       columns: [

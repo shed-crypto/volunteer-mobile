@@ -171,6 +171,33 @@ export class SyncService {
     const preparedOperations: any[] = [];
     const loadedIds = new Set<string>();
 
+    // Очищення збережених заявок
+    if (userId) {
+      try {
+        const serverSavedIds = await requestsApi.getSavedIds();
+        const serverIdSet = new Set(serverSavedIds);
+        const localSaved = (await collections.savedRequests.query().fetch()) as any[];
+        for (const localReq of localSaved) {
+          if (!serverIdSet.has(localReq.id)) {
+            preparedOperations.push(localReq.prepareMarkAsDeleted());
+          }
+        }
+        
+        const remoteSaved = await requestsApi.getSaved(100, 0);
+        for (const req of remoteSaved) {
+          preparedOperations.push(
+            collections.savedRequests.prepareCreate((r: any) => {
+              r.requestId = req.id;
+              r.userId = userId;
+              r.savedAt = Date.now();
+            })
+          );
+        }
+      } catch (err) {
+        OfflineLogger.sync('Sync saved requests error', err);
+      }
+    }
+
     const serverRequests: any[] = [];
     const addUnique = (items: any[]) => {
       for (const item of items) {
