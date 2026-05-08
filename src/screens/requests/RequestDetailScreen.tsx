@@ -78,37 +78,16 @@ export default function RequestDetailScreen() {
   const [isSaved, setIsSaved] = useState(false);
   const [bookmarkLoading, setBookmarkLoading] = useState(false);
 
-  // ─── Check saved status from server (source of truth) ───────────────────
-  const checkSavedStatus = useCallback(async () => {
-    console.log('[RequestDetail] checkSavedStatus called, request?.isSaved:', (request as any)?.isSaved);
-    // If request object has isSaved property from server, use it
-    if (request && (request as any).isSaved !== undefined) {
-      console.log('[RequestDetail] Setting isSaved from request:', (request as any).isSaved);
-      setIsSaved((request as any).isSaved);
-      return;
-    }
-    
+  // ─── Check saved status from local DB (fallback only) ───────────────────
+  const checkSavedLocal = useCallback(async (): Promise<boolean> => {
     try {
-      // Server is source of truth for saved status
-      if (!isOffline) {
-        const savedIds = await requestsApi.getSavedIds();
-        setIsSaved(savedIds.map((id: string) => String(id)).includes(String(requestId)));
-      } else {
-        // Fallback to local DB when offline
-        const saved = await collections.savedRequests.query().fetch();
-        setIsSaved(saved.some((s: any) => String(s.requestId) === String(requestId)));
-      }
+      const saved = await collections.savedRequests.query().fetch();
+      return saved.some((s: any) => String(s.requestId) === String(requestId));
     } catch (e) {
-      OfflineLogger.cache('RequestDetail: Failed to check saved status', e);
-      // Fallback to local DB on error
-      try {
-        const saved = await collections.savedRequests.query().fetch();
-        setIsSaved(saved.some((s: any) => String(s.requestId) === String(requestId)));
-      } catch {
-        setIsSaved(false);
-      }
+      OfflineLogger.cache('RequestDetail: Failed to check saved status from local DB', e);
+      return false;
     }
-  }, [requestId, isOffline, request]);
+  }, [requestId]);
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
@@ -425,14 +404,17 @@ export default function RequestDetailScreen() {
     }
   }, [request]);
   
-  // Check saved status from server (only if request doesn't have isSaved from server)
+  // Check saved status from local DB when offline (fallback)
   useEffect(() => {
-    // If request already has isSaved from server, don't call API
+    // If request already has isSaved from server, don't check local DB
     if (request && (request as any).isSaved !== undefined) {
       return;
     }
-    checkSavedStatus();
-  }, [requestId, isOffline]);
+    // Only check local DB when offline
+    if (isOffline) {
+      checkSavedLocal().then(saved => setIsSaved(saved));
+    }
+  }, [requestId, isOffline, checkSavedLocal]);
   
   // ─── Toggle bookmark (save/unsave request) ───────────────────────────────
   const toggleBookmark = async () => {
