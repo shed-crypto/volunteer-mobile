@@ -118,6 +118,7 @@ export interface Request {
   tasks?: Task[];
   createdAt: string;
   updatedAt: string;
+  isSaved?: boolean;
 }
 
 export interface Task {

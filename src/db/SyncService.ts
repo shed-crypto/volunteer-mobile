@@ -248,14 +248,11 @@ export class SyncService {
       }
     }
 
-    const serverRequestIds = new Set(serverRequests.map((r) => r.id));
-    for (const localReq of localRequests) {
-      if (localReq.isSynced && localReq.serverId && !serverRequestIds.has(localReq.serverId) && !localReq.pendingAction) {
-        preparedOperations.push(localReq.prepareMarkAsDeleted());
-      }
-    }
+      // Note: We no longer delete local requests based on incomplete server list
+      // This prevents data loss when server returns partial results (e.g., limit=100)
+      // Deletion should only happen when explicitly confirmed (e.g., 404 from server)
 
-    const visibleRequestServerIds = Array.from(serverRequestIds);
+    const visibleRequestServerIds = serverRequests.map((r: any) => r.id);
     const activeTaskServerIds = new Set<string>();
     
     for (const reqId of visibleRequestServerIds.slice(0, 50)) {
@@ -295,7 +292,7 @@ export class SyncService {
     const validTaskIds = new Set<string>();
     
     for (const lt of allLocalTasks) {
-      const isOrphan = lt.isSynced && lt.requestServerId && !serverRequestIds.has(lt.requestServerId);
+      const isOrphan = lt.isSynced && lt.requestServerId && !visibleRequestServerIds.includes(lt.requestServerId as string);
       const isStale = lt.isSynced && lt.serverId && visibleRequestServerIds.includes(lt.requestServerId!) && !activeTaskServerIds.has(lt.serverId);
       
       if ((isOrphan || isStale) && !lt.pendingAction) {

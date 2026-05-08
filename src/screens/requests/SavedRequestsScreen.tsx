@@ -20,11 +20,39 @@ export default function SavedRequestsScreen() {
   const load = useCallback(async () => {
     try {
       if (isOffline) {
+        // Load saved request IDs first
         const saved = await collections.savedRequests.query().fetch();
-        setRequests(saved);
+        const savedIds = new Set(saved.map((s: any) => s.requestId));
+        
+        // Load all requests from local DB
+        const allRequests = await collections.requests.query().fetch();
+        
+        // Filter to only saved requests and add isSaved flag
+        const savedRequests = allRequests
+          .filter((r: any) => savedIds.has(r.serverId || r.id))
+          .map((r: any) => ({
+            id: r.serverId || r.id,
+            title: r.title,
+            description: r.description ?? '',
+            category: r.category,
+            urgency: r.urgency,
+            status: r.status,
+            requiredClearance: r.requiredClearance,
+            latitude: r.latitude ?? undefined,
+            longitude: r.longitude ?? undefined,
+            isLocationHidden: r.isLocationHidden ?? false,
+            tags: r.tags ?? [],
+            creatorId: r.creatorId ?? '',
+            createdAt: r.createdAtServer ? new Date(r.createdAtServer).toISOString() : new Date().toISOString(),
+            isSaved: true,
+          }));
+        
+        setRequests(savedRequests);
       } else {
         const data = await requestsApi.getSaved();
-        setRequests(data);
+        // Ensure isSaved is set
+        const dataWithFlag = data.map((req: any) => ({ ...req, isSaved: true }));
+        setRequests(dataWithFlag);
       }
     } catch (e) {
       console.error(e);

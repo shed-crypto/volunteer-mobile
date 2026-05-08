@@ -3,7 +3,11 @@ import { Request, CreateRequestDto, FindRequestsDto } from '../types';
 
 export const requestsApi = {
   getAll: (params?: FindRequestsDto & { latitude?: number; longitude?: number }): Promise<any[]> =>
-    api.get('/requests', { params }).then((r) => r.data),
+    api.get('/requests', { params }).then((r) => {
+      const firstItem = r.data && r.data[0];
+      console.log('[API] /requests response sample:', firstItem?.id, 'isSaved:', firstItem?.isSaved);
+      return r.data;
+    }),
 
   getSavedIds: (): Promise<string[]> =>
     api.get('/requests/saved-ids').then((r) => r.data),

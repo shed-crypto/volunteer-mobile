@@ -83,6 +83,10 @@ export default function RequestsListScreen() {
       const localReqs = await collections.requests.query().fetch();
       if (localReqs.length === 0) return [];
       
+      // Load saved request IDs to add isSaved flag
+      const savedRequests = await collections.savedRequests.query().fetch();
+      const savedIds = new Set(savedRequests.map((s: any) => s.requestId));
+      
       const mapped = localReqs.map((r: any) => ({
         id: r.serverId || r.id,
         title: r.title,
@@ -99,6 +103,7 @@ export default function RequestsListScreen() {
         createdAt: r.createdAtServer
           ? new Date(r.createdAtServer).toISOString()
           : new Date().toISOString(),
+        isSaved: savedIds.has(r.serverId || r.id),
       }));
       
       // Apply filters locally
@@ -448,7 +453,7 @@ export default function RequestsListScreen() {
           <EmptyState icon="📋" title="Заявок не знайдено" subtitle={hasError ? 'Немає мережі. Спробуйте оновити.' : 'Спробуйте змінити фільтри'} />
         }
         renderItem={({ item }) => (
-          <RequestCard request={item} onPress={() => navigation.navigate('RequestDetail', { requestId: item.id })} />
+          <RequestCard request={item} onPress={() => navigation.navigate('RequestDetail', { requestId: item.id })} initialSaved={(item as any).isSaved} />
         )}
       />
 
@@ -532,7 +537,7 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
   const status  = statusColors[request.status];
   
   // Saved / bookmark state
-  const [isSaved, setIsSaved] = useState(initialSaved ?? false);
+  const [isSaved, setIsSaved] = useState(initialSaved ?? (request as any).isSaved ?? false);
   const [saving, setSaving] = useState(false);
   
   // Location state for this specific request card
@@ -540,25 +545,14 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
   const [requestGeocodingLoading, setRequestGeocodingLoading] = useState(false);
   const [requestGeocodingError, setRequestGeocodingError]   = useState<string | null>(null);
 
-// Sync saved status with server on mount
+  // Update isSaved when props change (e.g., when server data arrives)
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const savedIds = await requestsApi.getSavedIds();
-        if (mounted) setIsSaved(savedIds.map((id: string) => String(id)).includes(String(request.id)));
-      } catch (err) {
-        try {
-          const localSaved = await collections.savedRequests.query().fetch();
-          if (mounted) setIsSaved(localSaved.some((s: any) => String(s.requestId) === String(request.id)));
-        } catch (localErr) {
-          if (mounted) setIsSaved(false);
-        }
-      }
-    })();
-    return () => { mounted = false; };
-  }, [request.id]);
-
+    const saved = initialSaved ?? (request as any).isSaved ?? false;
+    if (saved !== isSaved) {
+      setIsSaved(saved);
+    }
+  }, [initialSaved, (request as any).isSaved]);
+  
   // Handle save / unsave
   const handleToggleSave = async (e: any) => {
     e.stopPropagation();

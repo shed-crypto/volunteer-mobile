@@ -80,6 +80,14 @@ export default function RequestDetailScreen() {
 
   // ─── Check saved status from server (source of truth) ───────────────────
   const checkSavedStatus = useCallback(async () => {
+    console.log('[RequestDetail] checkSavedStatus called, request?.isSaved:', (request as any)?.isSaved);
+    // If request object has isSaved property from server, use it
+    if (request && (request as any).isSaved !== undefined) {
+      console.log('[RequestDetail] Setting isSaved from request:', (request as any).isSaved);
+      setIsSaved((request as any).isSaved);
+      return;
+    }
+    
     try {
       // Server is source of truth for saved status
       if (!isOffline) {
@@ -100,7 +108,7 @@ export default function RequestDetailScreen() {
         setIsSaved(false);
       }
     }
-  }, [requestId, isOffline]);
+  }, [requestId, isOffline, request]);
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
@@ -339,7 +347,13 @@ export default function RequestDetailScreen() {
         try {
           OfflineLogger.nav('Fetching from server...');
           const req = await requestsApi.getOne(requestId);
+          console.log('[RequestDetail] Server response for', requestId, 'isSaved:', (req as any).isSaved);
           setRequest(req);
+          // Explicitly set isSaved from server response
+          if ((req as any).isSaved !== undefined) {
+            console.log('[RequestDetail] Setting isSaved from server response:', (req as any).isSaved);
+            setIsSaved((req as any).isSaved);
+          }
           setIsOfflineMode(false);
           
           // ЗБЕРЕГТИ заявку в БД
@@ -354,8 +368,35 @@ export default function RequestDetailScreen() {
             OfflineLogger.network('Server tasks failed, keeping local tasks');
             // Залишаємо локальні задачі
           }
-        } catch (serverError) {
+        } catch (serverError: any) {
           OfflineLogger.network('Server request failed:', serverError);
+          // If server returns 404, the request was deleted
+          if (serverError.response?.status === 404) {
+            // Delete from local DB
+            try {
+              const existing = await collections.requests.query().fetch();
+              const localReq = existing.find((r: any) => r.serverId === requestId || r.id === requestId);
+              if (localReq) {
+                await database.write(async () => {
+                  await localReq.destroyPermanently();
+                });
+              }
+              // Also remove from saved requests
+              const saved = await collections.savedRequests.query().fetch();
+              const savedReq = saved.find((s: any) => s.requestId === requestId);
+              if (savedReq) {
+                await database.write(async () => {
+                  await savedReq.destroyPermanently();
+                });
+              }
+            } catch (localErr) {
+              OfflineLogger.cache('Error deleting local request after 404', localErr);
+            }
+            Alert.alert('Заявка не знайдена', 'Ця заявка більше не існує');
+            if (navigation.canGoBack()) navigation.goBack();
+            else navigation.navigate('RequestsList' as never);
+            return;
+          }
           if (!localRequest) {
             // Немає ні локальних, ні серверних даних
             Alert.alert('Помилка', 'Не вдалося завантажити заявку');
@@ -377,11 +418,22 @@ export default function RequestDetailScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Check saved status when requestId changes
+  // Update isSaved when request changes (e.g., when server data arrives with isSaved flag)
   useEffect(() => {
+    if (request && (request as any).isSaved !== undefined) {
+      setIsSaved((request as any).isSaved);
+    }
+  }, [request]);
+  
+  // Check saved status from server (only if request doesn't have isSaved from server)
+  useEffect(() => {
+    // If request already has isSaved from server, don't call API
+    if (request && (request as any).isSaved !== undefined) {
+      return;
+    }
     checkSavedStatus();
-  }, [checkSavedStatus]);
-
+  }, [requestId, isOffline]);
+  
   // ─── Toggle bookmark (save/unsave request) ───────────────────────────────
   const toggleBookmark = async () => {
     if (bookmarkLoading) return;
