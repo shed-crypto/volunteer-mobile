@@ -266,6 +266,32 @@ export default function RequestsListScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Effect to update filteredRequests when filters change (except regionSearch)
+  useEffect(() => {
+    if (regionSearch.trim()) return; // region search overrides
+    let filtered = requests;
+    // Apply status filter
+    if (statusFilter === 'my') {
+      filtered = filtered.filter(r => r.creatorId === user?.id);
+    } else if (statusFilter && statusFilter !== 'all') {
+      filtered = filtered.filter(r => r.status === statusFilter);
+    }
+    // Apply urgency filter
+    if (urgencyFilter) {
+      filtered = filtered.filter(r => r.urgency === urgencyFilter);
+    }
+    // Apply category filter
+    if (categoryFilter) {
+      filtered = filtered.filter(r => r.category === categoryFilter);
+    }
+    // Apply search filter
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter(r => r.title.toLowerCase().includes(searchLower));
+    }
+    setFilteredRequests(filtered);
+  }, [requests, statusFilter, urgencyFilter, categoryFilter, search, regionSearch]);
+
   useEffect(() => {
     const applyRegionFilter = async () => {
       if (!regionSearch.trim()) {
