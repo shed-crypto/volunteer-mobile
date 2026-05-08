@@ -673,9 +673,9 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
                     <Text style={{ fontSize: 15, fontWeight: '600', color: Colors.text }}>
                       {a.user?.fullName || 'Користувач'}
                     </Text>
-                  <Text style={{ fontSize: 13, color: Colors.textSecondary }}>
-                    Статус: {statusLabels[a.status] || a.status || 'Невідомо'}
-                  </Text>
+                    <Text style={{ fontSize: 13, color: Colors.textSecondary }}>
+                      Статус: {statusLabels[a.status] || a.status || 'Невідомо'}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               )}
