@@ -149,6 +149,14 @@ export default function RequestDetailScreen() {
       const local = localReqs.find((r: any) => r.serverId === requestId || r.id === requestId);
       if (local) {
         OfflineLogger.cache('Loaded request from local DB', { id: (local as any).serverId || local.id });
+        
+        // Check if request is saved in local DB
+        let isSavedLocal = false;
+        try {
+          const saved = await collections.savedRequests.query().fetch();
+          isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
+        } catch {}
+        
         return {
           id: (local as any).serverId ?? local.id,
           title: (local as any).title,
@@ -163,6 +171,7 @@ export default function RequestDetailScreen() {
           tags: (local as any).tags,
           creatorId: (local as any).creatorId ?? '',
           createdAt: (local as any).createdAtServer ? new Date((local as any).createdAtServer).toISOString() : '',
+          isSaved: isSavedLocal,
         } as any;
       }
     } catch (e) {
@@ -422,6 +431,18 @@ export default function RequestDetailScreen() {
       checkSavedLocal().then(saved => setIsSaved(saved));
     }
   }, [requestId, isOffline, checkSavedLocal]);
+
+  // On mount, check local saved status as initial state
+  useEffect(() => {
+    const initSaved = async () => {
+      try {
+        const saved = await collections.savedRequests.query().fetch();
+        const savedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
+        if (savedLocal) setIsSaved(true);
+      } catch {}
+    };
+    initSaved();
+  }, [requestId]);
   
   // ─── Toggle bookmark (save/unsave request) ───────────────────────────────
   const toggleBookmark = async () => {
