@@ -319,6 +319,13 @@ export default function RequestDetailScreen() {
         setTasks(localTasks);
         setIsOfflineMode(true);
         setLoading(false);
+        
+        // Also check saved status from local DB for initial state
+        try {
+          const saved = await collections.savedRequests.query().fetch();
+          const isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
+          if (isSavedLocal) setIsSaved(true);
+        } catch {}
       }
 
       // КРОК 2: Якщо є мережа — оновити з сервера
