@@ -84,18 +84,18 @@ export default function RequestDetailScreen() {
       // Server is source of truth for saved status
       if (!isOffline) {
         const savedIds = await requestsApi.getSavedIds();
-        setIsSaved(savedIds.includes(requestId));
+        setIsSaved(savedIds.map((id: string) => String(id)).includes(String(requestId)));
       } else {
         // Fallback to local DB when offline
         const saved = await collections.savedRequests.query().fetch();
-        setIsSaved(saved.some((s: any) => s.requestId === requestId));
+        setIsSaved(saved.some((s: any) => String(s.requestId) === String(requestId)));
       }
     } catch (e) {
       OfflineLogger.cache('RequestDetail: Failed to check saved status', e);
       // Fallback to local DB on error
       try {
         const saved = await collections.savedRequests.query().fetch();
-        setIsSaved(saved.some((s: any) => s.requestId === requestId));
+        setIsSaved(saved.some((s: any) => String(s.requestId) === String(requestId)));
       } catch {
         setIsSaved(false);
       }
@@ -477,7 +477,7 @@ export default function RequestDetailScreen() {
             style={{ padding: 8 }}
           >
             <Text style={{ fontSize: 24, opacity: bookmarkLoading ? 0.5 : 1 }}>
-              {isSaved ? '🔖' : '📎'}
+              {isSaved ? '⭐' : '☆'}
             </Text>
           </TouchableOpacity>
         }

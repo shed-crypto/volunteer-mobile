@@ -361,7 +361,7 @@ export default function RequestsListScreen() {
               onPress={() => navigation.navigate('SavedRequests' as never)}
               style={styles.addBtn}
             >
-              <Text style={{ color: '#fff', fontSize: 20 }}>🔖</Text>
+              <Text style={{ color: '#fff', fontSize: 20 }}>⭐</Text>
             </TouchableOpacity>
             {canCreate && (
               <TouchableOpacity
@@ -525,14 +525,14 @@ export default function RequestsListScreen() {
   );
 }
 
-export function RequestCard({ request, onPress }: { request: Request; onPress: () => void }) {
+export function RequestCard({ request, onPress, initialSaved }: { request: Request; onPress: () => void; initialSaved?: boolean }) {
   const { user } = useAuth();
   const isMy = request.creatorId === user?.id;
   const urgency = urgencyColors[request.urgency];
   const status  = statusColors[request.status];
   
   // Saved / bookmark state
-  const [isSaved, setIsSaved] = useState(false);
+  const [isSaved, setIsSaved] = useState(initialSaved ?? false);
   const [saving, setSaving] = useState(false);
   
   // Location state for this specific request card
@@ -540,17 +540,17 @@ export function RequestCard({ request, onPress }: { request: Request; onPress: (
   const [requestGeocodingLoading, setRequestGeocodingLoading] = useState(false);
   const [requestGeocodingError, setRequestGeocodingError]   = useState<string | null>(null);
 
-  // Sync saved status with server on mount
+// Sync saved status with server on mount
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const savedIds = await requestsApi.getSavedIds();
-        if (mounted) setIsSaved(savedIds.includes(request.id));
+        if (mounted) setIsSaved(savedIds.map((id: string) => String(id)).includes(String(request.id)));
       } catch (err) {
         try {
           const localSaved = await collections.savedRequests.query().fetch();
-          if (mounted) setIsSaved(localSaved.some((s: any) => s.requestId === request.id));
+          if (mounted) setIsSaved(localSaved.some((s: any) => String(s.requestId) === String(request.id)));
         } catch (localErr) {
           if (mounted) setIsSaved(false);
         }
@@ -664,7 +664,7 @@ export function RequestCard({ request, onPress }: { request: Request; onPress: (
           <View style={{ gap: 4, alignItems: 'flex-end' }}>
             <TouchableOpacity onPress={handleToggleSave} style={{ padding: 4 }}>
               <Text style={{ fontSize: 20, opacity: saving ? 0.5 : 1 }}>
-                {isSaved ? '🔖' : '📎'}
+                {isSaved ? '⭐' : '☆'}
               </Text>
             </TouchableOpacity>
             <Badge label={urgency?.label ?? request.urgency} colorScheme="urgency" value={request.urgency} size="sm" />

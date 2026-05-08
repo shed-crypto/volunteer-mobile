@@ -46,11 +46,12 @@ export default function SavedRequestsScreen() {
         keyExtractor={(r) => r.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={Colors.primary} />}
         contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
-        ListEmptyComponent={<EmptyState icon="🔖" title="Поки що пусто" subtitle="Збережені заявки з'являться тут" />}
+        ListEmptyComponent={<EmptyState icon="⭐" title="Поки що пусто" subtitle="Збережені заявки з'являться тут" />}
         renderItem={({ item }) => (
           <RequestCard 
             request={item} 
-            onPress={() => navigation.navigate('RequestDetail', { requestId: item.id })} 
+            onPress={() => navigation.navigate('RequestDetail', { requestId: item.id })}
+            initialSaved={true}
           />
         )}
       />
