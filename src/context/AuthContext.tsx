@@ -134,6 +134,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: true,
       emailVerified,
     });
+
+    // ДОДАТИ: Примусова синхронізація після входу
+    try {
+      const { SyncService } = await import('../db/SyncService');
+      await SyncService.sync(user.id);
+    } catch (e) {
+      console.warn('Post-login sync failed', e);
+    }
   }, []);
 
   const register = useCallback(async (data: RegisterData) => {
@@ -162,6 +170,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('emailVerified');
     await SecureStore.deleteItemAsync('biometricEnabled');
     await AsyncStorage.removeItem(CACHED_USER_KEY);
+    
+    // ДОДАТИ: Очистка БД при виході
+    try {
+      const { database } = await import('../db/index');
+      await database.unsafeResetDatabase();
+    } catch (e) {
+      console.warn('DB cleanup failed', e);
+    }
+    
     setState({ user: null, accessToken: null, isLoading: false, isAuthenticated: false, emailVerified: false });
   }, []);
 

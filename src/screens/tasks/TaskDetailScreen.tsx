@@ -639,16 +639,15 @@ const canReport = isMe && (task.status === TaskStatus.IN_PROGRESS || task.status
         </Card>
 
         {/* Progress bar */}
-        {task.neededPeopleCount && task.neededPeopleCount > 1 && (
+        {Number(task.neededPeopleCount) > 1 && (
           <Card style={{ padding: 16, marginBottom: 12 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
               <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textSecondary }}>Виконавці</Text>
               <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.text }}>
-                {/* Show actual value for debugging */}
-                {task.assignedCount ?? 0}/{task.neededPeopleCount}
+                {`${task.assignedCount ?? 0}/${task.neededPeopleCount ?? 0}`}
               </Text>
             </View>
-            <ProgressBar value={task.assignedCount ?? 0} total={task.neededPeopleCount} />
+            <ProgressBar value={task.assignedCount ?? 0} total={task.neededPeopleCount ?? 1} />
           </Card>
         )}
 
