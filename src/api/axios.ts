@@ -136,10 +136,17 @@ api.interceptors.response.use(
       !originalRequest._retry &&
       !originalRequest.url?.includes('/auth/')
     ) {
+      // Якщо сервер недоступний — не робити refresh, відразу reject
+      if (!_serverReachable) {
+        OfflineLogger.auth('401 but server unreachable — skip refresh, stay offline');
+        return Promise.reject(error);
+      }
+      
       // Перевірити чи є мережа взагалі
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
         OfflineLogger.auth('401 but no network — staying offline, skip redirect');
+        _serverReachable = false;
         return Promise.reject(error);
       }
 

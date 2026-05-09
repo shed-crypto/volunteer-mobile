@@ -369,6 +369,32 @@ export default function TaskDetailScreen() {
 
   const handleAssign = async () => {
     if (!task) return;
+    
+    // OFFLINE GUARD: if offline, enqueue the action
+    if (isOffline) {
+      try {
+        const isMe = task.assignments?.some(a => a.userId === user?.id && a.status !== 'withdrawn');
+        const actionType = isMe ? 'TASK_WITHDRAW' : 'TASK_ASSIGN';
+        const { collections, database } = await import('../../db/index');
+        await database.write(async () => {
+          await collections.actionQueue.create((aq: any) => {
+            aq.actionType = actionType;
+            aq.payload = JSON.stringify({ taskId: task.id, fulfilledRole: null });
+            aq.createdAt = Date.now();
+            aq.retryCount = 0;
+          });
+        });
+        OfflineLogger.cache(`TaskDetail: ${actionType} enqueued for offline`);
+        Alert.alert(
+          '📴 Офлайн режим',
+          `${isMe ? 'Відміна призначення' : 'Призначення'} поставлено в чергу. Воно буде виконано при відновленні мережі.`
+        );
+      } catch (err) {
+        Alert.alert('Помилка', 'Не вдалося зберегти дію офлайн');
+      }
+      return;
+    }
+    
     setActioning(true);
     try {
       const isMe = task.assignments?.some(a => a.userId === user?.id && a.status !== 'withdrawn');

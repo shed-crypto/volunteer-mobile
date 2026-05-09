@@ -8,7 +8,7 @@
  *    Логіка: волонтер теж може потребувати допомоги (наприклад, зламалось авто
  *    на місії). Подавши заявку він стає "requester" по суті цієї заявки.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput,
@@ -24,7 +24,6 @@ import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
 import { SystemRole } from '../../types';
   import { collections } from '../../db/index';
-  import { SyncService } from '../../db/SyncService';
   import { database } from '../../db/index';
 
 const STATUS_FILTERS = [
@@ -69,6 +68,7 @@ export default function RequestsListScreen() {
   const [regionSearch, setRegionSearch] = useState('');
   const [filteredRequests, setFilteredRequests] = useState<Request[]>([]);
   const { isOffline } = useNetwork();
+  const isLoadingRef = useRef(false);
   
   // Reverse geocoding state for location names
   const [locationName, setLocationName] = useState<string | null>(null);
@@ -215,6 +215,11 @@ export default function RequestsListScreen() {
 
   // ─── Main load: OFFLINE-FIRST ────────────────────────────────────────────
   const load = useCallback(async () => {
+    if (isLoadingRef.current) {
+      OfflineLogger.nav('RequestsListScreen.load() skipped — already loading');
+      return;
+    }
+    isLoadingRef.current = true;
     setHasError(false);
     OfflineLogger.nav('RequestsListScreen.load() called');
 
@@ -267,6 +272,7 @@ export default function RequestsListScreen() {
       setHasError(true);
     } finally {
       // КРИТИЧНО: завжди знімати loading, навіть якщо БД зависла
+      isLoadingRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }

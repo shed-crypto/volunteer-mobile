@@ -4,6 +4,7 @@ import { TaskModel } from './models/TaskModel';
 import { ChatMessageModel } from './models/ChatMessageModel';
 import { TaskAssignmentModel } from './models/TaskAssignmentModel';
 import { TaskReportModel } from './models/TaskReportModel';
+import { ActionQueueItem } from './models/ActionQueueItem';
 import { requestsApi } from '../api/requests.api';
 import { tasksApi } from '../api/tasks.api';
 import { chatApi } from '../api/chat.api';
@@ -16,6 +17,23 @@ import { Q } from '@nozbe/watermelondb';
 export class SyncService {
   private static isSyncing = false;
   private static _lastFailedAt: number | null = null;
+  private static _listeners: Map<string, ((data: any) => void)[]> = new Map();
+
+  static on(event: string, cb: (data: any) => void): () => void {
+    if (!this._listeners.has(event)) this._listeners.set(event, []);
+    this._listeners.get(event)!.push(cb);
+    return () => {
+      this._listeners.set(event, this._listeners.get(event)!.filter((f) => f !== cb));
+    };
+  }
+
+  static emit(event: string, data?: any): void {
+    (this._listeners.get(event) || []).forEach((cb) => cb(data));
+  }
+
+  static off(event: string, cb: (data: any) => void): void {
+    this._listeners.set(event, (this._listeners.get(event) || []).filter((f) => f !== cb));
+  }
 
   static async sync(userId?: string): Promise<{ pushed: number; pulled: number }> {
     if (this.isSyncing) {
@@ -153,6 +171,73 @@ export class SyncService {
           if (err.response?.status === 403) {
             OfflineLogger.sync(`Removing forbidden message: ${msg.id}`);
             preparedOps.push(msg.prepareMarkAsDeleted());
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+
+    // 4. Process action_queue (offline task actions: assign, withdraw, complete)
+    try {
+      const queueItems = (await collections.actionQueue.query().fetch()) as unknown as ActionQueueItem[];
+      // Sort by created_at to maintain order
+      queueItems.sort((a, b) => a.createdAt - b.createdAt);
+      
+      for (const item of queueItems) {
+        if (item.retryCount > 3) {
+          OfflineLogger.sync(`ActionQueue: max retries exceeded for ${item.actionType}`);
+          continue;
+        }
+        
+        try {
+          const payload = item.payloadData;
+          switch (item.actionType) {
+            case 'TASK_ASSIGN': {
+              const { taskId, fulfilledRole } = payload as any;
+              await tasksApi.assign(taskId, fulfilledRole as string);
+              break;
+            }
+            case 'TASK_WITHDRAW': {
+              const { taskId } = payload as any;
+              await tasksApi.withdraw(taskId as string);
+              break;
+            }
+            case 'TASK_COMPLETE': {
+              const { taskId } = payload as any;
+              await tasksApi.complete(taskId as string);
+              break;
+            }
+            default:
+              OfflineLogger.sync(`ActionQueue: unknown action type ${item.actionType}`);
+          }
+          // Success — mark for deletion
+          preparedOps.push(item.prepareMarkAsDeleted());
+          count++;
+        } catch (err: any) {
+          const errorStr = String(err);
+          OfflineLogger.sync(`ActionQueue: ${item.actionType} failed`, err);
+          
+          // CONFLICT DETECTION: 409 or "already assigned" error
+          const isConflict = err.response?.status === 409 || 
+            errorStr.toLowerCase().includes('already assigned') ||
+            errorStr.toLowerCase().includes('conflict');
+          
+          if (isConflict) {
+            OfflineLogger.sync(`ActionQueue: CONFLICT detected for ${item.actionType} — another user modified the task`);
+            // Remove from queue — conflict resolved by server state
+            preparedOps.push(item.prepareMarkAsDeleted());
+            // Emit conflict event so UI can refresh
+            const payload = item.payloadData;
+            this.emit('conflict', { actionType: item.actionType, taskId: (payload as any).taskId });
+          } else {
+            // Retry later
+            preparedOps.push(
+              item.prepareUpdate((aq: any) => {
+                aq.retryCount = (aq.retryCount || 0) + 1;
+                aq.error = errorStr;
+              })
+            );
           }
         }
       }
