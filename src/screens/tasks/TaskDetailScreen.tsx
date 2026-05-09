@@ -33,7 +33,7 @@ import { collections, database } from '../../db/index';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
 import { MediaViewer } from '../../components/MediaViewer';
-import { usePendingActions } from '../../hooks/usePendingActions';
+import { usePendingActions, refreshAllPendingActions } from '../../hooks/usePendingActions';
 
 /* ─────────────── Types ─────────────── */
 
@@ -238,9 +238,11 @@ export default function TaskDetailScreen() {
         aq.createdAt = Date.now(); aq.retryCount = 0;
       });
     });
-    await refreshPendingActions();
+    // Notify ALL usePendingActions hooks across the app to refresh
+    const { refreshAllPendingActions } = await import('../../hooks/usePendingActions');
+    refreshAllPendingActions();
     OfflineLogger.cache(`TaskDetail: ${actionType} enqueued for offline`);
-  }, [refreshPendingActions]);
+  }, []);
 
   const getActionTypeForAssign = (isMe: boolean) => isMe ? 'TASK_WITHDRAW' : 'TASK_ASSIGN';
 

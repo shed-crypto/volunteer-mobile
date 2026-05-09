@@ -44,6 +44,25 @@ function parsePayload(raw: string | null): any {
   }
 }
 
+/* ────────── Global Event Bus ────────── */
+// Simple global event emitter for cross-hook communication
+const globalListeners = new Map<string, Set<() => void>>();
+
+function emitGlobal(event: string) {
+  globalListeners.get(event)?.forEach((cb) => cb());
+}
+
+function onGlobal(event: string, cb: () => void) {
+  if (!globalListeners.has(event)) globalListeners.set(event, new Set());
+  globalListeners.get(event)!.add(cb);
+  return () => globalListeners.get(event)!.delete(cb);
+}
+
+/** Trigger a refresh in ALL usePendingActions hooks across the app */
+export function refreshAllPendingActions() {
+  emitGlobal('pending-actions-changed');
+}
+
 /* ────────── Hook ────────── */
 
 export function usePendingActions(taskId: string): PendingActionsInfo {
@@ -99,16 +118,17 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     [loadPendingActions]
   );
 
-  // EAGER: update immediately after local mutations
+  // EAGER: update immediately after local mutations + listen for global events
   useEffect(() => {
-    const handler = async () => {
-      // Debounce: wait for DB write to complete
-      setTimeout(() => loadPendingActions(), 50);
-    };
-    // Hook into database changes
+    const unsubscribe = onGlobal('pending-actions-changed', () => {
+      loadPendingActions();
+    });
     const interval = setInterval(() => loadPendingActions(), 500);
     loadPendingActions(); // initial
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [loadPendingActions]);
 
   const hasAny = pendingActions.length > 0;
