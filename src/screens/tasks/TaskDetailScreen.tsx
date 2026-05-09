@@ -1,4 +1,4 @@
-/**
+файлів планів  /**
  * TaskDetailScreen.tsx
  *
  * Основні зміни (offline-first):
@@ -251,7 +251,20 @@ export default function TaskDetailScreen() {
     const actionType = getActionTypeForAssign(!!isMe);
 
     if (isOffline) {
-      await enqueueOfflineAction(actionType, { taskId: task.id, fulfilledRole: null });
+      Alert.alert(
+        '📴 Офлайн режим',
+        isMe ? 'Скасувати призначення офлайн?' : 'Призначити себе офлайн?',
+        [
+          { text: 'Ні', style: 'cancel' },
+          {
+            text: 'Так',
+            onPress: async () => {
+              await enqueueOfflineAction(actionType, { taskId: task.id, fulfilledRole: null });
+              Alert.alert('✅ Збережено', 'Дія поставлена в чергу синхронізації');
+            }
+          }
+        ]
+      );
       return;
     }
 
@@ -264,7 +277,16 @@ export default function TaskDetailScreen() {
   /* ─── handleComplete ──────────────────────────────────────────────────── */
   const handleComplete = async () => {
     if (!task) return;
-    if (isOffline) { await enqueueOfflineAction('TASK_COMPLETE', { taskId: task.id }); return; }
+    if (isOffline) { 
+      Alert.alert('📴 Офлайн режим', 'Завершити задачу офлайн?', [
+        { text: 'Ні', style: 'cancel' },
+        { text: 'Так', onPress: async () => { 
+          await enqueueOfflineAction('TASK_COMPLETE', { taskId: task.id }); 
+          Alert.alert('✅ Збережено', 'Завершення поставлено в чергу синхронізації');
+        }}
+      ]);
+      return; 
+    }
     Alert.alert('Завершити задачу?', 'Статус буде змінено на «На перевірці»', [
       { text: 'Ні' },
       {

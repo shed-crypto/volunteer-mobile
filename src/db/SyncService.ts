@@ -194,18 +194,34 @@ export class SyncService {
           const payload = item.payloadData;
           switch (item.actionType) {
             case 'TASK_ASSIGN': {
-              const { taskId, fulfilledRole } = payload as any;
-              await tasksApi.assign(taskId, fulfilledRole as string);
+              const taskIdStr = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              const fulfilledRole = (payload as any).fulfilledRole;
+              if (!taskIdStr) {
+                OfflineLogger.sync(`ActionQueue: TASK_ASSIGN missing taskId, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await tasksApi.assign(taskIdStr, fulfilledRole as string);
               break;
             }
             case 'TASK_WITHDRAW': {
-              const { taskId } = payload as any;
-              await tasksApi.withdraw(taskId as string);
+              const taskIdStr2 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              if (!taskIdStr2) {
+                OfflineLogger.sync(`ActionQueue: TASK_WITHDRAW missing taskId, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await tasksApi.withdraw(taskIdStr2 as string);
               break;
             }
             case 'TASK_COMPLETE': {
-              const { taskId } = payload as any;
-              await tasksApi.complete(taskId as string);
+              const taskIdStr3 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              if (!taskIdStr3) {
+                OfflineLogger.sync(`ActionQueue: TASK_COMPLETE missing taskId, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await tasksApi.complete(taskIdStr3 as string);
               break;
             }
             default:
