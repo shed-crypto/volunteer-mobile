@@ -6,7 +6,7 @@ import { appSchema, tableSchema } from '@nozbe/watermelondb';
 export const dbSchema = appSchema({
   // NOTE: migrations were reset in development. Version was lowered to 1
   // so WatermelonDB recreates the database from the current schema.
-  version: 1,
+  version: 3,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -32,6 +32,7 @@ export const dbSchema = appSchema({
         { name: 'last_synced_at', type: 'number', isOptional: true }, // Додано для відстеження останньої синхронізації
         { name: 'additional_info_raw', type: 'string', isOptional: true }, // JSON array of objects
         { name: 'media_urls_raw', type: 'string', isOptional: true }, // JSON array of objects
+        { name: 'report_urls_raw', type: 'string', isOptional: true }, // JSON array of strings
        ],
     }),
 

@@ -153,6 +153,7 @@ export default function RequestsListScreen() {
               r.tagsRaw = JSON.stringify(req.tags ?? []);
               r.additionalInfoRaw = JSON.stringify(req.additionalInfo ?? []);
               r.mediaUrlsRaw = JSON.stringify(req.mediaUrls ?? []);
+              r.reportUrlsRaw = JSON.stringify(req.reportUrls ?? []);
               r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
               r.isSynced = true;
               r.pendingAction = null;
@@ -176,6 +177,7 @@ export default function RequestsListScreen() {
               r.tagsRaw = JSON.stringify(req.tags ?? []);
               r.additionalInfoRaw = JSON.stringify(req.additionalInfo ?? []);
               r.mediaUrlsRaw = JSON.stringify(req.mediaUrls ?? []);
+              r.reportUrlsRaw = JSON.stringify(req.reportUrls ?? []);
               r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
               r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
               r.isSynced = true;

@@ -13,13 +13,30 @@ import { schemaMigrations } from '@nozbe/watermelondb/Schema/migrations';
  */
 export const dbMigrations = schemaMigrations({
   migrations: [
-    // Placeholder for future migrations
-    // Example:
-    // {
-    //   toVersion: 2,
-    //   steps: [
-    //     { type: 'add_columns', table: 'some_table', columns: [...] }
-    //   ]
-    // }
+    {
+      toVersion: 2,
+      steps: [
+        { 
+          type: 'add_columns', 
+          table: 'requests', 
+          columns: [
+            { name: 'additional_info_raw', type: 'string', isOptional: true },
+            { name: 'media_urls_raw', type: 'string', isOptional: true },
+          ]
+        }
+      ]
+    },
+    {
+      toVersion: 3,
+      steps: [
+        { 
+          type: 'add_columns', 
+          table: 'requests', 
+          columns: [
+            { name: 'report_urls_raw', type: 'string', isOptional: true },
+          ]
+        }
+      ]
+    }
   ]
 });

@@ -169,6 +169,9 @@ export default function RequestDetailScreen() {
           longitude: (local as any).longitude != null ? (local as any).longitude : undefined,
           isLocationHidden: (local as any).isLocationHidden,
           tags: (local as any).tags,
+          additionalInfo: (local as any).additionalInfo,
+          mediaUrls: (local as any).mediaUrls,
+          reportUrls: (local as any).reportUrls,
           creatorId: (local as any).creatorId ?? '',
           createdAt: (local as any).createdAtServer ? new Date((local as any).createdAtServer).toISOString() : '',
           isSaved: isSavedLocal,
@@ -212,6 +215,9 @@ export default function RequestDetailScreen() {
             r.longitude = req.longitude ?? null;
             r.isLocationHidden = req.isLocationHidden ?? false;
             r.tagsRaw = JSON.stringify(req.tags ?? []);
+            r.additionalInfoRaw = JSON.stringify((req as any).additionalInfo ?? []);
+            r.mediaUrlsRaw = JSON.stringify((req as any).mediaUrls ?? []);
+            r.reportUrlsRaw = JSON.stringify((req as any).reportUrls ?? []);
             r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
             r.isSynced = true;
             r.pendingAction = null;
@@ -233,6 +239,9 @@ export default function RequestDetailScreen() {
             r.longitude = req.longitude ?? null;
             r.isLocationHidden = req.isLocationHidden ?? false;
             r.tagsRaw = JSON.stringify(req.tags ?? []);
+            r.additionalInfoRaw = JSON.stringify((req as any).additionalInfo ?? []);
+            r.mediaUrlsRaw = JSON.stringify((req as any).mediaUrls ?? []);
+            r.reportUrlsRaw = JSON.stringify((req as any).reportUrls ?? []);
             r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
             r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
             r.isSynced = true;

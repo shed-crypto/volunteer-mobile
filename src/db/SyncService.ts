@@ -240,6 +240,7 @@ export class SyncService {
                 r.tagsRaw = JSON.stringify(sr.tags ?? []);
                 r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
                 r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
+                r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
                 r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
                 r.lastSyncedAt = Date.now();
               })
@@ -263,6 +264,7 @@ export class SyncService {
               r.tagsRaw = JSON.stringify(sr.tags ?? []);
               r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
               r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
+              r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
               r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
               r.createdAtServer = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
               r.isSynced = true;

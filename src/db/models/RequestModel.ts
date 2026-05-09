@@ -28,6 +28,7 @@ export class RequestModel extends Model {
   @field('last_synced_at') lastSyncedAt!: number | null; // Додано для відстеження останньої синхронізації
   @field('additional_info_raw') additionalInfoRaw!: string | null; // JSON array of objects
   @field('media_urls_raw') mediaUrlsRaw!: string | null; // JSON array of objects
+  @field('report_urls_raw') reportUrlsRaw!: string | null; // JSON array of strings
 
   /** Зручний геттер для десеріалізованих тегів */
   get tags(): string[] {
@@ -51,6 +52,15 @@ export class RequestModel extends Model {
   get mediaUrls(): Array<{ url: string; name: string; type: string }> {
     try {
       return JSON.parse(this.mediaUrlsRaw || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  /** Зручний геттер для reportUrls */
+  get reportUrls(): string[] {
+    try {
+      return JSON.parse(this.reportUrlsRaw || '[]');
     } catch {
       return [];
     }
