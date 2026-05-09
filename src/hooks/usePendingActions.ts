@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collections } from '../db/index';
+import { collections, database } from '../db/index';
 import { ActionQueueItem } from '../db/models/ActionQueueItem';
 
 /* ────────── Types ────────── */
@@ -80,7 +80,7 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
 
       const actions: PendingAction[] = queueItems
         .map((item) => {
-          const payload = parsePayload(item.payloadRaw);
+          const payload = parsePayload(item.payloadRaw || (item as any)._raw?.payload);
           // Support both taskId (camelCase) and task_id (snake_case)
           const p: any = payload || {};
           const id = p.taskId || p.task_id || p.id;
@@ -96,9 +96,6 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
         .filter((a): a is PendingAction => a !== null)
         .sort((a, b) => a.createdAt - b.createdAt);
 
-      if (__DEV__) {
-        console.log(`[usePendingActions] taskId=${taskId} | found ${actions.length} pending | total queue=${queueItems.length}`);
-      }
       setPendingActions(actions);
     } catch (e) {
       console.warn('[usePendingActions] load error', e);
@@ -116,7 +113,9 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
         const queueItems = (await collections.actionQueue.query().fetch()) as ActionQueueItem[];
         const item = queueItems.find((q) => q.id === actionId);
         if (item) {
-          await item.destroyPermanently();
+          await database.write(async () => {
+            await item.destroyPermanently();
+          });
           await loadPendingActions();
         }
       } catch (e) {
@@ -131,10 +130,8 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     const unsubscribe = onGlobal('pending-actions-changed', () => {
       loadPendingActions();
     });
-    const interval = setInterval(() => loadPendingActions(), 500);
     loadPendingActions(); // initial
     return () => {
-      clearInterval(interval);
       unsubscribe();
     };
   }, [loadPendingActions]);

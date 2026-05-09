@@ -91,9 +91,11 @@ export default function ChatRoomScreen() {
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
       if (msg.chatId !== chatId) return;
+      if (!msg.id && msg.senderId === user?.id) return;
       
       const newMsg = {
         ...msg,
+        id: msg.id || `ws-${Date.now()}`,
         sentAt: typeof msg.sentAt === 'string' ? msg.sentAt : new Date(msg.sentAt).toISOString(),
       } as Message;
 
@@ -239,7 +241,7 @@ export default function ChatRoomScreen() {
       sentAt: sentAtStr,
       messageType: (m.messageType === 'attachment' || m.messageType === 'system' ? m.messageType : 'text') as any,
       attachmentUrl: m.attachmentUrl || undefined,
-      messageStatus: m.messageStatus || 'sent',
+      messageStatus: m.messageStatus || (!m.isSynced || m.pendingAction ? 'pending' : 'sent'),
       readBy: m.readBy || [],
       deliveredTo: m.deliveredTo || [],
       replyToId: m.replyToId || undefined,
@@ -361,17 +363,14 @@ export default function ChatRoomScreen() {
     setSending(true);
     const repId = replyToMessage?.id;
     const now = new Date().toISOString();
+    const tempId = `temp-${Date.now()}`;
     setText('');
     const prevReply = replyToMessage;
     setReplyToMessage(null);
     sendTyping(chatId, false);
-    
-    if (getServerReachable()) {
-      chatApi.sendMessage(chatId, content).catch(console.warn);
-    }
 
     const tempMsg: Message = {
-      id: `temp-${Date.now()}`,
+      id: tempId,
       chatId,
       senderId: user?.id || '',
       content,
@@ -386,18 +385,34 @@ export default function ChatRoomScreen() {
     
     setMessages(prev => [tempMsg, ...prev]);
 
-    import('../../db/SyncService')
-      .then((module) =>
-        module.SyncService.saveMessageOffline({
+    try {
+      if (getServerReachable()) {
+        const sent = await chatApi.sendMessage(chatId, content, repId);
+        await saveMessagesToDB([sent]);
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...sent, messageStatus: 'sent', replyTo: prevReply || undefined } as Message : m));
+      } else {
+        const module = await import('../../db/SyncService');
+        await module.SyncService.saveMessageOffline({
           chatId,
           senderId: user?.id || '',
           senderName: user?.fullName,
           content,
           replyToId: repId,
-        })
-      )
-      .catch((err) => console.warn('[handleSend] saveOffline failed:', err));
-    setSending(false);
+        });
+      }
+    } catch (err) {
+      const module = await import('../../db/SyncService');
+      await module.SyncService.saveMessageOffline({
+        chatId,
+        senderId: user?.id || '',
+        senderName: user?.fullName,
+        content,
+        replyToId: repId,
+      });
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'pending' } : m));
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleCopyMessage = () => {
@@ -449,10 +464,55 @@ export default function ChatRoomScreen() {
 
   const uploadAndSend = async (uri: string, name: string, type: string) => {
     setUploading(true);
+    const tempId = `temp-${Date.now()}`;
+    const tempMsg: Message = {
+      id: tempId,
+      chatId,
+      senderId: user?.id || '',
+      content: name,
+      sentAt: new Date().toISOString(),
+      readBy: [],
+      messageType: 'attachment',
+      attachmentUrl: uri,
+      messageStatus: 'pending',
+      sender: user as any,
+    };
+    setMessages(prev => [tempMsg, ...prev]);
+
     try {
+      if (!getServerReachable()) {
+        const module = await import('../../db/SyncService');
+        await module.SyncService.saveMessageOffline({
+          chatId,
+          senderId: user?.id || '',
+          senderName: user?.fullName,
+          content: name,
+          messageType: 'attachment',
+          attachmentUrl: uri,
+        });
+        return;
+      }
+
       const result = await chatApi.sendFile(chatId, { uri, name, type });
+      const sent = await chatApi.sendMessage(chatId, result.name, undefined, result.url, 'attachment');
       await emitWhenReady('send_message', { chatId, content: result.name, attachmentUrl: result.url });
+      await saveMessagesToDB([sent]);
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...sent, messageStatus: 'sent' } as Message : m));
     } catch (e: any) {
+      try {
+        const module = await import('../../db/SyncService');
+        await module.SyncService.saveMessageOffline({
+          chatId,
+          senderId: user?.id || '',
+          senderName: user?.fullName,
+          content: name,
+          messageType: 'attachment',
+          attachmentUrl: uri,
+        });
+        return;
+      } catch {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'failed' } : m));
+      }
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
       setUploading(false);
@@ -654,7 +714,7 @@ const MessageBubble = React.memo(({
   const time = new Date(message.sentAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
   const hasAttachment = !!message.attachmentUrl && typeof message.attachmentUrl === 'string' && message.attachmentUrl.length > 5;
   const attachUrl = hasAttachment
-    ? message.attachmentUrl!.startsWith('http')
+    ? (message.attachmentUrl!.startsWith('http') || message.attachmentUrl!.startsWith('file:') || message.attachmentUrl!.startsWith('content:'))
       ? message.attachmentUrl!
       : `${staticBase}${message.attachmentUrl}`
     : null;

@@ -7,12 +7,14 @@ import { TaskReportModel } from './models/TaskReportModel';
 import { ActionQueueItem } from './models/ActionQueueItem';
 import { requestsApi } from '../api/requests.api';
 import { tasksApi } from '../api/tasks.api';
+import { taskReportsApi } from '../api/task-reports.api';
 import { chatApi } from '../api/chat.api';
 import api from '../api/axios';
 import { getServerReachable } from '../api/axios';
 import { OfflineLogger } from '../utils/offlineLogger';
 import NetInfo from '@react-native-community/netinfo';
 import { Q } from '@nozbe/watermelondb';
+import { refreshAllPendingActions } from '../hooks/usePendingActions';
 
 export class SyncService {
   private static isSyncing = false;
@@ -158,11 +160,31 @@ export class SyncService {
       const allMessages = (await collections.chatMessages.query().fetch()) as unknown as ChatMessageModel[];
       for (const msg of allMessages.filter((m) => !m.isSynced && m.pendingAction === 'send')) {
         try {
-          await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
+          let attachmentUrl = msg.attachmentUrl || undefined;
+          if (msg.messageType === 'attachment' && attachmentUrl && !attachmentUrl.startsWith('/uploads') && !attachmentUrl.startsWith('http')) {
+            const uploaded = await chatApi.sendFile(msg.chatId, {
+              uri: attachmentUrl,
+              name: msg.content || `attachment-${msg.id}`,
+              type: 'application/octet-stream',
+            });
+            attachmentUrl = uploaded.url;
+          }
+
+          const created = await chatApi.sendMessage(
+            msg.chatId,
+            msg.content,
+            msg.replyToId || undefined,
+            attachmentUrl,
+            msg.messageType || undefined,
+          );
           preparedOps.push(
             msg.prepareUpdate((m: any) => {
+              m.serverId = created.id;
               m.isSynced = true;
               m.pendingAction = null;
+              m.attachmentUrl = created.attachmentUrl ?? attachmentUrl ?? null;
+              m.messageStatus = 'sent';
+              m.lastSyncedAt = Date.now();
             })
           );
           count++;
@@ -224,6 +246,51 @@ export class SyncService {
               await tasksApi.complete(taskIdStr3 as string);
               break;
             }
+            case 'TASK_RETURN_TO_PROGRESS': {
+              const taskIdStr4 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              if (!taskIdStr4) {
+                OfflineLogger.sync(`ActionQueue: TASK_RETURN_TO_PROGRESS missing taskId, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await tasksApi.returnToProgress(taskIdStr4 as string);
+              break;
+            }
+            case 'TASK_UPDATE_ASSIGNMENT_STATUS': {
+              const taskIdStr5 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              const status = (payload as any).status;
+              if (!taskIdStr5 || !status) {
+                OfflineLogger.sync(`ActionQueue: TASK_UPDATE_ASSIGNMENT_STATUS missing taskId/status, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await tasksApi.updateAssignmentStatus(taskIdStr5 as string, status as string);
+              break;
+            }
+            case 'REQUEST_ADD_INFO': {
+              const requestId = (payload as any).requestId || (payload as any).request_id || (payload as any).id;
+              const text = (payload as any).text;
+              const attachments = (payload as any).attachments || [];
+              if (!requestId || !text) {
+                OfflineLogger.sync(`ActionQueue: REQUEST_ADD_INFO missing requestId/text, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await requestsApi.addInfo(requestId as string, text as string, attachments as any[]);
+              break;
+            }
+            case 'TASK_REPORT_CREATE': {
+              const taskId = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              const comment = (payload as any).comment;
+              const attachments = (payload as any).attachments || [];
+              if (!taskId || !comment) {
+                OfflineLogger.sync(`ActionQueue: TASK_REPORT_CREATE missing taskId/comment, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await taskReportsApi.create(taskId as string, comment as string, attachments as any[]);
+              break;
+            }
             default:
               OfflineLogger.sync(`ActionQueue: unknown action type ${item.actionType}`);
           }
@@ -263,6 +330,7 @@ export class SyncService {
 
     if (preparedOps.length > 0) {
       await this.executeBatch(preparedOps);
+      refreshAllPendingActions();
     }
     return count;
   }
@@ -500,10 +568,18 @@ export class SyncService {
         m.serverId = null;
         m.chatId = data.chatId;
         m.senderId = data.senderId;
+        m.senderName = data.senderName ?? null;
         m.content = data.content;
         m.sentAt = Date.now();
         m.isSynced = false;
         m.pendingAction = 'send';
+        m.messageType = data.messageType ?? 'text';
+        m.attachmentUrl = data.attachmentUrl ?? null;
+        m.messageStatus = 'pending';
+        m.replyToId = data.replyToId ?? null;
+        m.readByRaw = JSON.stringify([]);
+        m.deliveredToRaw = JSON.stringify([]);
+        m.lastSyncedAt = null;
       });
       await database.batch(msg);
       return msg as unknown as ChatMessageModel;

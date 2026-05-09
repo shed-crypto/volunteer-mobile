@@ -52,10 +52,15 @@ export default function ChatsListScreen() {
   const [allUsers, setAllUsers]         = useState<UserItem[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [creatingChat, setCreatingChat] = useState<string | null>(null);
+  const { isOffline } = useNetwork();
 
   useEffect(() => {
     const fetchSearchResults = async () => {
       if (userSearch.length < 2) {
+        setAllUsers([]);
+        return;
+      }
+      if (isOffline) {
         setAllUsers([]);
         return;
       }
@@ -68,8 +73,12 @@ export default function ChatsListScreen() {
           email: '',
           systemRole: ''
         })).filter((u: UserItem) => u.id !== user?.id));
-      } catch (error) {
-        console.error('Failed to search users:', error);
+      } catch (error: any) {
+        if (error?.response) {
+          console.error('Failed to search users:', error);
+        } else {
+          OfflineLogger.network('User search skipped: server unavailable');
+        }
         setAllUsers([]);
       } finally {
         setUsersLoading(false);
@@ -81,9 +90,7 @@ export default function ChatsListScreen() {
     }, 300);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [userSearch, user?.id]);
-
-  const { isOffline } = useNetwork();
+  }, [userSearch, user?.id, isOffline]);
 
   // ─── Load chats from local DB ────────────────────────────────────────────
   const loadChatsLocal = useCallback(async (): Promise<Chat[]> => {
@@ -122,7 +129,7 @@ export default function ChatsListScreen() {
   // ─── Save chats to local DB ──────────────────────────────────────────────
   const saveChatsToDB = useCallback(async (chatsData: Chat[]) => {
     try {
-      const existing = await collections.chats.query().fetch();
+      const existing = (await collections.chats.query().fetch()) as any[];
       const serverIds = new Set(chatsData.map(c => c.id));
       const existingMap = new Map(existing.map((c: any) => [c.serverId, c]));
       const operations: any[] = [];
@@ -178,6 +185,57 @@ export default function ChatsListScreen() {
     }
   }, []);
 
+  const saveChatMessagesToDB = useCallback(async (chatId: string, messages: Message[]) => {
+    if (!messages.length) return;
+    try {
+      const existing = await collections.chatMessages.query().fetch();
+      const existingForChat = existing.filter((m: any) => m.chatId === chatId);
+      const operations: any[] = [];
+
+      for (const msg of messages) {
+        if (existingForChat.some((m: any) => m.serverId === msg.id)) continue;
+        operations.push(
+          collections.chatMessages.prepareCreate((m: any) => {
+            m.serverId = msg.id;
+            m.chatId = msg.chatId;
+            m.senderId = msg.senderId || '';
+            m.senderName = msg.sender?.fullName || null;
+            m.content = msg.content || '';
+            m.sentAt = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
+            m.isSynced = true;
+            m.pendingAction = null;
+            m.messageType = (msg as any).messageType || 'text';
+            m.attachmentUrl = (msg as any).attachmentUrl || null;
+            m.messageStatus = (msg as any).messageStatus || 'sent';
+            m.readByRaw = JSON.stringify((msg as any).readBy || []);
+            m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
+            m.replyToId = msg.replyToId || null;
+            m.lastSyncedAt = Date.now();
+          })
+        );
+      }
+
+      if (operations.length > 0) {
+        await database.write(async () => {
+          await database.batch(...operations);
+        });
+      }
+    } catch (e) {
+      OfflineLogger.cache('ChatsList: message prefetch save failed', e);
+    }
+  }, []);
+
+  const prefetchRecentChatMessages = useCallback(async (chatsData: Chat[]) => {
+    for (const chat of chatsData.slice(0, 10)) {
+      try {
+        const latest = await chatApi.getLatestMessages(chat.id, 25);
+        await saveChatMessagesToDB(chat.id, latest);
+      } catch {
+        // Best-effort cache warmup only.
+      }
+    }
+  }, [saveChatMessagesToDB]);
+
   const load = useCallback(async () => {
     setHasError(false);
     OfflineLogger.nav('ChatsListScreen.load() called');
@@ -213,6 +271,7 @@ export default function ChatsListScreen() {
           
           // ЗБЕРЕГТИ в БД для офлайн-роботи
           await saveChatsToDB(data);
+          await prefetchRecentChatMessages(data);
         } catch (error) {
           OfflineLogger.network('ChatsList: server load failed, keeping local data');
           // Не скидаємо стан, залишаємо локальні дані
@@ -229,7 +288,7 @@ export default function ChatsListScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isOffline, loadChatsLocal, saveChatsToDB]);
+  }, [isOffline, loadChatsLocal, saveChatsToDB, prefetchRecentChatMessages]);
 
   useEffect(() => { load(); }, [load]);
 

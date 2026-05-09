@@ -25,6 +25,13 @@ import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections } from '../../db/index';
 import { database } from '../../db/index';
+import { usePendingActions } from '../../hooks/usePendingActions';
+import {
+  applyOfflineTaskActionLocally,
+  cancelOfflineTaskAction,
+  enqueueOfflineTaskAction,
+  OfflineTaskActionType,
+} from '../../services/offlineTaskActions';
 
 type RouteParams = { RequestDetail: { requestId: string } };
 
@@ -892,7 +899,9 @@ export default function RequestDetailScreen() {
                     requestTitle={request.title}
                     onPress={() => navigation.navigate('TaskDetail', { taskId: task.id, requestTitle: request.title })}
                     onRefresh={load}
+                    isOffline={isOffline}
                     currentUserId={user?.id ?? ''}
+                    currentUserName={user?.fullName ?? ''}
                     userRole={user?.systemRole ?? SystemRole.VOLUNTEER}
                   />
                 ))}
@@ -1026,20 +1035,48 @@ function MetaRow({ icon, label, value, highlight }: { icon: string; label: strin
   );
 }
 
-function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTitle }: {
+function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, userRole, isOffline, requestTitle }: {
   task: Task;
   requestTitle: string;
   onPress: () => void;
   onRefresh: () => void;
+  isOffline: boolean;
   currentUserId: string;
+  currentUserName: string;
   userRole: SystemRole;
 }) {
   const [actioning, setActioning] = useState(false);
+  const { pendingActions, refresh: refreshPendingActions } = usePendingActions(task.id);
   const isAssigned = task.assignments?.some((a) => a.userId === currentUserId && a.status !== 'withdrawn');
+  const pendingAssignAction = pendingActions.find((a) => a.actionType === 'TASK_ASSIGN' || a.actionType === 'TASK_WITHDRAW');
+  const isPendingAssign = pendingAssignAction?.actionType === 'TASK_ASSIGN';
+  const isPendingWithdraw = pendingAssignAction?.actionType === 'TASK_WITHDRAW';
   const isFull = (task.assignments?.filter((a) => a.status !== 'withdrawn').length ?? 0) >= task.neededPeopleCount;
   const st = statusColors[task.status];
 
+  const applyQueuedAction = async (actionType: OfflineTaskActionType) => {
+    const payload = { taskId: task.id, fulfilledRole: null };
+    await enqueueOfflineTaskAction(actionType, payload);
+    await applyOfflineTaskActionLocally(actionType, task.id, { id: currentUserId, fullName: currentUserName }, payload);
+    await refreshPendingActions();
+    onRefresh();
+  };
+
   const handleAssign = async () => {
+    const actionType: OfflineTaskActionType = isAssigned ? 'TASK_WITHDRAW' : 'TASK_ASSIGN';
+
+    if (isOffline) {
+      setActioning(true);
+      try {
+        await applyQueuedAction(actionType);
+      } catch (e: any) {
+        Alert.alert('Помилка', e?.message ?? 'Не вдалося поставити дію в чергу');
+      } finally {
+        setActioning(false);
+      }
+      return;
+    }
+
     setActioning(true);
     try {
       if (isAssigned) {
@@ -1049,7 +1086,35 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
       }
       onRefresh();
     } catch (e: any) {
+      if (!e?.response) {
+        try {
+          await applyQueuedAction(actionType);
+          Alert.alert('Офлайн режим', 'Сервер недоступний. Дію поставлено в чергу синхронізації.');
+        } catch (queueError: any) {
+          Alert.alert('Помилка', queueError?.message ?? 'Не вдалося поставити дію в чергу');
+        }
+        return;
+      }
       Alert.alert('Помилка', e?.response?.data?.message ?? 'Спробуйте ще раз');
+    } finally {
+      setActioning(false);
+    }
+  };
+
+  const handleCancelPending = async () => {
+    if (!pendingAssignAction) return;
+    setActioning(true);
+    try {
+      await cancelOfflineTaskAction(
+        pendingAssignAction.id,
+        pendingAssignAction.actionType as OfflineTaskActionType,
+        task.id,
+        { id: currentUserId, fullName: currentUserName },
+      );
+      await refreshPendingActions();
+      onRefresh();
+    } catch (e: any) {
+      Alert.alert('Помилка', e?.message ?? 'Не вдалося скасувати дію');
     } finally {
       setActioning(false);
     }
@@ -1079,7 +1144,21 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
 
         {/* Only volunteers can take tasks */}
         {(userRole === SystemRole.VOLUNTEER || userRole === SystemRole.COORDINATOR) &&
-          task.status === TaskStatus.TODO && (
+          (task.status === TaskStatus.TODO || task.status === TaskStatus.IN_PROGRESS) && (
+          pendingAssignAction ? (
+            <View style={[styles.pendingActionBox, isPendingWithdraw && styles.pendingActionBoxDanger]}>
+              <Text style={[styles.pendingActionText, isPendingWithdraw && styles.pendingActionTextDanger]}>
+                {isPendingAssign ? 'Очікує синхронізації: взяття в роботу' : 'Очікує синхронізації: відмова від задачі'}
+              </Text>
+              <TouchableOpacity
+                style={styles.pendingCancelBtn}
+                onPress={handleCancelPending}
+                disabled={actioning}
+              >
+                <Text style={styles.pendingCancelText}>{actioning ? '...' : 'Скасувати'}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
           <TouchableOpacity
             style={[styles.assignBtn, isAssigned && styles.assignBtnActive, (isFull && !isAssigned) && styles.assignBtnDisabled]}
             onPress={handleAssign}
@@ -1089,6 +1168,7 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
               {actioning ? '...' : isAssigned ? 'Відмовитися' : isFull ? 'Слоти заповнені' : '✋ Взяти в роботу'}
             </Text>
           </TouchableOpacity>
+          )
         )}
       </View>
     </TouchableOpacity>
@@ -1154,4 +1234,27 @@ const styles = StyleSheet.create({
   assignBtnActive: { backgroundColor: Colors.dangerLight, borderColor: Colors.danger },
   assignBtnDisabled: { backgroundColor: Colors.borderLight, borderColor: Colors.border },
   assignBtnText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
+  pendingActionBox: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+    gap: 8,
+  },
+  pendingActionBoxDanger: {
+    borderColor: Colors.danger,
+    backgroundColor: Colors.dangerLight,
+  },
+  pendingActionText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
+  pendingActionTextDanger: { color: Colors.danger },
+  pendingCancelBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: Colors.surface,
+  },
+  pendingCancelText: { fontSize: 12, fontWeight: '700', color: Colors.text },
 });

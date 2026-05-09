@@ -44,7 +44,8 @@ export class ActionQueueItem extends Model {
   /** Зручний геттер — повертає десеріалізований payload */
   get payloadData(): Record<string, unknown> {
     try {
-      return JSON.parse(this.payloadRaw || '{}');
+      const rawPayload = this.payloadRaw || (this as any)._raw?.payload || '{}';
+      return JSON.parse(rawPayload);
     } catch {
       return {};
     }
