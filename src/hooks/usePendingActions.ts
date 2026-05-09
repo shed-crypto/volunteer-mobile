@@ -60,7 +60,10 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
       const actions: PendingAction[] = queueItems
         .map((item) => {
           const payload = parsePayload(item.payloadRaw);
-        return payload && (payload as any).taskId === taskId
+          // Support both taskId (camelCase) and task_id (snake_case)
+          const p: any = payload || {};
+          const id = p.taskId || p.task_id || p.id;
+          return id === taskId
             ? {
                 id: item.id,
                 actionType: item.actionType,
@@ -96,9 +99,15 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     [loadPendingActions]
   );
 
+  // EAGER: update immediately after local mutations
   useEffect(() => {
-    loadPendingActions();
-    const interval = setInterval(() => loadPendingActions(), 1000);
+    const handler = async () => {
+      // Debounce: wait for DB write to complete
+      setTimeout(() => loadPendingActions(), 50);
+    };
+    // Hook into database changes
+    const interval = setInterval(() => loadPendingActions(), 500);
+    loadPendingActions(); // initial
     return () => clearInterval(interval);
   }, [loadPendingActions]);
 

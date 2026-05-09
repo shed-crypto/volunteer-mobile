@@ -1,4 +1,4 @@
-файлів планів  /**
+/**
  * TaskDetailScreen.tsx
  *
  * Основні зміни (offline-first):
