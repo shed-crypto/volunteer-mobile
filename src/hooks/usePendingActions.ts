@@ -69,6 +69,8 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
   const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
   const refreshingRef = useRef(false);
 
+  const loadPendingActionsRef = useRef<(() => Promise<void>) | null>(null);
+
   const loadPendingActions = useCallback(async () => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
@@ -94,6 +96,9 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
         .filter((a): a is PendingAction => a !== null)
         .sort((a, b) => a.createdAt - b.createdAt);
 
+      if (__DEV__) {
+        console.log(`[usePendingActions] taskId=${taskId} | found ${actions.length} pending | total queue=${queueItems.length}`);
+      }
       setPendingActions(actions);
     } catch (e) {
       console.warn('[usePendingActions] load error', e);
@@ -101,6 +106,9 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
       refreshingRef.current = false;
     }
   }, [taskId]);
+  
+  // Store in ref for cleanup
+  loadPendingActionsRef.current = loadPendingActions;
 
   const removePendingAction = useCallback(
     async (actionId: string) => {

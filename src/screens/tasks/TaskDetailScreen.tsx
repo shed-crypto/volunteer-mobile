@@ -241,8 +241,12 @@ export default function TaskDetailScreen() {
     // Notify ALL usePendingActions hooks across the app to refresh
     const { refreshAllPendingActions } = await import('../../hooks/usePendingActions');
     refreshAllPendingActions();
-    OfflineLogger.cache(`TaskDetail: ${actionType} enqueued for offline`);
-  }, []);
+    OfflineLogger.cache(`TaskDetail: ${actionType} enqueued for offline | taskId from payload: ${payload.taskId} | route taskId: ${taskId}`);
+
+    if (__DEV__) {
+      console.log(`[TaskDetail] ENQUEUED: taskId=${taskId} action=${actionType} payload=`, payload);
+    }
+  }, [taskId]);
 
   const getActionTypeForAssign = (isMe: boolean) => isMe ? 'TASK_WITHDRAW' : 'TASK_ASSIGN';
 
