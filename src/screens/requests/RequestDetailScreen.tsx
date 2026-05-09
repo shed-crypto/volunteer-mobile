@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Alert, Platform,
   RefreshControl, StyleSheet, Linking, Modal, FlatList, Image,
@@ -313,8 +313,15 @@ export default function RequestDetailScreen() {
     }
   }, [requestId]);
 
+  const isLoadingRef = useRef(false);
+
   // ─── Main load: OFFLINE-FIRST ────────────────────────────────────────────
   const load = useCallback(async () => {
+    if (isLoadingRef.current) {
+      OfflineLogger.nav('RequestDetailScreen.load() skipped — already loading');
+      return;
+    }
+    isLoadingRef.current = true;
     OfflineLogger.nav(`RequestDetailScreen.load() called, requestId=${requestId}`);
     
     try {
@@ -415,6 +422,7 @@ export default function RequestDetailScreen() {
       OfflineLogger.nav('RequestDetail: unexpected error', e);
     } finally {
       // КРИТИЧНО: завжди знімати loading
+      isLoadingRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }

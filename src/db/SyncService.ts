@@ -15,10 +15,17 @@ import { Q } from '@nozbe/watermelondb';
 
 export class SyncService {
   private static isSyncing = false;
+  private static _lastFailedAt: number | null = null;
 
   static async sync(userId?: string): Promise<{ pushed: number; pulled: number }> {
     if (this.isSyncing) {
       OfflineLogger.sync('Sync already in progress, skipping');
+      return { pushed: 0, pulled: 0 };
+    }
+
+    // RATE LIMIT: don't sync if we failed recently (30s cooldown)
+    if (this._lastFailedAt && Date.now() - this._lastFailedAt < 30000) {
+      OfflineLogger.sync('Sync rate-limited after recent failure');
       return { pushed: 0, pulled: 0 };
     }
 
@@ -32,13 +39,17 @@ export class SyncService {
 
     let pushed = 0;
     let pulled = 0;
+    let syncFailed = false;
 
     try {
       pushed = await this.push();
       pulled = await this.pull(userId);
+      this._lastFailedAt = null; // Reset on success
       OfflineLogger.sync(`Sync completed: pushed=${pushed}, pulled=${pulled}`);
     } catch (err) {
       OfflineLogger.sync('Sync error:', err);
+      syncFailed = true;
+      this._lastFailedAt = Date.now();
     } finally {
       this.isSyncing = false;
     }
