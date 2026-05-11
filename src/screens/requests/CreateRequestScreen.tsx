@@ -17,12 +17,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import { requestsApi } from '../../api/requests.api';
-import { API_BASE_URL, getServerReachable } from '../../api/axios';
+import { API_BASE_URL } from '../../api/axios';
 import { RequestCategory, RequestUrgency, ClearanceLevel } from '../../types';
 import { Colors, categoryLabels, urgencyColors, clearanceLabels } from '../../utils/theme';
 import { Button, Input, ScreenHeader } from '../../components/ui';
-import { collections, database } from '../../db/index';
-import { refreshAllPendingActions } from '../../hooks/usePendingActions';
 
 type LocationMode = 'none' | 'gps' | 'manual';
 
@@ -156,14 +154,7 @@ export default function CreateRequestScreen() {
     setLoading(true);
     try {
         if (isEditMode) {
-        if (!getServerReachable()) {
-          Alert.alert(
-            'Офлайн режим',
-            'Редагування заявки не ставиться в довгу чергу, бо стан заявки міг змінитися. Зміни залишаються у формі, спробуйте ще раз після відновлення звʼязку.'
-          );
-          return;
-        }
-        const updatePromise = requestsApi.update(route.params.requestId, {
+        await requestsApi.update(route.params.requestId, {
           title: title.trim(),
           description: description.trim() || undefined,
           category,
@@ -175,10 +166,6 @@ export default function CreateRequestScreen() {
           longitude,
           attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
         });
-        await Promise.race([
-          updatePromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60000)),
-        ]);
         navigation.goBack();
       } else {
         const req = await requestsApi.create({
@@ -207,45 +194,7 @@ export default function CreateRequestScreen() {
     if (!additionalInfo.trim()) return;
     setLoading(true);
     try {
-      const requestId = route.params?.requestId;
-      if (!getServerReachable()) {
-        const localId = `local-info-${Date.now()}`;
-        await database.write(async () => {
-          await collections.actionQueue.create((item: any) => {
-            item.actionType = 'REQUEST_ADD_INFO';
-            item.payloadRaw = JSON.stringify({ requestId, text: additionalInfo.trim(), attachments: selectedFiles });
-            item.createdAt = Date.now();
-            item.retryCount = 0;
-            item.error = null;
-          });
-
-          const requests = await collections.requests.query().fetch();
-          const local = requests.find((r: any) => r.serverId === requestId || r.id === requestId);
-          if (local) {
-            const current = (() => {
-              try { return JSON.parse((local as any).additionalInfoRaw || '[]'); } catch { return []; }
-            })();
-            await local.update((r: any) => {
-              r.additionalInfoRaw = JSON.stringify([
-                ...current,
-                {
-                  id: localId,
-                  text: additionalInfo.trim(),
-                  attachments: selectedFiles,
-                  createdAt: new Date().toISOString(),
-                  pending: true,
-                },
-              ]);
-              r.isSynced = false;
-              r.pendingAction = 'add_info';
-            });
-          }
-        });
-        refreshAllPendingActions();
-        navigation.goBack();
-        return;
-      }
-      await requestsApi.addInfo(requestId, additionalInfo.trim(), selectedFiles);
+      await requestsApi.addInfo(route.params?.requestId, additionalInfo.trim(), selectedFiles);
       navigation.goBack();
     } catch (e: any) {
       const msg = e?.response?.data?.message;

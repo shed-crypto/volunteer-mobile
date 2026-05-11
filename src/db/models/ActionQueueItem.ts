@@ -39,13 +39,18 @@ export class ActionQueueItem extends Model {
   @field('retry_count')  retryCount!: number;
 
   /** Текст останньої помилки (null, якщо помилок не було) */
-  @field('error')        error!: string | null;
+  @field('error') error!: string | null;
+
+  /** Код останньої помилки для класифікації retryable/non-retryable */
+  @field('last_error_code') lastErrorCode!: string | null;
+
+  /** Наступний час retry (Unix timestamp, мс) для exponential backoff */
+  @field('next_retry_at') nextRetryAt!: number | null;
 
   /** Зручний геттер — повертає десеріалізований payload */
   get payloadData(): Record<string, unknown> {
     try {
-      const rawPayload = this.payloadRaw || (this as any)._raw?.payload || '{}';
-      return JSON.parse(rawPayload);
+      return JSON.parse(this.payloadRaw || '{}');
     } catch {
       return {};
     }

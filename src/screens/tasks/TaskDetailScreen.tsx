@@ -33,22 +33,13 @@ import { collections, database } from '../../db/index';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
 import { MediaViewer } from '../../components/MediaViewer';
-import { usePendingActions } from '../../hooks/usePendingActions';
-import {
-  applyOfflineTaskActionLocally,
-  cancelOfflineTaskAction,
-  enqueueOfflineTaskAction,
-  OfflineTaskActionType,
-} from '../../services/offlineTaskActions';
+import { usePendingActions, refreshAllPendingActions, setPendingActionImmediate, removePendingActionImmediate, hasPendingActionImmediate } from '../../hooks/usePendingActions';
 
 /* ─────────────── Types ─────────────── */
 
 type RouteParams = { TaskDetail: { taskId: string; requestId?: string; requestTitle?: string; editMode?: boolean } };
 
 function buildFileUrl(relativePath: string): string {
-  if (relativePath.startsWith('http') || relativePath.startsWith('file:') || relativePath.startsWith('content:')) {
-    return relativePath;
-  }
   const base = API_BASE_URL.replace(/\/api\/?$/, '');
   return `${base}${relativePath}`;
 }
@@ -84,7 +75,7 @@ export default function TaskDetailScreen() {
   const { isOffline } = useNetwork();
 
   /* --- pending actions hook --- */
-  const { pendingActions, hasAction: hasPendingAction, refresh: refreshPendingActions } = usePendingActions(taskId);
+  const { pendingActions, hasAction: hasPendingAction, removePendingAction, refresh: refreshPendingActions } = usePendingActions(taskId);
 
   /* ─── Load task from local DB ───────────────────────────────────────────── */
   const loadTaskLocal = useCallback(async (): Promise<Task | null> => {
@@ -240,18 +231,32 @@ export default function TaskDetailScreen() {
   useEffect(() => { load(); }, [load]);
 
   /* ─── Helper: enqueue offline action ────────────────────────────────────── */
-  const enqueueOfflineAction = useCallback(async (actionType: OfflineTaskActionType, payload: any) => {
-    await enqueueOfflineTaskAction(actionType, payload);
-    await applyOfflineTaskActionLocally(actionType, payload.taskId, user, payload);
-    await refreshPendingActions();
+  const enqueueOfflineAction = useCallback(async (actionType: string, payload: any) => {
+    // 0. Dedup: if immediate cache already has this actionType, skip duplicate DB write
+    if (hasPendingActionImmediate(taskId, actionType)) {
+      OfflineLogger.cache(`TaskDetail: dedup — ${actionType} already queued for task ${taskId}`);
+      return;
+    }
+    // 1. INSTANT UI update — set to global immediate cache (NO DB wait)
+    setPendingActionImmediate(taskId, actionType, payload);
+    
+    // 2. Async DB write (only happens once due to dedup guard above)
+    await database.write(async () => {
+      await collections.actionQueue.create((aq: any) => {
+        aq.actionType = actionType; aq.payload = JSON.stringify(payload);
+        aq.createdAt = Date.now(); aq.retryCount = 0;
+      });
+    });
+    // 3. Notify ALL usePendingActions hooks across the app to refresh
+    refreshAllPendingActions();
     OfflineLogger.cache(`TaskDetail: ${actionType} enqueued for offline | taskId from payload: ${payload.taskId} | route taskId: ${taskId}`);
 
     if (__DEV__) {
       console.log(`[TaskDetail] ENQUEUED: taskId=${taskId} action=${actionType} payload=`, payload);
     }
-  }, [taskId, user, refreshPendingActions]);
+  }, [taskId]);
 
-  const getActionTypeForAssign = (isMe: boolean): OfflineTaskActionType => isMe ? 'TASK_WITHDRAW' : 'TASK_ASSIGN';
+  const getActionTypeForAssign = (isMe: boolean) => isMe ? 'TASK_WITHDRAW' : 'TASK_ASSIGN';
 
   /* ─── handleAssign ─────────────────────────────────────────────────────── */
   const handleAssign = async () => {
@@ -277,10 +282,78 @@ export default function TaskDetailScreen() {
       return;
     }
 
-    setActioning(true);
-    try { if (isMe) await tasksApi.withdraw(task.id); else await tasksApi.assign(task.id); await load(); }
-    catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Спробуйте ще раз'); }
-    finally { setActioning(false); }
+    if (isMe) {
+      // Withdraw — ask confirmation first
+      Alert.alert('Відмовитися від задачі?', 'Ви впевнені, що хочете відмовитися?', [
+        { text: 'Ні', style: 'cancel' },
+        { text: 'Так, відмовитися', style: 'destructive', onPress: async () => {
+          setActioning(true);
+          try {
+            await tasksApi.withdraw(task.id);
+            await database.write(async () => {
+              const allTasks = await collections.tasks.query().fetch();
+              const localTask = allTasks.find((t: any) => t.serverId === task.id || t.id === task.id);
+              if (localTask) {
+                await localTask.update((t: any) => {
+                  t.status = TaskStatus.TODO;
+                  t.assignedCount = Math.max(Number((t as any).assignedCount || 0) - 1, 0);
+                  t.isSynced = true; t.pendingAction = null; t.lastSyncedAt = Date.now();
+                });
+              }
+              const localAssignments = (await collections.taskAssignments.query().fetch()) as any[];
+              const myAssignment = localAssignments.find((a: any) => a.taskId === task.id && a.userId === user?.id);
+              if (myAssignment && myAssignment.status !== 'withdrawn') {
+                await myAssignment.update((a: any) => { a.status = AssignmentStatus.WITHDRAWN; a.isSynced = true; a.pendingAction = null; a.lastSyncedAt = Date.now(); });
+              }
+            });
+            await load();
+          } catch (e: any) {
+            const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
+            if (isNetworkError) {
+              await enqueueOfflineAction('TASK_WITHDRAW', { taskId: task.id });
+              await load();
+              Alert.alert('📴 Офлайн', 'Мережа зникла. Відмову поставлено в чергу синхронізації');
+            } else {
+              Alert.alert('Помилка', e?.response?.data?.message ?? 'Спробуйте ще раз');
+            }
+          } finally { setActioning(false); }
+        }},
+      ]);
+    } else {
+      // Assign
+      setActioning(true);
+      try {
+        await tasksApi.assign(task.id);
+        await database.write(async () => {
+          const allTasks = await collections.tasks.query().fetch();
+          const localTask = allTasks.find((t: any) => t.serverId === task.id || t.id === task.id);
+          if (localTask) {
+            await localTask.update((t: any) => {
+              t.status = TaskStatus.IN_PROGRESS;
+              t.assignedCount = Number((t as any).assignedCount || 0) + 1;
+              t.isSynced = true; t.pendingAction = null; t.lastSyncedAt = Date.now();
+            });
+          }
+          const localAssignments = (await collections.taskAssignments.query().fetch()) as any[];
+          const existing = localAssignments.find((a: any) => a.taskId === task.id && a.userId === user?.id);
+          if (existing) {
+            await existing.update((a: any) => { a.status = AssignmentStatus.ASSIGNED; a.isSynced = true; a.pendingAction = null; a.lastSyncedAt = Date.now(); });
+          } else {
+            await collections.taskAssignments.create((a: any) => { a.taskId = task.id; a.userId = user?.id || ''; a.status = AssignmentStatus.ASSIGNED; a.isSynced = true; a.pendingAction = null; a.lastSyncedAt = Date.now(); });
+          }
+        });
+        await load();
+          } catch (e: any) {
+            const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
+            if (isNetworkError) {
+              await enqueueOfflineAction('TASK_ASSIGN', { taskId: task.id, fulfilledRole: null });
+              await load();
+              Alert.alert('📴 Офлайн', 'Мережа зникла. Призначення поставлено в чергу синхронізації');
+            } else {
+              Alert.alert('Помилка', e?.response?.data?.message ?? 'Спробуйте ще раз');
+            }
+          } finally { setActioning(false); }
+    }
   };
 
   /* ─── handleComplete ──────────────────────────────────────────────────── */
@@ -323,14 +396,14 @@ export default function TaskDetailScreen() {
   };
 
   /* ─── Generic pending action UI ─────────────────────────────────────────── */
-  const renderPendingAction = (actionType: OfflineTaskActionType, label: string, variant: 'primary' | 'danger' | 'outline' = 'primary') => {
+  const renderPendingAction = (actionType: string, label: string, variant: 'primary' | 'danger' | 'outline' = 'primary') => {
     const pending = pendingActions.find(a => a.actionType === actionType);
     if (!pending) return null;
     return (
       <View key={actionType} style={[styles.pendingContainer, { borderColor: variant === 'danger' ? Colors.danger : Colors.primary }]}>
         <View style={styles.pendingRow}>
           <Text style={styles.pendingText}>🕒 {label}</Text>
-          <TouchableOpacity onPress={async () => { await cancelOfflineTaskAction(pending.id, actionType, taskId, user); await refreshPendingActions(); await load(); Alert.alert('Скасовано', 'Дію видалено з черги'); }} style={styles.cancelBtn}>
+          <TouchableOpacity onPress={async () => { await removePendingAction(pending.id); Alert.alert('Скасовано', 'Дію видалено з черги'); }} style={styles.cancelBtn}>
             <Text style={styles.cancelText}>Скасувати</Text>
           </TouchableOpacity>
         </View>
@@ -362,45 +435,7 @@ export default function TaskDetailScreen() {
   const handleReportSubmit = async (comment: string, attachments: { uri: string; name: string; type: string }[]) => {
     if (!task) return;
     setUploading(true);
-    try {
-      if (isOffline) {
-        const localReport = {
-          id: `local-report-${Date.now()}`,
-          taskId: task.id,
-          userId: user?.id || '',
-          user: { fullName: user?.fullName || 'Користувач' },
-          comment,
-          attachments: attachments.map((a) => ({ url: a.uri, name: a.name, type: a.type, localUri: a.uri })),
-          createdAt: new Date().toISOString(),
-          isSynced: false,
-        };
-        await database.write(async () => {
-          await collections.taskReports.create((r: any) => {
-            r.serverId = null;
-            r.taskId = task.id;
-            r.userId = user?.id || '';
-            r.userName = user?.fullName || null;
-            r.comment = comment;
-            r.attachmentsRaw = JSON.stringify(localReport.attachments);
-            r.createdAt = Date.now();
-            r.isSynced = false;
-            r.lastSyncedAt = null;
-          });
-          await collections.actionQueue.create((item: any) => {
-            item.actionType = 'TASK_REPORT_CREATE';
-            item.payloadRaw = JSON.stringify({ taskId: task.id, comment, attachments });
-            item.createdAt = Date.now();
-            item.retryCount = 0;
-            item.error = null;
-          });
-        });
-        setReports(prev => [localReport, ...prev]);
-        setShowReportModal(false);
-        Alert.alert('Збережено', 'Звіт поставлено в чергу синхронізації');
-        return;
-      }
-      const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.create(task.id, comment, attachments); setShowReportModal(false); const updated = await taskReportsApi.getAll(task.id); setReports(updated);
-    }
+    try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.create(task.id, comment, attachments); setShowReportModal(false); const updated = await taskReportsApi.getAll(task.id); setReports(updated); }
     catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося надіслати звіт'); } finally { setUploading(false); }
   };
 
@@ -431,12 +466,6 @@ export default function TaskDetailScreen() {
 
   const handleUpdateStatus = (newStatus: AssignmentStatus) => {
     if (!task) return;
-    if (isOffline) {
-      enqueueOfflineAction('TASK_UPDATE_ASSIGNMENT_STATUS', { taskId: task.id, status: newStatus })
-        .then(() => Alert.alert('Збережено', 'Оновлення статусу поставлено в чергу синхронізації'))
-        .catch((e: any) => Alert.alert('Помилка', e?.message ?? 'Не вдалося поставити дію в чергу'));
-      return;
-    }
     const labels: Record<string, string> = { assigned: 'Призначено', applied: 'Подано заявку', accepted: 'Прийнято', rejected: 'Відхилено', withdrawn: 'Відкликав', completed: 'Виконав', en_route: 'В дорозі', on_site: 'На місці' };
     Alert.alert('Оновити статус?', labels[newStatus] ?? newStatus, [
       { text: 'Ні' },
@@ -475,7 +504,7 @@ export default function TaskDetailScreen() {
   const myAssignment = task.assignments?.find(a => a.userId === user?.id && a.status !== 'withdrawn');
   const isAdmin = user?.systemRole === SystemRole.ADMIN;
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;
-  const isVolunteer = user?.systemRole === SystemRole.VOLUNTEER;
+  const isVolunteerOrCoord = user?.systemRole === SystemRole.VOLUNTEER || user?.systemRole === SystemRole.COORDINATOR;
   const isOwner = user?.id === (task as any).request?.creatorId;
   const isCoordOrAdmin = isCoord || isAdmin || isOwner;
   const isParticipant = activeAssignments.some(a => a.userId === user?.id);
@@ -535,7 +564,7 @@ export default function TaskDetailScreen() {
         {/* Action buttons */}
         <Card style={{ padding: 16 }}>
           {/* Volunteer: take/withdraw — показуємо pending state якщо є */}
-          {isVolunteer && (task.status === TaskStatus.TODO || task.status === TaskStatus.IN_PROGRESS) && (
+          {isVolunteerOrCoord && (task.status === TaskStatus.TODO || task.status === TaskStatus.IN_PROGRESS) && (
             pendingAssign
               ? renderPendingAction(isMe ? 'TASK_WITHDRAW' : 'TASK_ASSIGN', isMe ? 'Відміна призначення в черзі' : 'Призначення в черзі', isMe ? 'danger' : 'primary')
               : <Button title={isMe ? 'Відмовитися від задачі' : '✋ Взяти в роботу'} variant={isMe ? 'danger' : 'primary'} onPress={handleAssign} loading={actioning} style={{ marginBottom: 10 }} />

@@ -6,7 +6,7 @@ import { appSchema, tableSchema } from '@nozbe/watermelondb';
 export const dbSchema = appSchema({
   // NOTE: migrations were reset in development. Version was lowered to 1
   // so WatermelonDB recreates the database from the current schema.
-  version: 3,
+  version: 4,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -166,16 +166,18 @@ export const dbSchema = appSchema({
       ],
     }),
 
-    // ─── Черга офлайн-дій ────────────────────────────────────────────────────
-    tableSchema({
-      name: 'action_queue',
-      columns: [
-        { name: 'action_type', type: 'string' },
-        { name: 'payload', type: 'string' },
-        { name: 'created_at', type: 'number' },
-        { name: 'retry_count', type: 'number' },
-        { name: 'error', type: 'string', isOptional: true },
-      ],
-    }),
+// ─── Черга офлайн-дій ────────────────────────────────────────────────────
+  tableSchema({
+    name: 'action_queue',
+    columns: [
+      { name: 'action_type', type: 'string' },
+      { name: 'payload', type: 'string' },
+      { name: 'created_at', type: 'number' },
+      { name: 'retry_count', type: 'number' },
+      { name: 'last_error_code', type: 'string', isOptional: true },
+      { name: 'next_retry_at', type: 'number', isOptional: true },
+      { name: 'error', type: 'string', isOptional: true },
+    ],
+  }),
   ],
 });

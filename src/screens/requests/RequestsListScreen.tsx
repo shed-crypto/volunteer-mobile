@@ -23,8 +23,9 @@ import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
 import { SystemRole } from '../../types';
-  import { collections } from '../../db/index';
-  import { database } from '../../db/index';
+import { SyncService } from '../../db/SyncService';
+import { collections } from '../../db/index';
+import { database } from '../../db/index';
 
 const STATUS_FILTERS = [
   { value: 'all',                      label: 'Всі' },
@@ -342,7 +343,17 @@ export default function RequestsListScreen() {
     applyRegionFilter();
   }, [requests, regionSearch]);
 
-  const onRefresh = () => { setRefreshing(true); load(); };
+  const onRefresh = () => {
+    setRefreshing(true);
+    // Use try/catch in case SyncService module hasn't loaded (circular dependency guard)
+    try {
+      SyncService.forceSync(user?.id).catch(() => {});
+    } catch (e) {
+      OfflineLogger.network('SyncService.forceSync failed (module not ready)', e);
+      // Still do local load
+    }
+    load();
+  };
 
   const clearFilters = () => {
     setUrgencyFilter(undefined);

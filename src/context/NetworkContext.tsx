@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import NetInfo from '@react-native-community/netinfo';
 import { AppState, AppStateStatus } from 'react-native';
 import { checkServerReachable, setServerReachable } from '../api/axios';
+import { SyncService } from '../db/SyncService';
 import { OfflineLogger } from '../utils/offlineLogger';
 
 interface NetworkContextType {
@@ -29,13 +30,23 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
 
   const recheckServer = useCallback(async (): Promise<boolean> => {
     OfflineLogger.network('recheckServer called');
+    const wasPreviouslyReachable = isServerReachable;
     const result = await checkServerReachable();
     setIsServerReachableState(result);
     setServerReachable(result);
     setLastChecked(Date.now());
     OfflineLogger.network(`recheckServer result: ${result}`);
+    
+    // Якщо сервер став доступним (був недоступний) — запустити синхронізацію черги
+    if (result && !wasPreviouslyReachable) {
+      OfflineLogger.network('Server became reachable — triggering sync');
+      SyncService.sync(undefined, true).catch((err) => {
+        OfflineLogger.sync('Auto-sync after reconnect failed', err);
+      });
+    }
+    
     return result;
-  }, []);
+  }, [isServerReachable]);
 
   // Слухати зміни мережі
   useEffect(() => {

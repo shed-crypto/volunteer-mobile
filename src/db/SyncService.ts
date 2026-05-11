@@ -7,14 +7,12 @@ import { TaskReportModel } from './models/TaskReportModel';
 import { ActionQueueItem } from './models/ActionQueueItem';
 import { requestsApi } from '../api/requests.api';
 import { tasksApi } from '../api/tasks.api';
-import { taskReportsApi } from '../api/task-reports.api';
 import { chatApi } from '../api/chat.api';
 import api from '../api/axios';
 import { getServerReachable } from '../api/axios';
 import { OfflineLogger } from '../utils/offlineLogger';
 import NetInfo from '@react-native-community/netinfo';
 import { Q } from '@nozbe/watermelondb';
-import { refreshAllPendingActions } from '../hooks/usePendingActions';
 
 export class SyncService {
   private static isSyncing = false;
@@ -37,14 +35,14 @@ export class SyncService {
     this._listeners.set(event, (this._listeners.get(event) || []).filter((f) => f !== cb));
   }
 
-  static async sync(userId?: string): Promise<{ pushed: number; pulled: number }> {
+  static async sync(userId?: string, force = false): Promise<{ pushed: number; pulled: number }> {
     if (this.isSyncing) {
       OfflineLogger.sync('Sync already in progress, skipping');
       return { pushed: 0, pulled: 0 };
     }
 
-    // RATE LIMIT: don't sync if we failed recently (30s cooldown)
-    if (this._lastFailedAt && Date.now() - this._lastFailedAt < 30000) {
+    // RATE LIMIT: skip cooldown if force=true
+    if (!force && this._lastFailedAt && Date.now() - this._lastFailedAt < 30000) {
       OfflineLogger.sync('Sync rate-limited after recent failure');
       return { pushed: 0, pulled: 0 };
     }
@@ -75,6 +73,12 @@ export class SyncService {
     }
 
     return { pushed, pulled };
+  }
+
+  static async forceSync(userId?: string): Promise<{ pushed: number; pulled: number }> {
+    OfflineLogger.sync('Force sync requested - resetting cooldown');
+    this._lastFailedAt = null; // Reset cooldown
+    return this.sync(userId, true);
   }
 
   static startNetworkListener(userId?: string): () => void {
@@ -160,31 +164,11 @@ export class SyncService {
       const allMessages = (await collections.chatMessages.query().fetch()) as unknown as ChatMessageModel[];
       for (const msg of allMessages.filter((m) => !m.isSynced && m.pendingAction === 'send')) {
         try {
-          let attachmentUrl = msg.attachmentUrl || undefined;
-          if (msg.messageType === 'attachment' && attachmentUrl && !attachmentUrl.startsWith('/uploads') && !attachmentUrl.startsWith('http')) {
-            const uploaded = await chatApi.sendFile(msg.chatId, {
-              uri: attachmentUrl,
-              name: msg.content || `attachment-${msg.id}`,
-              type: 'application/octet-stream',
-            });
-            attachmentUrl = uploaded.url;
-          }
-
-          const created = await chatApi.sendMessage(
-            msg.chatId,
-            msg.content,
-            msg.replyToId || undefined,
-            attachmentUrl,
-            msg.messageType || undefined,
-          );
+          await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
           preparedOps.push(
             msg.prepareUpdate((m: any) => {
-              m.serverId = created.id;
               m.isSynced = true;
               m.pendingAction = null;
-              m.attachmentUrl = created.attachmentUrl ?? attachmentUrl ?? null;
-              m.messageStatus = 'sent';
-              m.lastSyncedAt = Date.now();
             })
           );
           count++;
@@ -202,16 +186,29 @@ export class SyncService {
 
     // 4. Process action_queue (offline task actions: assign, withdraw, complete)
     try {
+      const now = Date.now();
       const queueItems = (await collections.actionQueue.query().fetch()) as unknown as ActionQueueItem[];
-      // Sort by created_at to maintain order
-      queueItems.sort((a, b) => a.createdAt - b.createdAt);
       
+      // Sort by next_retry_at (ready items first, then oldest)
+      queueItems.sort((a, b) => {
+        const aReady = a.nextRetryAt ? Math.max(0, a.nextRetryAt - now) : 0;
+        const bReady = b.nextRetryAt ? Math.max(0, b.nextRetryAt - now) : 0;
+        return aReady - bReady;
+      });
+
       for (const item of queueItems) {
-        if (item.retryCount > 3) {
+        if (item.retryCount >= 5) { // max 5 retries (2s→5m backoff)
           OfflineLogger.sync(`ActionQueue: max retries exceeded for ${item.actionType}`);
+          preparedOps.push(item.prepareMarkAsDeleted());
           continue;
         }
-        
+
+        // Check if next_retry_at has passed or is not set
+        const readyToRetry = !item.nextRetryAt || now >= item.nextRetryAt;
+        if (!readyToRetry) {
+          continue;
+        }
+
         try {
           const payload = item.payloadData;
           switch (item.actionType) {
@@ -246,79 +243,40 @@ export class SyncService {
               await tasksApi.complete(taskIdStr3 as string);
               break;
             }
-            case 'TASK_RETURN_TO_PROGRESS': {
-              const taskIdStr4 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
-              if (!taskIdStr4) {
-                OfflineLogger.sync(`ActionQueue: TASK_RETURN_TO_PROGRESS missing taskId, payload:`, JSON.stringify(payload));
-                preparedOps.push(item.prepareMarkAsDeleted());
-                continue;
-              }
-              await tasksApi.returnToProgress(taskIdStr4 as string);
-              break;
-            }
-            case 'TASK_UPDATE_ASSIGNMENT_STATUS': {
-              const taskIdStr5 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
-              const status = (payload as any).status;
-              if (!taskIdStr5 || !status) {
-                OfflineLogger.sync(`ActionQueue: TASK_UPDATE_ASSIGNMENT_STATUS missing taskId/status, payload:`, JSON.stringify(payload));
-                preparedOps.push(item.prepareMarkAsDeleted());
-                continue;
-              }
-              await tasksApi.updateAssignmentStatus(taskIdStr5 as string, status as string);
-              break;
-            }
-            case 'REQUEST_ADD_INFO': {
-              const requestId = (payload as any).requestId || (payload as any).request_id || (payload as any).id;
-              const text = (payload as any).text;
-              const attachments = (payload as any).attachments || [];
-              if (!requestId || !text) {
-                OfflineLogger.sync(`ActionQueue: REQUEST_ADD_INFO missing requestId/text, payload:`, JSON.stringify(payload));
-                preparedOps.push(item.prepareMarkAsDeleted());
-                continue;
-              }
-              await requestsApi.addInfo(requestId as string, text as string, attachments as any[]);
-              break;
-            }
-            case 'TASK_REPORT_CREATE': {
-              const taskId = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
-              const comment = (payload as any).comment;
-              const attachments = (payload as any).attachments || [];
-              if (!taskId || !comment) {
-                OfflineLogger.sync(`ActionQueue: TASK_REPORT_CREATE missing taskId/comment, payload:`, JSON.stringify(payload));
-                preparedOps.push(item.prepareMarkAsDeleted());
-                continue;
-              }
-              await taskReportsApi.create(taskId as string, comment as string, attachments as any[]);
-              break;
-            }
             default:
               OfflineLogger.sync(`ActionQueue: unknown action type ${item.actionType}`);
           }
+
           // Success — mark for deletion
           preparedOps.push(item.prepareMarkAsDeleted());
           count++;
         } catch (err: any) {
           const errorStr = String(err);
+          const errorCode = err.response?.status || 'UNKNOWN';
           OfflineLogger.sync(`ActionQueue: ${item.actionType} failed`, err);
-          
+
           // CONFLICT DETECTION: 409 or "already assigned" error
           const isConflict = err.response?.status === 409 || 
-            errorStr.toLowerCase().includes('already assigned') ||
+            errorStr.toLowerCase().includes('already assigned') || 
             errorStr.toLowerCase().includes('conflict');
-          
-          if (isConflict) {
-            OfflineLogger.sync(`ActionQueue: CONFLICT detected for ${item.actionType} — another user modified the task`);
-            // Remove from queue — conflict resolved by server state
+
+          if (isConflict || this.isNonRetryableError(err)) {
+            OfflineLogger.sync(`ActionQueue: ${isConflict ? 'CONFLICT' : 'NON-RETRYABLE'} detected for ${item.actionType} — ${errorCode}`);
             preparedOps.push(item.prepareMarkAsDeleted());
-            // Emit conflict event so UI can refresh
             const payload = item.payloadData;
             this.emit('conflict', { actionType: item.actionType, taskId: (payload as any).taskId });
           } else {
-            // Retry later
+            // Exponential backoff with jitter
+            const backoffMs = Math.min(300000, 2000 * (2 ** item.retryCount)); // 2s,4s,8s,16s,32s... max 5min
+            const jitter = Math.random() * 1000; // random 0-1000ms
+            const nextRetry = Date.now() + backoffMs + jitter;
+
             preparedOps.push(
               item.prepareUpdate((aq: any) => {
                 aq.retryCount = (aq.retryCount || 0) + 1;
                 aq.error = errorStr;
+                aq.lastErrorCode = errorCode;
+                aq.nextRetryAt = nextRetry;
               })
             );
           }
@@ -330,9 +288,42 @@ export class SyncService {
 
     if (preparedOps.length > 0) {
       await this.executeBatch(preparedOps);
-      refreshAllPendingActions();
     }
+
     return count;
+  }
+
+  private static isNonRetryableError(err: any): boolean {
+    const status = err.response?.status;
+    const message = String(err.response?.data?.message || err.message || '').toLowerCase();
+
+    // Non-retryable errors
+    if (status >= 400 && status < 500) {
+      return true;
+    }
+
+    // Authentication errors
+    if (message.includes('unauthorized') || message.includes('forbidden') ||
+        message.includes('not found') || message.includes('validation failed')) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Health check for server availability
+   */
+  private static async checkServerHealth(): Promise<boolean> {
+    try {
+      const response = await api.get('/health/ping', {
+        timeout: 5000,
+        validateStatus: (status) => status < 500,
+      });
+      return response.status === 200;
+    } catch {
+      return false;
+    }
   }
 
   private static async executeBatch(operations: any[]): Promise<void> {
@@ -357,12 +348,13 @@ export class SyncService {
         const serverSavedIds = await requestsApi.getSavedIds();
         const serverIdSet = new Set(serverSavedIds);
         const localSaved = (await collections.savedRequests.query().fetch()) as any[];
+        
         for (const localReq of localSaved) {
           if (!serverIdSet.has(localReq.id)) {
             preparedOperations.push(localReq.prepareMarkAsDeleted());
           }
         }
-        
+
         const remoteSaved = await requestsApi.getSaved(100, 0);
         for (const req of remoteSaved) {
           preparedOperations.push(
@@ -404,40 +396,16 @@ export class SyncService {
 
     for (const sr of serverRequests) {
       const existing = localRequestsMap.get(sr.id);
-        if (existing) {
-          if (existing.isSynced) {
-            preparedOperations.push(
-              existing.prepareUpdate((r: any) => {
-                r.status = sr.status;
-                r.title = sr.title;
-                r.description = sr.description ?? null;
-                r.category = sr.category;
-                r.urgency = sr.urgency;
-                r.requiredClearance = sr.requiredClearance ?? 'local';
-                r.latitude = sr.latitude ?? null;
-                r.longitude = sr.longitude ?? null;
-                r.isLocationHidden = sr.isLocationHidden ?? false;
-                r.tagsRaw = JSON.stringify(sr.tags ?? []);
-                r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
-                r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
-                r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
-                r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
-                r.lastSyncedAt = Date.now();
-              })
-            );
-            count++;
-          }
-        } else {
+      if (existing) {
+        if (existing.isSynced) {
           preparedOperations.push(
-            collections.requests.prepareCreate((r: any) => {
-              r.serverId = sr.id;
+            existing.prepareUpdate((r: any) => {
+              r.status = sr.status;
               r.title = sr.title;
               r.description = sr.description ?? null;
               r.category = sr.category;
               r.urgency = sr.urgency;
-              r.status = sr.status;
               r.requiredClearance = sr.requiredClearance ?? 'local';
-              r.creatorId = sr.creatorId ?? null;
               r.latitude = sr.latitude ?? null;
               r.longitude = sr.longitude ?? null;
               r.isLocationHidden = sr.isLocationHidden ?? false;
@@ -446,58 +414,81 @@ export class SyncService {
               r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
               r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
               r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
-              r.createdAtServer = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
-              r.isSynced = true;
               r.lastSyncedAt = Date.now();
             })
           );
           count++;
         }
+      } else {
+        preparedOperations.push(
+          collections.requests.prepareCreate((r: any) => {
+            r.serverId = sr.id;
+            r.title = sr.title;
+            r.description = sr.description ?? null;
+            r.category = sr.category;
+            r.urgency = sr.urgency;
+            r.status = sr.status;
+            r.requiredClearance = sr.requiredClearance ?? 'local';
+            r.creatorId = sr.creatorId ?? null;
+            r.latitude = sr.latitude ?? null;
+            r.longitude = sr.longitude ?? null;
+            r.isLocationHidden = sr.isLocationHidden ?? false;
+            r.tagsRaw = JSON.stringify(sr.tags ?? []);
+            r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
+            r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
+            r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
+            r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
+            r.createdAtServer = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
+            r.isSynced = true;
+            r.lastSyncedAt = Date.now();
+          })
+        );
+        count++;
+      }
     }
 
-      // Note: We no longer delete local requests based on incomplete server list
-      // This prevents data loss when server returns partial results (e.g., limit=100)
-      // Deletion should only happen when explicitly confirmed (e.g., 404 from server)
+    // Note: We no longer delete local requests based on incomplete server list
+    // This prevents data loss when server returns partial results (e.g., limit=100)
+    // Deletion should only happen when explicitly confirmed (e.g., 404 from server)
 
     const visibleRequestServerIds = serverRequests.map((r: any) => r.id);
     const activeTaskServerIds = new Set<string>();
-    
+
     for (const reqId of visibleRequestServerIds.slice(0, 50)) {
-       try {
-         const sTasks = await tasksApi.getByRequest(reqId);
-         const localTasks = (await collections.tasks.query(Q.where('request_server_id', reqId)).fetch()) as unknown as TaskModel[];
-         const localTasksMap = new Map(localTasks.map(t => [t.serverId, t]));
-         
-         for (const st of sTasks) {
-           activeTaskServerIds.add(st.id);
-           const existing = localTasksMap.get(st.id);
-           if (existing) {
-             if (existing.isSynced) {
-               preparedOperations.push(existing.prepareUpdate((t: any) => {
-                 t.status = st.status;
-                 t.title = st.title;
-                 t.chatId = st.chatId ?? null;
-                 t.lastSyncedAt = Date.now();
-               }));
-             }
-           } else {
-             preparedOperations.push(collections.tasks.prepareCreate((t: any) => {
-               t.serverId = st.id;
-               t.requestServerId = reqId;
-               t.title = st.title;
-               t.status = st.status;
-               t.chatId = st.chatId ?? null;
-               t.isSynced = true;
-               t.lastSyncedAt = Date.now();
-             }));
-           }
-         }
-       } catch {}
+      try {
+        const sTasks = await tasksApi.getByRequest(reqId);
+        const localTasks = (await collections.tasks.query(Q.where('request_server_id', reqId)).fetch()) as unknown as TaskModel[];
+        const localTasksMap = new Map(localTasks.map(t => [t.serverId, t]));
+
+        for (const st of sTasks) {
+          activeTaskServerIds.add(st.id);
+          const existing = localTasksMap.get(st.id);
+          if (existing) {
+            if (existing.isSynced) {
+              preparedOperations.push(existing.prepareUpdate((t: any) => {
+                t.status = st.status;
+                t.title = st.title;
+                t.chatId = st.chatId ?? null;
+                t.lastSyncedAt = Date.now();
+              }));
+            }
+          } else {
+            preparedOperations.push(collections.tasks.prepareCreate((t: any) => {
+              t.serverId = st.id;
+              t.requestServerId = reqId;
+              t.title = st.title;
+              t.status = st.status;
+              t.chatId = st.chatId ?? null;
+              t.isSynced = true;
+              t.lastSyncedAt = Date.now();
+            }));
+          }
+        }
+      } catch {}
     }
 
     const allLocalTasks = (await collections.tasks.query().fetch()) as unknown as TaskModel[];
     const validTaskIds = new Set<string>();
-    
     for (const lt of allLocalTasks) {
       const isOrphan = lt.isSynced && lt.requestServerId && !visibleRequestServerIds.includes(lt.requestServerId as string);
       const isStale = lt.isSynced && lt.serverId && visibleRequestServerIds.includes(lt.requestServerId!) && !activeTaskServerIds.has(lt.serverId);
@@ -527,6 +518,7 @@ export class SyncService {
       const serverChats = await chatApi.getMyChats();
       const activeChatIds = new Set(serverChats.map((c) => c.id));
       const allMessages = (await collections.chatMessages.query().fetch()) as unknown as ChatMessageModel[];
+      
       for (const m of allMessages) {
         if (m.isSynced && !m.pendingAction && !activeChatIds.has(m.chatId)) {
           preparedOperations.push(m.prepareMarkAsDeleted());
@@ -568,18 +560,10 @@ export class SyncService {
         m.serverId = null;
         m.chatId = data.chatId;
         m.senderId = data.senderId;
-        m.senderName = data.senderName ?? null;
         m.content = data.content;
         m.sentAt = Date.now();
         m.isSynced = false;
         m.pendingAction = 'send';
-        m.messageType = data.messageType ?? 'text';
-        m.attachmentUrl = data.attachmentUrl ?? null;
-        m.messageStatus = 'pending';
-        m.replyToId = data.replyToId ?? null;
-        m.readByRaw = JSON.stringify([]);
-        m.deliveredToRaw = JSON.stringify([]);
-        m.lastSyncedAt = null;
       });
       await database.batch(msg);
       return msg as unknown as ChatMessageModel;
