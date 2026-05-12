@@ -2,20 +2,15 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, Animated, StyleSheet } from 'react-native';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { Colors } from '../utils/theme';
-import { SyncService } from '../db/SyncService';
 
 /**
- * OfflineBanner — NFR-03e.
- *
- * Показує банер зверху екрана при втраті/відновленні з'єднання.
- * При відновленні автоматично запускає SyncService.sync() —
- * надсилає на сервер усі офлайн-дії та оновлює локальний кеш.
+ * OfflineBanner — показує банер зверху екрана при втраті/відновленні з'єднання.
+ * Синхронізацію при реконекті тригерить NetworkContext, не це компонент.
  */
 export function OfflineBanner() {
   const { isOnline, wasOffline } = useNetworkStatus();
   const slideAnim = useRef(new Animated.Value(-50)).current;
   const [visible, setVisible] = React.useState(false);
-  const [syncing, setSyncing] = React.useState(false);
 
   useEffect(() => {
     if (!isOnline) {
@@ -24,16 +19,7 @@ export function OfflineBanner() {
         toValue: 0, useNativeDriver: true, tension: 80, friction: 10,
       }).start();
     } else if (wasOffline && isOnline) {
-      // Відновлено — синхронізуємо офлайн-чергу (NFR-03d)
       setVisible(true);
-      setSyncing(true);
-      SyncService.sync()
-        .then(({ pushed, pulled }) => {
-          console.log(`[Sync] pushed: ${pushed}, pulled: ${pulled}`);
-        })
-        .catch(() => {})
-        .finally(() => setSyncing(false));
-
       setTimeout(() => {
         Animated.timing(slideAnim, {
           toValue: -50, useNativeDriver: true, duration: 300,
@@ -61,8 +47,6 @@ export function OfflineBanner() {
       <Text style={styles.text}>
         {!isOnline
           ? '📵 Немає інтернету — режим офлайн'
-          : syncing
-          ? '🔄 Синхронізація даних...'
           : '✅ З\'єднання відновлено'}
       </Text>
     </Animated.View>

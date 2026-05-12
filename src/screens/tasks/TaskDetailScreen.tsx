@@ -232,21 +232,23 @@ export default function TaskDetailScreen() {
 
   /* ─── Helper: enqueue offline action ────────────────────────────────────── */
   const enqueueOfflineAction = useCallback(async (actionType: string, payload: any) => {
-    // 0. Dedup: if immediate cache already has this actionType, skip duplicate DB write
+    // 0. Dedup: if immediate cache already has this actionType, skip duplicate
     if (hasPendingActionImmediate(taskId, actionType)) {
       OfflineLogger.cache(`TaskDetail: dedup — ${actionType} already queued for task ${taskId}`);
       return;
     }
-    // 1. INSTANT UI update — set to global immediate cache (NO DB wait)
-    setPendingActionImmediate(taskId, actionType, payload);
     
-    // 2. Async DB write (only happens once due to dedup guard above)
+    // 1. WRITE TO DB FIRST (гарантує що payload збережеться в SQLite)
     await database.write(async () => {
       await collections.actionQueue.create((aq: any) => {
         aq.actionType = actionType; aq.payload = JSON.stringify(payload);
         aq.createdAt = Date.now(); aq.retryCount = 0;
       });
     });
+    
+    // 2. INSTANT UI update — set to global immediate cache (ПІСЛЯ DB)
+    setPendingActionImmediate(taskId, actionType, payload);
+    
     // 3. Notify ALL usePendingActions hooks across the app to refresh
     refreshAllPendingActions();
     OfflineLogger.cache(`TaskDetail: ${actionType} enqueued for offline | taskId from payload: ${payload.taskId} | route taskId: ${taskId}`);
