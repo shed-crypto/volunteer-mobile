@@ -10,6 +10,8 @@ import { TrustVouch, SystemRole } from '../../types';
 import { Colors, clearanceLabels, roleLabels } from '../../utils/theme';
 import { Button, Card, LoadingScreen, ScreenHeader } from '../../components/ui';
 import { useBiometrics, BiometricState } from '../../hooks/useBiometrics';
+import { SyncEventLogger } from '../../services/SyncEventLogger';
+import { ViewStyle } from 'react-native';
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
@@ -21,6 +23,7 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing]   = useState(false);
   const [bioState, setBioState]       = useState<BiometricState>({ isSupported: false, isEnabled: false });
   const [bioToggling, setBioToggling] = useState(false);
+  const [eventCount, setEventCount] = useState(0);
 
   const load = async () => {
     if (!user) return;
@@ -40,6 +43,16 @@ export default function ProfileScreen() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    const update = async () => {
+      const c = await SyncEventLogger.getUnreadCount();
+      setEventCount(c);
+    };
+    update();
+    const id = setInterval(update, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   const handleLogout = () => {
     Alert.alert('Вийти?', 'Ви дійсно хочете вийти з системи?', [
@@ -90,7 +103,19 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      <ScreenHeader title="Мій профіль" />
+      <ScreenHeader
+        title="Мій профіль"
+        rightAction={
+          <TouchableOpacity onPress={() => navigation.navigate('NotificationHistory')} style={{ flexDirection: 'row', alignItems: 'center', padding: 4 }}>
+            <Text style={{ fontSize: 22 }}>🔔</Text>
+            {eventCount > 0 && (
+              <View style={{ position: 'absolute', top: -2, right: -4, backgroundColor: '#d32f2f', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 } as ViewStyle}>
+                <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>{eventCount > 99 ? '99+' : eventCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={Colors.primary} />}

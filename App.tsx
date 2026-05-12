@@ -6,11 +6,13 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import { SyncService } from './src/db/SyncService';
+import { SyncEventLogger } from './src/services/SyncEventLogger';
 
 function SyncWrapper({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
 
   useEffect(() => {
+    SyncEventLogger.init();
     if (user?.id) {
       const unsub = SyncService.startNetworkListener(user.id);
       SyncService.sync(user.id);

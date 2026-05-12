@@ -36,6 +36,7 @@ import AdminCreateUserScreen from '../screens/admin/AdminCreateUserScreen';
 import DevDBInspector       from '../screens/admin/DevDBInspector';
 import KanbanScreen          from '../screens/kanban/KanbanScreen';
 import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
+import NotificationHistoryScreen from '../screens/notifications/NotificationHistoryScreen';
 
 export type MainStackParamList = {
   Requests: undefined;
@@ -103,6 +104,7 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="HubDetail"     component={HubDetailScreen} />
       <ProfileStack.Screen name="UserProfile"   component={UserProfileScreen} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+      <ProfileStack.Screen name="NotificationHistory" component={NotificationHistoryScreen} />
     </ProfileStack.Navigator>
   );
 }
