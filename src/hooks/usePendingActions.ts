@@ -11,10 +11,14 @@
  * - usePendingActions(taskId) повертає мердж: глобальний кеш + DB-дані.
  * - Коли DB-дані завантажаться, глобальний кеш очищується.
  * - dedup: enqueue не створює дублікат, якщо такий actionType вже є в кеші.
+ *
+ * СПІЛЬНА ФУНКЦІЯ enqueueOfflineAction:
+ * - Додана в return hook'а, щоб і TaskCard, і TaskDetailScreen
+ *   використовували ОДНАКОВИЙ код замість дублювання.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collections } from '../db/index';
+import { collections, database } from '../db/index';
 import { ActionQueueItem } from '../db/models/ActionQueueItem';
 
 /* ────────── Types ────────── */
@@ -41,6 +45,8 @@ export interface PendingActionsInfo {
   removePendingAction: (actionId: string) => Promise<void>;
   /** оновити local state з БД */
   refresh: () => Promise<void>;
+  /** СПІЛЬНА: закинути дію в чергу (offline або online fallback) */
+  enqueueOfflineAction: (actionType: string, payload: any) => Promise<void>;
 }
 
 /* ────────── Global Immediate Cache ────────── */
@@ -214,6 +220,27 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     [loadPendingActions, taskId]
   );
 
+  /** СПІЛЬНА: enqueue offline action (dedup + immediate UI + DB) */
+  const enqueueOfflineAction = useCallback(async (actionType: string, payload: any) => {
+    // 0. Dedup: if immediate cache already has this actionType, skip duplicate DB write
+    if (hasPendingActionImmediate(taskId, actionType)) {
+      return;
+    }
+    // 1. INSTANT UI update — set to global immediate cache (NO DB wait)
+    setPendingActionImmediate(taskId, actionType, payload);
+    // 2. Async DB write (only happens once due to dedup guard)
+    await database.write(async () => {
+      await collections.actionQueue.create((aq: any) => {
+        aq.actionType = actionType;
+        aq.payload = JSON.stringify(payload);
+        aq.createdAt = Date.now();
+        aq.retryCount = 0;
+      });
+    });
+    // 3. Notify ALL usePendingActions hooks across the app to refresh
+    refreshAllPendingActions();
+  }, [taskId]);
+
   // EAGER: update immediately after local mutations + listen for global events
   useEffect(() => {
     const unsubscribe = onGlobal('pending-actions-changed', () => {
@@ -251,5 +278,6 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     getAction,
     removePendingAction,
     refresh: loadPendingActions,
+    enqueueOfflineAction,
   };
 }

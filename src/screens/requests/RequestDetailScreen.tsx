@@ -1056,28 +1056,8 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
   const isFull = (task.assignments?.filter((a) => a.status !== 'withdrawn').length ?? 0) >= task.neededPeopleCount;
   const st = statusColors[task.status];
   const { isOffline } = useNetwork();
-  // Pending actions hook
-  const { pendingActions, hasAction: hasPendingAction, removePendingAction, refresh: refreshPendingActions } = usePendingActions(task.id);
-
-  /** Helper: enqueue offline action directly to action_queue */
-  const enqueueOfflineAction = useCallback(async (actionType: string, payload: any) => {
-    // 0. Dedup: if immediate cache already has this actionType, skip duplicate DB write
-    if (hasPendingActionImmediate(task.id, actionType)) {
-      return;
-    }
-    // 1. INSTANT UI update — set to global immediate cache (NO DB wait)
-    setPendingActionImmediate(task.id, actionType, payload);
-    // 2. Async DB write (only happens once due to dedup guard)
-    await database.write(async () => {
-      await collections.actionQueue.create((aq: any) => {
-        aq.actionType = actionType; aq.payload = JSON.stringify(payload);
-        aq.createdAt = Date.now(); aq.retryCount = 0;
-      });
-    });
-    // 3. Notify ALL usePendingActions hooks across the app to refresh
-    refreshAllPendingActions();
-    onRefresh();
-  }, [task.id, onRefresh]);
+  // Pending actions hook (includes shared enqueueOfflineAction)
+  const { pendingActions, hasAction: hasPendingAction, removePendingAction, refresh: refreshPendingActions, enqueueOfflineAction } = usePendingActions(task.id);
 
   const handleAssign = async () => {
     if (isAssigned) {
