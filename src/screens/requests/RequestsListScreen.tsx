@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 import {
-  View, Text, FlatList, TouchableOpacity, TextInput,
+  View, Text, FlatList, TouchableOpacity, TextInput, Alert,
   RefreshControl, StyleSheet, Modal, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -23,6 +23,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
 import { SystemRole } from '../../types';
+import api, { getServerReachable } from '../../api/axios';
 import { SyncService } from '../../db/SyncService';
 import { collections } from '../../db/index';
 import { database } from '../../db/index';
@@ -343,16 +344,35 @@ export default function RequestsListScreen() {
     applyRegionFilter();
   }, [requests, regionSearch]);
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    // Use try/catch in case SyncService module hasn't loaded (circular dependency guard)
+    
+    // КРОК 1: Explicit health-check with 3s timeout (not relying on cache)
+    let serverReachable = false;
     try {
-      SyncService.forceSync(user?.id).catch(() => {});
-    } catch (e) {
-      OfflineLogger.network('SyncService.forceSync failed (module not ready)', e);
-      // Still do local load
+      const resp = await api.get('/health/ping', { timeout: 3000, validateStatus: (s) => s < 500 });
+      serverReachable = resp.status === 200;
+    } catch {
+      // fallback to cached check
+      serverReachable = getServerReachable();
     }
-    load();
+    
+    if (serverReachable) {
+      OfflineLogger.nav('Refresh: server reachable — force sync');
+      try {
+        await SyncService.forceSync(user?.id);
+      } catch (e) {
+        OfflineLogger.network('forceSync failed', e);
+      }
+    } else {
+      OfflineLogger.nav('Refresh: server NOT reachable — cached data only');
+    }
+    
+    await load();
+    
+    if (!serverReachable) {
+      Alert.alert('📴 Офлайн', 'Сервер недоступний. Показано кешовані дані.');
+    }
   };
 
   const clearFilters = () => {
