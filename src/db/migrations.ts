@@ -5,10 +5,7 @@ import { schemaMigrations } from '@nozbe/watermelondb/Schema/migrations';
 
 export const dbMigrations = schemaMigrations({
   migrations: [
-    {
-      toVersion: 1,
-      steps: []
-    },
+    // toVersion: 1 — це початкова схема, міграції починаються з 2
     {
       toVersion: 2,
       steps: []
