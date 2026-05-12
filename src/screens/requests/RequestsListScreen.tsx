@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 import {
-  View, Text, FlatList, TouchableOpacity, TextInput, Alert,
+  View, Text, FlatList, TouchableOpacity, TextInput,
   RefreshControl, StyleSheet, Modal, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -25,6 +25,7 @@ import { OfflineLogger } from '../../utils/offlineLogger';
 import { SystemRole } from '../../types';
 import api, { getServerReachable } from '../../api/axios';
 import { SyncService } from '../../db/SyncService';
+import { checkServerReachable } from '../../api/axios';
 import { collections } from '../../db/index';
 import { database } from '../../db/index';
 
@@ -69,6 +70,7 @@ export default function RequestsListScreen() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [regionSearch, setRegionSearch] = useState('');
   const [filteredRequests, setFilteredRequests] = useState<Request[]>([]);
+  const [serverUnreachable, setServerUnreachable] = useState(false);
   const { isOffline } = useNetwork();
   const isLoadingRef = useRef(false);
   
@@ -346,33 +348,19 @@ export default function RequestsListScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setServerUnreachable(false);
     
     // КРОК 1: Explicit health-check with 3s timeout (not relying on cache)
-    let serverReachable = false;
-    try {
-      const resp = await api.get('/health/ping', { timeout: 3000, validateStatus: (s) => s < 500 });
-      serverReachable = resp.status === 200;
-    } catch {
-      // fallback to cached check
-      serverReachable = getServerReachable();
-    }
+    const serverReachable = await checkServerReachable();
     
     if (serverReachable) {
       OfflineLogger.nav('Refresh: server reachable — force sync');
-      try {
-        await SyncService.forceSync(user?.id);
-      } catch (e) {
-        OfflineLogger.network('forceSync failed', e);
-      }
     } else {
       OfflineLogger.nav('Refresh: server NOT reachable — cached data only');
+      setServerUnreachable(true);
     }
     
     await load();
-    
-    if (!serverReachable) {
-      Alert.alert('📴 Офлайн', 'Сервер недоступний. Показано кешовані дані.');
-    }
   };
 
   const clearFilters = () => {
@@ -457,6 +445,16 @@ export default function RequestsListScreen() {
           <Text style={styles.errorText}>⚠️ Офлайн — показано кешовані дані</Text>
           <TouchableOpacity onPress={load}>
             <Text style={styles.retryText}>Оновити</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Банер недоступності сервера при pull-to-refresh */}
+      {serverUnreachable && (
+        <View style={[styles.errorBanner, { backgroundColor: '#FFF3E0', borderBottomColor: '#FFB74D' }]}>
+          <Text style={[styles.errorText, { color: '#E65100' }]}>📴 Сервер недоступний — показано кешовані дані</Text>
+          <TouchableOpacity onPress={() => setServerUnreachable(false)}>
+            <Text style={styles.retryText}>Закрити</Text>
           </TouchableOpacity>
         </View>
       )}

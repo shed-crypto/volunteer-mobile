@@ -146,6 +146,7 @@ export interface TaskAssignment {
   taskId: string;
   userId: string;
   user?: User;
+  userName?: string;
   fulfilledRole?: string;
   status: AssignmentStatus;
   assignedAt: string;

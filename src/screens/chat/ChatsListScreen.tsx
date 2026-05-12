@@ -7,7 +7,7 @@
  * - Останнє повідомлення та час
  * - Непрочитані через WebSocket
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   RefreshControl, StyleSheet, Modal,
@@ -45,6 +45,8 @@ export default function ChatsListScreen() {
   const [unreadMap, setUnreadMap]   = useState<Record<string, number>>({});
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const lastChatFetchRef = useRef(0);
+  const MIN_CHAT_FETCH_INTERVAL = 5000;
 
   // New chat modal
   const [showNewChat, setShowNewChat]   = useState(false);

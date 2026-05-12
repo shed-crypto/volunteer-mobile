@@ -123,19 +123,23 @@ export default function RequestDetailScreen() {
             }
           });
 
-        return requestTasks.map((t: any) => ({
-          id: t.serverId || t.id,
-          title: t.title,
-          description: t.description,
-          status: t.status,
-          neededPeopleCount: t.neededPeopleCount,
-          requiredRoles: t.requiredRoles,
-          assignedCount: t.assignedCount,
-          priority: t.priority,
-          createdAt: t.createdAt,
-          requestId: t.requestId || t.requestServerId,
-          assignments: taskAssignmentsMap.get(t.serverId) || taskAssignmentsMap.get(t.id) || [],
-        }));
+        const getAssignments = (t: any) => taskAssignmentsMap.get(t.serverId) || taskAssignmentsMap.get(t.id) || [];
+        return requestTasks.map((t: any) => {
+          const taskAssignments = getAssignments(t);
+          return {
+            id: t.serverId || t.id,
+            title: t.title,
+            description: t.description,
+            status: t.status,
+            neededPeopleCount: t.neededPeopleCount,
+            requiredRoles: t.requiredRoles,
+            assignedCount: taskAssignments.filter((a: any) => a.status !== 'withdrawn' && a.status !== 'completed').length,
+            priority: t.priority,
+            createdAt: t.createdAt,
+            requestId: t.requestId || t.requestServerId,
+            assignments: taskAssignments,
+          };
+        });
       }
     } catch (localError) {
       OfflineLogger.cache('Local tasks load failed:', localError);
@@ -260,8 +264,14 @@ export default function RequestDetailScreen() {
   // ─── Helper: save tasks to local DB ──────────────────────────────────────
   const saveTasksToDB = useCallback(async (taskList: Task[]) => {
     try {
-      const existing = await collections.tasks.query().fetch();
+      const [existing, existingAssignmentsRaw] = await Promise.all([
+        collections.tasks.query().fetch(),
+        collections.taskAssignments.query().fetch(),
+      ]);
       const existingMap = new Map(existing.map((t: any) => [t.serverId, t]));
+      const assignmentsMap = new Map(
+        (existingAssignmentsRaw as any[]).map((a: any) => [`${a.taskId}-${a.userId}`, a])
+      );
       const operations: any[] = [];
 
       for (const task of taskList) {
@@ -301,13 +311,49 @@ export default function RequestDetailScreen() {
             })
           );
         }
+
+        // Also save/update taskAssignments
+        if (task.assignments && Array.isArray(task.assignments)) {
+          for (const a of task.assignments) {
+            const taskId = a.taskId || task.id;
+            const key = `${taskId}-${a.userId}`;
+            const existingAssignment = assignmentsMap.get(key);
+
+            if (existingAssignment) {
+              operations.push(
+                existingAssignment.prepareUpdate((asgn: any) => {
+                  asgn.status = a.status;
+                  asgn.userName = a.user?.fullName || a.userName || 'Користувач';
+                  asgn.fulfilledRole = a.fulfilledRole ?? null;
+                  asgn.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
+                  asgn.isSynced = true;
+                  asgn.lastSyncedAt = Date.now();
+                })
+              );
+            } else {
+              operations.push(
+                collections.taskAssignments.prepareCreate((asgn: any) => {
+                  asgn.taskId = taskId;
+                  asgn.userId = a.userId;
+                  asgn.userName = a.user?.fullName || a.userName || 'Користувач';
+                  asgn.status = a.status;
+                  asgn.fulfilledRole = a.fulfilledRole ?? null;
+                  asgn.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
+                  asgn.isSynced = true;
+                  asgn.pendingAction = null;
+                  asgn.lastSyncedAt = Date.now();
+                })
+              );
+            }
+          }
+        }
       }
 
       if (operations.length > 0) {
         await database.write(async () => {
           await database.batch(...operations);
         });
-        OfflineLogger.cache(`RequestDetail: saved ${operations.length} tasks to DB`);
+        OfflineLogger.cache(`RequestDetail: saved ${operations.length} operations to DB`);
       }
     } catch (e) {
       OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
@@ -389,6 +435,12 @@ export default function RequestDetailScreen() {
           
           try {
             const serverTasks = await tasksApi.getByRequest(requestId);
+            // Recalculate assignedCount from assignments (backend getter may not be serialized)
+            serverTasks.forEach((t: any) => {
+              if (t.assignments && Array.isArray(t.assignments)) {
+                t.assignedCount = t.assignments.filter((a: any) => a.status !== 'withdrawn' && a.status !== 'completed').length;
+              }
+            });
             setTasks(serverTasks);
             // ЗБЕРЕГТИ задачі в БД
             await saveTasksToDB(serverTasks);

@@ -486,38 +486,50 @@ export class SyncService {
 
     const visibleRequestServerIds = serverRequests.map((r: any) => r.id);
     const activeTaskServerIds = new Set<string>();
+    const CONCURRENCY = 3;
 
-    for (const reqId of visibleRequestServerIds.slice(0, 50)) {
-      try {
-        const sTasks = await tasksApi.getByRequest(reqId);
-        const localTasks = (await collections.tasks.query(Q.where('request_server_id', reqId)).fetch()) as unknown as TaskModel[];
-        const localTasksMap = new Map(localTasks.map(t => [t.serverId, t]));
-
-        for (const st of sTasks) {
-          activeTaskServerIds.add(st.id);
-          const existing = localTasksMap.get(st.id);
-          if (existing) {
-            if (existing.isSynced) {
-              preparedOperations.push(existing.prepareUpdate((t: any) => {
-                t.status = st.status;
+    // Process task fetching in batches to avoid 429 rate limiting
+    const reqIds = visibleRequestServerIds.slice(0, 50);
+    for (let i = 0; i < reqIds.length; i += CONCURRENCY) {
+      const batch = reqIds.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map(async (reqId) => {
+          const sTasks = await tasksApi.getByRequest(reqId);
+          return { reqId, tasks: sTasks };
+        })
+      );
+      for (const result of results) {
+        if (result.status === 'rejected') continue;
+        const { reqId, tasks: sTasks } = result.value;
+        try {
+          const localTasks = (await collections.tasks.query(Q.where('request_server_id', reqId)).fetch()) as unknown as TaskModel[];
+          const localTasksMap = new Map(localTasks.map(t => [t.serverId, t]));
+          for (const st of sTasks) {
+            activeTaskServerIds.add(st.id);
+            const existing = localTasksMap.get(st.id);
+            if (existing) {
+              if (existing.isSynced) {
+                preparedOperations.push(existing.prepareUpdate((t: any) => {
+                  t.status = st.status;
+                  t.title = st.title;
+                  t.chatId = st.chatId ?? null;
+                  t.lastSyncedAt = Date.now();
+                }));
+              }
+            } else {
+              preparedOperations.push(collections.tasks.prepareCreate((t: any) => {
+                t.serverId = st.id;
+                t.requestServerId = reqId;
                 t.title = st.title;
+                t.status = st.status;
                 t.chatId = st.chatId ?? null;
+                t.isSynced = true;
                 t.lastSyncedAt = Date.now();
               }));
             }
-          } else {
-            preparedOperations.push(collections.tasks.prepareCreate((t: any) => {
-              t.serverId = st.id;
-              t.requestServerId = reqId;
-              t.title = st.title;
-              t.status = st.status;
-              t.chatId = st.chatId ?? null;
-              t.isSynced = true;
-              t.lastSyncedAt = Date.now();
-            }));
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }
 
     const allLocalTasks = (await collections.tasks.query().fetch()) as unknown as TaskModel[];
