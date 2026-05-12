@@ -326,32 +326,48 @@ export default function RequestDetailScreen() {
     OfflineLogger.nav(`RequestDetailScreen.load() called, requestId=${requestId}`);
     
     try {
-      // КРОК 1: Завантажити з локальної БД (з АДАПТИВНИМ таймаутом)
-      // Онлайн: 300мс, Офлайн: 2000мс
-      const timeout = isOffline ? 2000 : 300;
-      const [localRequest, localTasks] = await Promise.race([
-        Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
-        new Promise<[null, []]>((resolve) => 
-          setTimeout(() => {
-            OfflineLogger.cache(`RequestDetail: local DB timeout (${timeout}ms)`);
-            resolve([null, []]);
-          }, timeout)
-        )
-      ]);
+      // КРОК 1: Завантажити з локальної БД (без агресивного таймауту)
+      // Таймаут лише для офлайн — 5с, для онлайн чекаємо повністю
+      const [localRequest, localTasks] = await (async () => {
+        try {
+          const result = await Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]);
+          if (result[0] || result[1].length > 0) return result;
+        } catch {}
+        
+        // Фолбек тільки якщо локальні дані пусті — тоді таймаут
+        if (isOffline) {
+          return Promise.race([
+            Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
+            new Promise<[null, []]>((resolve) => 
+              setTimeout(() => {
+                OfflineLogger.cache('RequestDetail: local DB timeout (5000ms, offline)');
+                resolve([null, []]);
+              }, 5000)
+            )
+          ]);
+        }
+        return [null, []];
+      })();
       
       if (localRequest) {
         OfflineLogger.nav('Showing local data first (offline-first)');
         setRequest(localRequest);
-        setTasks(localTasks);
         setIsOfflineMode(true);
         setLoading(false);
-        
-        // Also check saved status from local DB for initial state
-        try {
-          const saved = await collections.savedRequests.query().fetch();
-          const isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
-          if (isSavedLocal) setIsSaved(true);
-        } catch {}
+      }
+      if (localTasks.length > 0) {
+        setTasks(localTasks);
+      }
+      
+      // Also check saved status from local DB for initial state
+      try {
+        const saved = await collections.savedRequests.query().fetch();
+        const isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
+        if (isSavedLocal) setIsSaved(true);
+      } catch {}
+      
+      if (!localRequest && !isOffline) {
+        setLoading(false);
       }
 
       // КРОК 2: Якщо є мережа І сервер реально доступний — оновити з сервера
