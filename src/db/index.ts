@@ -13,6 +13,7 @@ import { ChatModel } from './models/ChatModel';
 import { UserCacheModel } from './models/UserCacheModel';
 import { PendingReport } from './models/PendingReport';
 import { ActionQueueItem } from './models/ActionQueueItem';
+import { SyncEventModel } from './models/SyncEventModel';
 import { TaskReportModel } from './models/TaskReportModel';
 import { SavedRequestModel } from './models/SavedRequestModel';
 
@@ -39,6 +40,7 @@ export const database = new Database({
     ActionQueueItem,
     TaskReportModel,
     SavedRequestModel,
+    SyncEventModel,
   ],
 });
 
@@ -54,4 +56,5 @@ export const collections = {
   taskReports: database.collections.get('task_reports'),
   savedRequests: database.collections.get('saved_requests'),
   actionQueue: database.collections.get('action_queue'),
+  syncEvents: database.collections.get('sync_events'),
 };

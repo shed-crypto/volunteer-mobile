@@ -1,21 +1,29 @@
-import type { Migration } from '@nozbe/watermelondb/Schema/migrations';
+/**
+ * src/db/migrations.ts — WatermelonDB міграції
+ */
+import { schemaMigrations } from '@nozbe/watermelondb/Schema/migrations';
 
-export const migrations: Migration[] = [
-  // Initial state: version 1
-  {
-    toVersion: 1,
-    steps: []
-  },
-  {
-    toVersion: 2,
-    steps: []
-  },
-  {
-    toVersion: 3,
-    steps: []
-  },
-  {
-    toVersion: 4,
-    steps: []
-  },
-];
+export const dbMigrations = schemaMigrations({
+  migrations: [
+    {
+      toVersion: 1,
+      steps: []
+    },
+    {
+      toVersion: 2,
+      steps: []
+    },
+    {
+      toVersion: 3,
+      steps: []
+    },
+    {
+      toVersion: 4,
+      steps: []
+    },
+    {
+      toVersion: 5,
+      steps: []
+    },
+  ],
+});

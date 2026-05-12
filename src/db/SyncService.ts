@@ -64,15 +64,39 @@ export class SyncService {
       pulled = await this.pull(userId);
       this._lastFailedAt = null; // Reset on success
       OfflineLogger.sync(`Sync completed: pushed=${pushed}, pulled=${pulled}`);
+      if (pushed > 0 || pulled > 0) {
+        this.emit('sync-event', {
+          type: 'sync_success',
+          title: 'Синхронізація',
+          description: `Оновлено: ${pushed} дій відправлено, ${pulled} записів отримано`,
+          metadata: { pushed, pulled },
+        });
+      }
     } catch (err) {
       OfflineLogger.sync('Sync error:', err);
       syncFailed = true;
       this._lastFailedAt = Date.now();
+      this.emit('sync-event', {
+        type: 'sync_error',
+        title: 'Помилка синхронізації',
+        description: 'Не вдалося синхронізувати дані з сервером. Спробуйте пізніше.',
+        metadata: { error: String(err) },
+      });
     } finally {
       this.isSyncing = false;
     }
 
     return { pushed, pulled };
+  }
+
+  private static getActionLabel(actionType: string): string {
+    const labels: Record<string, string> = {
+      'TASK_ASSIGN': 'призначити вас на задачу',
+      'TASK_WITHDRAW': 'скасувати призначення',
+      'TASK_COMPLETE': 'завершити задачу',
+      'TASK_RETURN_TO_PROGRESS': 'повернути задачу в роботу',
+    };
+    return labels[actionType] || 'виконати дію';
   }
 
   static async forceSync(userId?: string): Promise<{ pushed: number; pulled: number }> {
@@ -265,6 +289,15 @@ export class SyncService {
             preparedOps.push(item.prepareMarkAsDeleted());
             const payload = item.payloadData;
             this.emit('conflict', { actionType: item.actionType, taskId: (payload as any).taskId });
+            const eventType = isConflict ? 'sync_conflict' : 'queue_failed' as const;
+            this.emit('sync-event', {
+              type: eventType,
+              title: isConflict ? 'Конфлікт даних' : 'Помилка дії',
+              description: isConflict
+                ? `Не вдалося ${this.getActionLabel(item.actionType)} — хтось вже зробив це раніше`
+                : `Не вдалося ${this.getActionLabel(item.actionType)} — дію скасовано. Зверніться до адміністратора`,
+              metadata: { actionType: item.actionType, taskId: (payload as any).taskId, error: errorStr },
+            });
           } else {
             // Exponential backoff with jitter
             const backoffMs = Math.min(300000, 2000 * (2 ** item.retryCount)); // 2s,4s,8s,16s,32s... max 5min

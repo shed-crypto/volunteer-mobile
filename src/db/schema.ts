@@ -6,7 +6,7 @@ import { appSchema, tableSchema } from '@nozbe/watermelondb';
 export const dbSchema = appSchema({
   // NOTE: migrations were reset in development. Version was lowered to 1
   // so WatermelonDB recreates the database from the current schema.
-  version: 4,
+  version: 5,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -166,7 +166,7 @@ export const dbSchema = appSchema({
       ],
     }),
 
-// ─── Черга офлайн-дій ────────────────────────────────────────────────────
+  // ─── Черга офлайн-дій ────────────────────────────────────────────────────
   tableSchema({
     name: 'action_queue',
     columns: [
@@ -179,5 +179,19 @@ export const dbSchema = appSchema({
       { name: 'error', type: 'string', isOptional: true },
     ],
   }),
+
+    // ─── Історія подій / сповіщень ──────────────────────────────────────────
+    tableSchema({
+      name: 'sync_events',
+      columns: [
+        { name: 'event_type', type: 'string', isIndexed: true },
+        { name: 'title', type: 'string' },
+        { name: 'description', type: 'string', isOptional: true },
+        { name: 'is_error', type: 'boolean' },
+        { name: 'is_read', type: 'boolean' },
+        { name: 'created_at', type: 'number', isIndexed: true },
+        { name: 'metadata_raw', type: 'string', isOptional: true },
+      ],
+    }),
   ],
 });
