@@ -28,7 +28,8 @@ export class TaskModel extends Model {
       return [];
     }
   }
-  
+
+
   // Relations
   taskAssignments: any;
 }

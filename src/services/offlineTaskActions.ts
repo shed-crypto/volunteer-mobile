@@ -1,6 +1,7 @@
 import { collections, database } from '../db/index';
 import { refreshAllPendingActions } from '../hooks/usePendingActions';
 import { AssignmentStatus, TaskStatus } from '../types';
+import { countActiveAssignments } from '../db/helpers/assignments';
 
 export type OfflineTaskActionType =
   | 'TASK_ASSIGN'
@@ -117,9 +118,11 @@ export async function applyOfflineTaskActionLocally(
       }
 
       if (task) {
-        const nextCount = Math.max(Number((task as any).assignedCount || 0), 0) + (wasActive ? 0 : 1);
+        const allAssignments = await collections.taskAssignments.query().fetch();
+        const taskAssignments = (allAssignments as any[]).filter((a: any) => a.taskId === taskId);
+        const nextCount = countActiveAssignments(taskAssignments);
         await task.update((t: any) => {
-          t.status = TaskStatus.IN_PROGRESS;
+          t.status = nextCount > 0 ? TaskStatus.IN_PROGRESS : TaskStatus.TODO;
           t.assignedCount = nextCount;
           t.isSynced = false;
           t.pendingAction = 'assign';
@@ -140,10 +143,12 @@ export async function applyOfflineTaskActionLocally(
       }
 
       if (task) {
-        const nextCount = Math.max(Number((task as any).assignedCount || 0) - 1, 0);
+        const allAssignments = await collections.taskAssignments.query().fetch();
+        const taskAssignments = (allAssignments as any[]).filter((a: any) => a.taskId === taskId);
+        const nextCount = countActiveAssignments(taskAssignments);
         await task.update((t: any) => {
           t.assignedCount = nextCount;
-          if (nextCount === 0) t.status = TaskStatus.TODO;
+          t.status = nextCount > 0 ? TaskStatus.IN_PROGRESS : TaskStatus.TODO;
           t.isSynced = false;
           t.pendingAction = 'withdraw';
         });
@@ -202,10 +207,12 @@ export async function revertOfflineTaskActionLocally(
         });
       }
       if (task) {
-        const nextCount = Math.max(Number((task as any).assignedCount || 0) - 1, 0);
+        const allAssignments = await collections.taskAssignments.query().fetch();
+        const taskAssignments = (allAssignments as any[]).filter((a: any) => a.taskId === taskId);
+        const nextCount = countActiveAssignments(taskAssignments);
         await task.update((t: any) => {
           t.assignedCount = nextCount;
-          if (nextCount === 0) t.status = TaskStatus.TODO;
+          t.status = nextCount > 0 ? TaskStatus.IN_PROGRESS : TaskStatus.TODO;
           t.pendingAction = null;
           t.isSynced = true;
         });
@@ -223,9 +230,12 @@ export async function revertOfflineTaskActionLocally(
         });
       }
       if (task) {
+        const allAssignments = await collections.taskAssignments.query().fetch();
+        const taskAssignments = (allAssignments as any[]).filter((a: any) => a.taskId === taskId);
+        const nextCount = countActiveAssignments(taskAssignments);
         await task.update((t: any) => {
-          t.assignedCount = Number((task as any).assignedCount || 0) + 1;
-          t.status = TaskStatus.IN_PROGRESS;
+          t.assignedCount = nextCount;
+          t.status = nextCount > 0 ? TaskStatus.IN_PROGRESS : TaskStatus.TODO;
           t.pendingAction = null;
           t.isSynced = true;
         });

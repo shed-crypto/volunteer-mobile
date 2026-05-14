@@ -205,12 +205,14 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
           return;
         }
       }
-      // Otherwise — remove from DB
+      // Otherwise — remove from DB inside a Writer
       try {
         const queueItems = (await collections.actionQueue.query().fetch()) as ActionQueueItem[];
         const item = queueItems.find((q) => q.id === actionId);
         if (item) {
-          await item.destroyPermanently();
+          await database.write(async () => {
+            await item.destroyPermanently();
+          });
           await loadPendingActions();
         }
       } catch (e) {
@@ -228,16 +230,22 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     }
     // 1. INSTANT UI update — set to global immediate cache (NO DB wait)
     setPendingActionImmediate(taskId, actionType, payload);
-    // 2. Async DB write (only happens once due to dedup guard)
+    // 2. Build payload with guaranteed taskId
+    const mergedPayload = { ...payload, taskId };
+    if (!payload || !mergedPayload.taskId) {
+      console.warn(`[usePendingActions] enqueueOfflineAction: taskId missing for ${actionType}`, { taskId, payload });
+    }
+    // 3. Async DB write (only happens once due to dedup guard)
+    // IMPORTANT: include taskId in payload so SyncService.push() can find it
     await database.write(async () => {
       await collections.actionQueue.create((aq: any) => {
         aq.actionType = actionType;
-        aq.payload = JSON.stringify(payload);
+        aq.payloadRaw = JSON.stringify(mergedPayload);
         aq.createdAt = Date.now();
         aq.retryCount = 0;
       });
     });
-    // 3. Notify ALL usePendingActions hooks across the app to refresh
+    // 4. Notify ALL usePendingActions hooks across the app to refresh
     refreshAllPendingActions();
   }, [taskId]);
 

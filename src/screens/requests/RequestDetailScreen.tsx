@@ -26,6 +26,7 @@ import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections } from '../../db/index';
 import { database } from '../../db/index';
 import { usePendingActions, refreshAllPendingActions, setPendingActionImmediate, removePendingActionImmediate, hasPendingActionImmediate } from '../../hooks/usePendingActions';
+import { countActiveAssignments } from '../../db/helpers/assignments';
 
 type RouteParams = { RequestDetail: { requestId: string } };
 
@@ -133,7 +134,7 @@ export default function RequestDetailScreen() {
             status: t.status,
             neededPeopleCount: t.neededPeopleCount,
             requiredRoles: t.requiredRoles,
-            assignedCount: taskAssignments.filter((a: any) => a.status !== 'withdrawn' && a.status !== 'completed').length,
+            assignedCount: countActiveAssignments(taskAssignments),
             priority: t.priority,
             createdAt: t.createdAt,
             requestId: t.requestId || t.requestServerId,
@@ -256,7 +257,12 @@ export default function RequestDetailScreen() {
         });
       }
       OfflineLogger.cache(`RequestDetail: saved request ${req.id} to DB`);
-    } catch (e) {
+    } catch (e: any) {
+      // Diagnostic error = WatermelonDB race condition (sync wrote same data first) — not fatal
+      if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
+        OfflineLogger.cache('RequestDetail: save request skipped (sync already wrote it)');
+        return;
+      }
       OfflineLogger.cache('RequestDetail: save request to DB failed', e);
     }
   }, []);
@@ -320,16 +326,19 @@ export default function RequestDetailScreen() {
             const existingAssignment = assignmentsMap.get(key);
 
             if (existingAssignment) {
-              operations.push(
-                existingAssignment.prepareUpdate((asgn: any) => {
-                  asgn.status = a.status;
-                  asgn.userName = a.user?.fullName || a.userName || 'Користувач';
-                  asgn.fulfilledRole = a.fulfilledRole ?? null;
-                  asgn.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
-                  asgn.isSynced = true;
-                  asgn.lastSyncedAt = Date.now();
-                })
-              );
+              // НЕ перезаписувати assignment з локальними незастосованими змінми (pendingAction)
+              if (!existingAssignment.pendingAction) {
+                operations.push(
+                  existingAssignment.prepareUpdate((asgn: any) => {
+                    asgn.status = a.status;
+                    asgn.userName = a.user?.fullName || a.userName || 'Користувач';
+                    asgn.fulfilledRole = a.fulfilledRole ?? null;
+                    asgn.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
+                    asgn.isSynced = true;
+                    asgn.lastSyncedAt = Date.now();
+                  })
+                );
+              }
             } else {
               operations.push(
                 collections.taskAssignments.prepareCreate((asgn: any) => {
@@ -355,8 +364,12 @@ export default function RequestDetailScreen() {
         });
         OfflineLogger.cache(`RequestDetail: saved ${operations.length} operations to DB`);
       }
-    } catch (e) {
-      OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
+    } catch (e: any) {
+      if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
+        OfflineLogger.cache('RequestDetail: save tasks skipped (sync already wrote it)');
+      } else {
+        OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
+      }
     }
   }, [requestId]);
 
@@ -1212,8 +1225,10 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
         <ProgressBar value={task.assignments?.filter((a) => a.status !== 'withdrawn').length ?? 0} total={task.neededPeopleCount} />
 
         {/* Only volunteers can take tasks — show also when already assigned (IN_PROGRESS) */}
+        {/* Hide button for PENDING_REVIEW tasks (already sent for review) */}
         {(userRole === SystemRole.VOLUNTEER || userRole === SystemRole.COORDINATOR) &&
-          (task.status === TaskStatus.TODO || isAssigned) && (
+          (task.status === TaskStatus.TODO || isAssigned) &&
+          task.status !== TaskStatus.PENDING_REVIEW && (
           <>
             {pendingAssign ? (
               // Show pending card (uses global immediate cache — works across screen navigation)

@@ -198,8 +198,12 @@ export default function RequestsListScreen() {
         });
         OfflineLogger.cache(`RequestsList: saved ${operations.length} operations to DB`);
       }
-    } catch (e) {
-      OfflineLogger.cache('RequestsList: save to DB failed', e);
+    } catch (e: any) {
+      if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
+        OfflineLogger.cache('RequestsList: save skipped (sync already wrote it)');
+      } else {
+        OfflineLogger.cache('RequestsList: save to DB failed', e);
+      }
     }
   }, []);
 

@@ -1,4 +1,5 @@
 import { database, collections } from './index';
+import { countActiveAssignments } from './helpers/assignments';
 import { RequestModel } from './models/RequestModel';
 import { TaskModel } from './models/TaskModel';
 import { ChatMessageModel } from './models/ChatMessageModel';
@@ -241,10 +242,29 @@ export class SyncService {
               const fulfilledRole = (payload as any).fulfilledRole;
               if (!taskIdStr) {
                 OfflineLogger.sync(`ActionQueue: TASK_ASSIGN missing taskId, payload:`, JSON.stringify(payload));
+                // Clean up empty legacy payloads
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
               await tasksApi.assign(taskIdStr, fulfilledRole as string);
+              // Clear pendingAction from local taskAssignments after successful push
+              try {
+                const localAssignments = await collections.taskAssignments.query().fetch();
+                const pendingAssignment = (localAssignments as any[]).find(
+                  (a: any) => a.taskId === taskIdStr && a.pendingAction
+                );
+                if (pendingAssignment) {
+                  preparedOps.push(
+                    pendingAssignment.prepareUpdate((a: any) => {
+                      a.pendingAction = null;
+                      a.isSynced = true;
+                      a.lastSyncedAt = Date.now();
+                    })
+                  );
+                }
+              } catch (e) {
+                OfflineLogger.sync(`ActionQueue: TASK_ASSIGN clear pendingAction failed`, e);
+              }
               break;
             }
             case 'TASK_WITHDRAW': {
@@ -255,6 +275,24 @@ export class SyncService {
                 continue;
               }
               await tasksApi.withdraw(taskIdStr2 as string);
+              // Clear pendingAction from local taskAssignments after successful push
+              try {
+                const localAssignments = await collections.taskAssignments.query().fetch();
+                const pendingAssignment = (localAssignments as any[]).find(
+                  (a: any) => a.taskId === taskIdStr2 && a.pendingAction
+                );
+                if (pendingAssignment) {
+                  preparedOps.push(
+                  pendingAssignment.prepareUpdate((a: any) => {
+                    a.pendingAction = null;
+                    a.isSynced = true;
+                    a.lastSyncedAt = Date.now();
+                  })
+                  );
+                }
+              } catch (e) {
+                OfflineLogger.sync(`ActionQueue: TASK_WITHDRAW clear pendingAction failed`, e);
+              }
               break;
             }
             case 'TASK_COMPLETE': {
@@ -265,6 +303,16 @@ export class SyncService {
                 continue;
               }
               await tasksApi.complete(taskIdStr3 as string);
+              break;
+            }
+            case 'TASK_RETURN_TO_PROGRESS': {
+              const taskIdStr4 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              if (!taskIdStr4) {
+                OfflineLogger.sync(`ActionQueue: TASK_RETURN_TO_PROGRESS missing taskId, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              await tasksApi.returnToProgress(taskIdStr4 as string);
               break;
             }
             default:
@@ -504,6 +552,13 @@ export class SyncService {
         try {
           const localTasks = (await collections.tasks.query(Q.where('request_server_id', reqId)).fetch()) as unknown as TaskModel[];
           const localTasksMap = new Map(localTasks.map(t => [t.serverId, t]));
+
+          // Load existing taskAssignments for dedup
+          const existingAssignmentsRaw = await collections.taskAssignments.query().fetch();
+          const assignmentsMap = new Map(
+            (existingAssignmentsRaw as any[]).map((a: any) => [`${a.taskId}-${a.userId}`, a])
+          );
+
           for (const st of sTasks) {
             activeTaskServerIds.add(st.id);
             const existing = localTasksMap.get(st.id);
@@ -512,6 +567,13 @@ export class SyncService {
                 preparedOperations.push(existing.prepareUpdate((t: any) => {
                   t.status = st.status;
                   t.title = st.title;
+                  t.description = st.description ?? null;
+                  t.neededPeopleCount = st.neededPeopleCount ?? 1;
+                  t.requiredRolesRaw = JSON.stringify(st.requiredRoles ?? []);
+                  // Recalculate assignedCount from server assignments (getter may not be serialized)
+                  t.assignedCount = countActiveAssignments(st.assignments);
+                  t.priority = st.priority ?? 0;
+                  t.deadline = st.deadline ? new Date(st.deadline).getTime() : null;
                   t.chatId = st.chatId ?? null;
                   t.lastSyncedAt = Date.now();
                 }));
@@ -521,11 +583,57 @@ export class SyncService {
                 t.serverId = st.id;
                 t.requestServerId = reqId;
                 t.title = st.title;
+                t.description = st.description ?? null;
                 t.status = st.status;
+                t.neededPeopleCount = st.neededPeopleCount ?? 1;
+                t.requiredRolesRaw = JSON.stringify(st.requiredRoles ?? []);
+                // Recalculate assignedCount from server assignments (getter may not be serialized)
+                t.assignedCount = countActiveAssignments(st.assignments);
+                t.priority = st.priority ?? 0;
+                t.deadline = st.deadline ? new Date(st.deadline).getTime() : null;
                 t.chatId = st.chatId ?? null;
                 t.isSynced = true;
                 t.lastSyncedAt = Date.now();
               }));
+            }
+
+    // Also save/update taskAssignments
+            if (st.assignments && Array.isArray(st.assignments)) {
+              for (const a of st.assignments) {
+                const taskId = a.taskId || st.id;
+                const key = `${taskId}-${a.userId}`;
+                const existingAssignment = assignmentsMap.get(key);
+
+                if (existingAssignment) {
+                  // НЕ перезаписувати assignment з локальними незастосованими змінми (pendingAction)
+                  if (!existingAssignment.pendingAction) {
+                    preparedOperations.push(
+                      existingAssignment.prepareUpdate((asgn: any) => {
+                        asgn.status = a.status;
+                        asgn.userName = a.user?.fullName || a.userName || 'Користувач';
+                        asgn.fulfilledRole = a.fulfilledRole ?? null;
+                        asgn.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
+                        asgn.isSynced = true;
+                        asgn.lastSyncedAt = Date.now();
+                      })
+                    );
+                  }
+                } else {
+                  preparedOperations.push(
+                    collections.taskAssignments.prepareCreate((asgn: any) => {
+                      asgn.taskId = taskId;
+                      asgn.userId = a.userId;
+                      asgn.userName = a.user?.fullName || a.userName || 'Користувач';
+                      asgn.status = a.status;
+                      asgn.fulfilledRole = a.fulfilledRole ?? null;
+                      asgn.assignedAt = a.assignedAt ? new Date(a.assignedAt).getTime() : Date.now();
+                      asgn.isSynced = true;
+                      asgn.pendingAction = null;
+                      asgn.lastSyncedAt = Date.now();
+                    })
+                  );
+                }
+              }
             }
           }
         } catch {}
@@ -581,7 +689,15 @@ export class SyncService {
       }
     } catch {}
 
-    await this.executeBatch(preparedOperations);
+    try {
+      await this.executeBatch(preparedOperations);
+    } catch (err: any) {
+      if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
+        OfflineLogger.sync('Pull: Diagnostic error (race with other DB writer), continuing');
+      } else {
+        throw err;
+      }
+    }
     return count;
   }
 
