@@ -30,6 +30,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections, database } from '../../db/index';
+import { DBLock } from '../../db/DBLock';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
 import { MediaViewer } from '../../components/MediaViewer';
@@ -119,22 +120,28 @@ export default function TaskDetailScreen() {
   }, [taskId]);
 
   /* ─── Helper: retry database.write на Diagnostic error ─────────────────── */
-  const databaseWriteRetry = async (writeFn: () => Promise<void>, maxRetries: number = 3): Promise<void> => {
+  // Паузи: 200ms, 500ms, 1000ms, 2000ms, 4000ms
+  const DB_WRITE_RETRY_DELAYS = [200, 500, 1000, 2000, 4000];
+  const databaseWriteRetry = async (writeFn: () => Promise<void>, maxRetries: number = 5): Promise<void> => {
     let lastError: any = null;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        await database.write(writeFn);
+        await DBLock.withLock(async () => {
+          await database.write(writeFn);
+        });
         return;
       } catch (err: any) {
         lastError = err;
+        const delay = DB_WRITE_RETRY_DELAYS[attempt] || 5000;
         if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
-          OfflineLogger.cache(`TaskDetail: DB write retry ${attempt + 1}/${maxRetries} after Diagnostic error`);
-          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+          OfflineLogger.cache(`TaskDetail: DB write retry ${attempt + 1}/${maxRetries} after Diagnostic error (wait ${delay}ms)`);
+          await new Promise(r => setTimeout(r, delay));
           continue;
         }
         throw err;
       }
     }
+    DBLock.reset();
     throw lastError;
   };
 
