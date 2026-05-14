@@ -118,13 +118,33 @@ export default function TaskDetailScreen() {
     }
   }, [taskId]);
 
+  /* ─── Helper: retry database.write на Diagnostic error ─────────────────── */
+  const databaseWriteRetry = async (writeFn: () => Promise<void>, maxRetries: number = 3): Promise<void> => {
+    let lastError: any = null;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await database.write(writeFn);
+        return;
+      } catch (err: any) {
+        lastError = err;
+        if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
+          OfflineLogger.cache(`TaskDetail: DB write retry ${attempt + 1}/${maxRetries} after Diagnostic error`);
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastError;
+  };
+
   /* ─── Save task to local DB ─────────────────────────────────────────────── */
   const saveTaskToDB = useCallback(async (t: Task) => {
     try {
       const existing = await collections.tasks.query().fetch();
       const existingTask = existing.find((et: any) => et.serverId === t.id);
       if (existingTask) {
-        await database.write(async () => {
+        await databaseWriteRetry(async () => {
           await existingTask.update((et: any) => {
             et.title = t.title;
             et.description = t.description ?? null;
@@ -140,7 +160,7 @@ export default function TaskDetailScreen() {
           });
         });
       } else {
-        await database.write(async () => {
+        await databaseWriteRetry(async () => {
           await collections.tasks.create((et: any) => {
             et.serverId = t.id; et.requestServerId = t.requestId; et.title = t.title;
             et.description = t.description ?? null; et.status = t.status;
@@ -171,7 +191,7 @@ export default function TaskDetailScreen() {
             }));
           }
         }
-        if (ops.length > 0) { await database.write(async () => { await database.batch(...ops); }); }
+        if (ops.length > 0) { await databaseWriteRetry(async () => { await database.batch(...ops); }); }
       }
       OfflineLogger.cache(`TaskDetail: saved task ${t.id} to DB`);
     } catch (e) { OfflineLogger.cache('TaskDetail: save to DB failed', e); }
@@ -284,6 +304,12 @@ export default function TaskDetailScreen() {
             });
             await load();
           } catch (e: any) {
+            // Diagnostic error = local DB race, API call succeeded — не ставити в чергу
+            if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
+              OfflineLogger.cache('TaskDetail: withdraw DB write failed after retries, but API succeeded');
+              await load();
+              return;
+            }
             const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
             if (isNetworkError) {
               await enqueueOfflineAction('TASK_WITHDRAW', { taskId: task.id });
@@ -320,6 +346,12 @@ export default function TaskDetailScreen() {
         });
         await load();
           } catch (e: any) {
+            // Diagnostic error = local DB race, API call succeeded — не ставити в чергу
+            if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
+              OfflineLogger.cache('TaskDetail: assign DB write failed after retries, but API succeeded');
+              await load();
+              return;
+            }
             const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
             if (isNetworkError) {
               await enqueueOfflineAction('TASK_ASSIGN', { taskId: task.id, fulfilledRole: null });
