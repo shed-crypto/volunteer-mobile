@@ -119,30 +119,26 @@ export default function TaskDetailScreen() {
     }
   }, [taskId]);
 
-  /* ─── Helper: retry database.write на Diagnostic error ─────────────────── */
-  // Паузи: 200ms, 500ms, 1000ms, 2000ms, 4000ms
-  const DB_WRITE_RETRY_DELAYS = [200, 500, 1000, 2000, 4000];
-  const databaseWriteRetry = async (writeFn: () => Promise<void>, maxRetries: number = 5): Promise<void> => {
-    let lastError: any = null;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+  /* ─── Helper: спроба database.write з одним швидким retry ─────────────── */
+  // Якщо не вдалося — логуємо і продовжуємо (не блокуємо UI).
+  // Дані оновляться при наступному sync/pull з сервера.
+  const trySaveToDB = async (writeFn: () => Promise<void>): Promise<boolean> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await DBLock.withLock(async () => {
-          await database.write(writeFn);
-        });
-        return;
+        await database.write(writeFn);
+        return true;
       } catch (err: any) {
-        lastError = err;
-        const delay = DB_WRITE_RETRY_DELAYS[attempt] || 5000;
         if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
-          OfflineLogger.cache(`TaskDetail: DB write retry ${attempt + 1}/${maxRetries} after Diagnostic error (wait ${delay}ms)`);
-          await new Promise(r => setTimeout(r, delay));
+          OfflineLogger.cache(`TaskDetail: DB write retry ${attempt + 1}/2 after Diagnostic error`);
+          await new Promise(r => setTimeout(r, 200));
           continue;
         }
-        throw err;
+        OfflineLogger.cache('TaskDetail: DB write failed (non-critical)', err);
+        return false;
       }
     }
-    DBLock.reset();
-    throw lastError;
+    OfflineLogger.cache('TaskDetail: DB write failed after retry (non-critical, sync will update)');
+    return false;
   };
 
   /* ─── Save task to local DB ─────────────────────────────────────────────── */
@@ -151,7 +147,7 @@ export default function TaskDetailScreen() {
       const existing = await collections.tasks.query().fetch();
       const existingTask = existing.find((et: any) => et.serverId === t.id);
       if (existingTask) {
-        await databaseWriteRetry(async () => {
+        await trySaveToDB(async () => {
           await existingTask.update((et: any) => {
             et.title = t.title;
             et.description = t.description ?? null;
@@ -167,7 +163,7 @@ export default function TaskDetailScreen() {
           });
         });
       } else {
-        await databaseWriteRetry(async () => {
+        await trySaveToDB(async () => {
           await collections.tasks.create((et: any) => {
             et.serverId = t.id; et.requestServerId = t.requestId; et.title = t.title;
             et.description = t.description ?? null; et.status = t.status;
@@ -198,7 +194,7 @@ export default function TaskDetailScreen() {
             }));
           }
         }
-        if (ops.length > 0) { await databaseWriteRetry(async () => { await database.batch(...ops); }); }
+        if (ops.length > 0) { await trySaveToDB(async () => { await database.batch(...ops); }); }
       }
       OfflineLogger.cache(`TaskDetail: saved task ${t.id} to DB`);
     } catch (e) { OfflineLogger.cache('TaskDetail: save to DB failed', e); }

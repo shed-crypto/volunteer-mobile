@@ -472,41 +472,28 @@ export class SyncService {
     }
   }
 
-  private static async executeBatch(operations: any[], maxRetries: number = 5): Promise<void> {
+  private static async executeBatch(operations: any[]): Promise<void> {
     const CHUNK_SIZE = 500;
-    // Паузи: 200ms, 500ms, 1000ms, 2000ms, 4000ms
-    const RETRY_DELAYS = [200, 500, 1000, 2000, 4000];
+    // Швидкі retry (200ms) — не блокуємо UI
+    const MAX_RETRIES = 2;
     
     for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
       const chunk = operations.slice(i, i + CHUNK_SIZE);
-      let lastError: any = null;
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-          await DBLock.withLock(async () => {
-            await database.write(async () => {
-              await database.batch(...chunk);
-            });
+          await database.write(async () => {
+            await database.batch(...chunk);
           });
-          lastError = null;
           break; // success
         } catch (err: any) {
-          lastError = err;
-          const delay = RETRY_DELAYS[attempt] || 5000;
-          // Only retry on Diagnostic error (race condition)
           if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
-            OfflineLogger.sync(`executeBatch retry ${attempt + 1}/${maxRetries} after Diagnostic error (wait ${delay}ms)`);
-            await new Promise(r => setTimeout(r, delay));
-            continue;
+            OfflineLogger.sync(`executeBatch retry ${attempt + 1}/${MAX_RETRIES} after Diagnostic error`);
+            await new Promise(r => setTimeout(r, 200));
+            if (attempt < MAX_RETRIES - 1) continue;
           }
-          // Non-retryable error — rethrow immediately
-          throw err;
+          // Log and swallow — не блокуємо sync через локальну БД
+          OfflineLogger.sync('executeBatch: failed (non-critical, sync continues)', err);
         }
-      }
-      // Если после всех попыток всё ещё ошибка — пробрасываем
-      if (lastError) {
-        OfflineLogger.sync('executeBatch: all retries exhausted, forcing DBLock reset');
-        DBLock.reset();
-        throw lastError;
       }
     }
   }
