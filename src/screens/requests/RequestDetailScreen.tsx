@@ -203,8 +203,8 @@ export default function RequestDetailScreen() {
     ]);
   }, [requestId, loadRequestLocal, loadTasksLocal]);
 
-  // ─── Helper: save request to local DB ────────────────────────────────────
-  const saveRequestToDB = useCallback(async (req: Request) => {
+  // ─── Helper: save request to local DB with retry on Diagnostic error ───
+  const saveRequestToDB = useCallback(async (req: Request, retryCount = 0) => {
     try {
       const existing = await collections.requests.query().fetch();
       const existingReq = existing.find((r: any) => r.serverId === req.id);
@@ -259,17 +259,21 @@ export default function RequestDetailScreen() {
       }
       OfflineLogger.cache(`RequestDetail: saved request ${req.id} to DB`);
     } catch (e: any) {
-      // Diagnostic error = WatermelonDB race condition (sync wrote same data first) — not fatal
       if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
-        OfflineLogger.cache('RequestDetail: save request skipped (sync already wrote it)');
+        if (retryCount < 3) {
+          OfflineLogger.cache(`RequestDetail: save request retry ${retryCount + 1}/3 after Diagnostic error`);
+          await new Promise(r => setTimeout(r, 300 * (retryCount + 1)));
+          return saveRequestToDB(req, retryCount + 1);
+        }
+        OfflineLogger.cache('RequestDetail: save request failed after retries (non-critical, sync will update)');
         return;
       }
       OfflineLogger.cache('RequestDetail: save request to DB failed', e);
     }
   }, []);
 
-  // ─── Helper: save tasks to local DB ──────────────────────────────────────
-  const saveTasksToDB = useCallback(async (taskList: Task[]) => {
+  // ─── Helper: save tasks to local DB with retry on Diagnostic error ──────
+  const saveTasksToDB = useCallback(async (taskList: Task[], retryCount = 0) => {
     try {
       const [existing, existingAssignmentsRaw] = await Promise.all([
         collections.tasks.query().fetch(),
@@ -327,7 +331,6 @@ export default function RequestDetailScreen() {
             const existingAssignment = assignmentsMap.get(key);
 
             if (existingAssignment) {
-              // НЕ перезаписувати assignment з локальними незастосованими змінми (pendingAction)
               if (!existingAssignment.pendingAction) {
                 operations.push(
                   existingAssignment.prepareUpdate((asgn: any) => {
@@ -367,10 +370,15 @@ export default function RequestDetailScreen() {
       }
     } catch (e: any) {
       if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
-        OfflineLogger.cache('RequestDetail: save tasks skipped (sync already wrote it)');
-      } else {
-        OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
+        if (retryCount < 3) {
+          OfflineLogger.cache(`RequestDetail: save tasks retry ${retryCount + 1}/3 after Diagnostic error`);
+          await new Promise(r => setTimeout(r, 300 * (retryCount + 1)));
+          return saveTasksToDB(taskList, retryCount + 1);
+        }
+        OfflineLogger.cache('RequestDetail: save tasks failed after retries (non-critical, sync will update)');
+        return;
       }
+      OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
     }
   }, [requestId]);
 
@@ -444,12 +452,9 @@ export default function RequestDetailScreen() {
           }
           setIsOfflineMode(false);
           
-          // ЗБЕРЕГТИ заявку в БД (тільки якщо sync не в процесі — race condition prevention)
-          if (!SyncService.isRunning) {
-            await saveRequestToDB(req);
-          } else {
-            OfflineLogger.cache('RequestDetail: save request skipped (sync in progress)');
-          }
+          // ЗБЕРЕГТИ заявку в БД (завжди — синхронізація може впасти)
+          // Якщо WatermelonDB викидає Diagnostic error, retry вже є в saveRequestToDB
+          await saveRequestToDB(req);
           
           try {
             const serverTasks = await tasksApi.getByRequest(requestId);
@@ -460,12 +465,8 @@ export default function RequestDetailScreen() {
               }
             });
             setTasks(serverTasks);
-            // ЗБЕРЕГТИ задачі в БД (тільки якщо sync не в процесі)
-            if (!SyncService.isRunning) {
-              await saveTasksToDB(serverTasks);
-            } else {
-              OfflineLogger.cache('RequestDetail: save tasks skipped (sync in progress)');
-            }
+            // ЗБЕРЕГТИ задачі в БД (завжди — синхронізація може впасти)
+            await saveTasksToDB(serverTasks);
           } catch (serverTaskError) {
             OfflineLogger.network('Server tasks failed, keeping local tasks');
             // Залишаємо локальні задачі
