@@ -341,44 +341,57 @@ export class SyncService {
             preparedOps.push(item.prepareMarkAsDeleted());
             const payload = item.payloadData;
 
-            // При конфлікті — очистити pendingAction в локальних assignment/task
-            // оскільки дія вже застосована на сервері (або не має сенсу)
+            // При конфлікті — НЕГАЙНО очистити pendingAction в локальній БД
+            // Використовуємо окремий database.write, щоб не покладатися на executeBatch
+            // (якщо executeBatch впаде з Diagnostic error, зміни все одно збережуться)
             if (payload) {
               const conflictTaskId = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
               try {
-                const localAssignments = await collections.taskAssignments.query().fetch();
-                const pendingAssignment = (localAssignments as any[]).find(
-                  (a: any) => a.taskId === conflictTaskId && a.pendingAction
-                );
-                if (pendingAssignment) {
-                  preparedOps.push(
-                    pendingAssignment.prepareUpdate((a: any) => {
+                await database.write(async () => {
+                  const localAssignments = await collections.taskAssignments.query().fetch();
+                  const pendingAssignment = (localAssignments as any[]).find(
+                    (a: any) => a.taskId === conflictTaskId && a.pendingAction
+                  );
+                  if (pendingAssignment) {
+                    await pendingAssignment.update((a: any) => {
                       a.pendingAction = null;
                       a.isSynced = true;
                       a.lastSyncedAt = Date.now();
-                    })
+                    });
+                  }
+                  const allLocalTasks = await collections.tasks.query().fetch();
+                  const conflictTask = (allLocalTasks as any[]).find(
+                    (t: any) => (t.serverId === conflictTaskId || t.id === conflictTaskId)
                   );
-                }
-              } catch (e) {
-                OfflineLogger.sync(`ActionQueue: conflict clear pendingAction failed`, e);
-              }
-              // Також оновити task: зменшити assignedCount при конфлікті WITHDRAW
-              try {
-                const allLocalTasks = (await collections.tasks.query().fetch()) as any[];
-                const conflictTask = allLocalTasks.find(
-                  (t: any) => (t.serverId === conflictTaskId || t.id === conflictTaskId)
-                );
-                if (conflictTask && item.actionType === 'TASK_WITHDRAW') {
-                  preparedOps.push(
-                    conflictTask.prepareUpdate((t: any) => {
+                  if (conflictTask) {
+                    await conflictTask.update((t: any) => {
                       t.pendingAction = null;
                       t.isSynced = true;
                       t.lastSyncedAt = Date.now();
-                    })
-                  );
-                }
+                    });
+                  }
+                });
+                OfflineLogger.sync(`ActionQueue: conflict cleanup immediate for task ${conflictTaskId}`);
               } catch (e) {
-                OfflineLogger.sync(`ActionQueue: conflict clear task pendingAction failed`, e);
+                OfflineLogger.sync(`ActionQueue: conflict immediate cleanup failed (will retry via preparedOps)`, e);
+                // Fallback: через preparedOps (якщо immediate write не вдався)
+                try {
+                  const localAssignments = await collections.taskAssignments.query().fetch();
+                  const pendingAssignment = (localAssignments as any[]).find(
+                    (a: any) => a.taskId === conflictTaskId && a.pendingAction
+                  );
+                  if (pendingAssignment) {
+                    preparedOps.push(
+                      pendingAssignment.prepareUpdate((a: any) => {
+                        a.pendingAction = null;
+                        a.isSynced = true;
+                        a.lastSyncedAt = Date.now();
+                      })
+                    );
+                  }
+                } catch (e2) {
+                  OfflineLogger.sync(`ActionQueue: conflict fallback cleanup failed`, e2);
+                }
               }
             }
 
