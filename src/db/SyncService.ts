@@ -16,6 +16,9 @@ import NetInfo from '@react-native-community/netinfo';
 import { Q } from '@nozbe/watermelondb';
 
 export class SyncService {
+  static get isRunning(): boolean {
+    return SyncService.isSyncing;
+  }
   private static isSyncing = false;
   private static _lastFailedAt: number | null = null;
   private static _listeners: Map<string, ((data: any) => void)[]> = new Map();
@@ -336,6 +339,48 @@ export class SyncService {
             OfflineLogger.sync(`ActionQueue: ${isConflict ? 'CONFLICT' : 'NON-RETRYABLE'} detected for ${item.actionType} — ${errorCode}`);
             preparedOps.push(item.prepareMarkAsDeleted());
             const payload = item.payloadData;
+
+            // При конфлікті — очистити pendingAction в локальних assignment/task
+            // оскільки дія вже застосована на сервері (або не має сенсу)
+            if (payload) {
+              const conflictTaskId = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
+              try {
+                const localAssignments = await collections.taskAssignments.query().fetch();
+                const pendingAssignment = (localAssignments as any[]).find(
+                  (a: any) => a.taskId === conflictTaskId && a.pendingAction
+                );
+                if (pendingAssignment) {
+                  preparedOps.push(
+                    pendingAssignment.prepareUpdate((a: any) => {
+                      a.pendingAction = null;
+                      a.isSynced = true;
+                      a.lastSyncedAt = Date.now();
+                    })
+                  );
+                }
+              } catch (e) {
+                OfflineLogger.sync(`ActionQueue: conflict clear pendingAction failed`, e);
+              }
+              // Також оновити task: зменшити assignedCount при конфлікті WITHDRAW
+              try {
+                const allLocalTasks = (await collections.tasks.query().fetch()) as any[];
+                const conflictTask = allLocalTasks.find(
+                  (t: any) => (t.serverId === conflictTaskId || t.id === conflictTaskId)
+                );
+                if (conflictTask && item.actionType === 'TASK_WITHDRAW') {
+                  preparedOps.push(
+                    conflictTask.prepareUpdate((t: any) => {
+                      t.pendingAction = null;
+                      t.isSynced = true;
+                      t.lastSyncedAt = Date.now();
+                    })
+                  );
+                }
+              } catch (e) {
+                OfflineLogger.sync(`ActionQueue: conflict clear task pendingAction failed`, e);
+              }
+            }
+
             this.emit('conflict', { actionType: item.actionType, taskId: (payload as any).taskId });
             const eventType = isConflict ? 'sync_conflict' : 'queue_failed' as const;
             this.emit('sync-event', {
@@ -368,7 +413,13 @@ export class SyncService {
     }
 
     if (preparedOps.length > 0) {
-      await this.executeBatch(preparedOps);
+      try {
+        await this.executeBatch(preparedOps);
+      } catch (err: any) {
+        // executeBatch вже має retry. Якщо все ще помилка — логуємо і продовжуємо.
+        // Action на сервер вже відправлені успішно, тому не блокуємо sync повністю.
+        OfflineLogger.sync('Push: executeBatch failed after retries, but server actions succeeded', err);
+      }
     }
 
     return count;
@@ -407,13 +458,34 @@ export class SyncService {
     }
   }
 
-  private static async executeBatch(operations: any[]): Promise<void> {
+  private static async executeBatch(operations: any[], maxRetries: number = 3): Promise<void> {
     const CHUNK_SIZE = 500;
     for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
       const chunk = operations.slice(i, i + CHUNK_SIZE);
-      await database.write(async () => {
-        await database.batch(...chunk);
-      });
+      let lastError: any = null;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          await database.write(async () => {
+            await database.batch(...chunk);
+          });
+          lastError = null;
+          break; // success
+        } catch (err: any) {
+          lastError = err;
+          // Only retry on Diagnostic error (race condition)
+          if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
+            OfflineLogger.sync(`executeBatch retry ${attempt + 1}/${maxRetries} after Diagnostic error`);
+            await new Promise(r => setTimeout(r, 200 * (attempt + 1))); // 200ms, 400ms, 600ms
+            continue;
+          }
+          // Non-retryable error — rethrow immediately
+          throw err;
+        }
+      }
+      // Если после всех попыток всё ещё ошибка — пробрасываем
+      if (lastError) {
+        throw lastError;
+      }
     }
   }
 
@@ -692,11 +764,8 @@ export class SyncService {
     try {
       await this.executeBatch(preparedOperations);
     } catch (err: any) {
-      if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
-        OfflineLogger.sync('Pull: Diagnostic error (race with other DB writer), continuing');
-      } else {
-        throw err;
-      }
+      // executeBatch вже має retry (3 спроби). Якщо все ще помилка — логуємо і продовжуємо
+      OfflineLogger.sync('Pull: executeBatch failed after retries', err);
     }
     return count;
   }

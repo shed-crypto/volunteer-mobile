@@ -10,6 +10,7 @@ import { API_BASE_URL, getServerReachable } from '../../api/axios';
 import { MediaViewer } from '../../components/MediaViewer';
 import { requestsApi } from '../../api/requests.api';
 import { tasksApi } from '../../api/tasks.api';
+import { SyncService } from '../../db/SyncService';
 import { Request, Task, TaskStatus, SystemRole, RequestStatus } from '../../types';
 import {
   Colors, urgencyColors, statusColors,
@@ -443,8 +444,12 @@ export default function RequestDetailScreen() {
           }
           setIsOfflineMode(false);
           
-          // ЗБЕРЕГТИ заявку в БД
-          await saveRequestToDB(req);
+          // ЗБЕРЕГТИ заявку в БД (тільки якщо sync не в процесі — race condition prevention)
+          if (!SyncService.isRunning) {
+            await saveRequestToDB(req);
+          } else {
+            OfflineLogger.cache('RequestDetail: save request skipped (sync in progress)');
+          }
           
           try {
             const serverTasks = await tasksApi.getByRequest(requestId);
@@ -455,8 +460,12 @@ export default function RequestDetailScreen() {
               }
             });
             setTasks(serverTasks);
-            // ЗБЕРЕГТИ задачі в БД
-            await saveTasksToDB(serverTasks);
+            // ЗБЕРЕГТИ задачі в БД (тільки якщо sync не в процесі)
+            if (!SyncService.isRunning) {
+              await saveTasksToDB(serverTasks);
+            } else {
+              OfflineLogger.cache('RequestDetail: save tasks skipped (sync in progress)');
+            }
           } catch (serverTaskError) {
             OfflineLogger.network('Server tasks failed, keeping local tasks');
             // Залишаємо локальні задачі
