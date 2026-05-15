@@ -18,8 +18,11 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collections, database } from '../db/index';
+import { collections, safeWrite } from '../db/index';
 import { ActionQueueItem } from '../db/models/ActionQueueItem';
+import { useAuth } from '../context/AuthContext';
+import { AssignmentStatus, TaskStatus } from '../types';
+import { countActiveAssignments } from '../db/helpers/assignments';
 
 /* ────────── Types ────────── */
 
@@ -122,9 +125,165 @@ export function refreshAllPendingActions() {
   emitGlobal('pending-actions-changed');
 }
 
+async function findLocalTask(taskId: string) {
+  const tasks = await collections.tasks.query().fetch();
+  return tasks.find((task: any) => task.serverId === taskId || task.id === taskId);
+}
+
+async function findLocalAssignment(taskId: string, userId: string) {
+  const assignments = await collections.taskAssignments.query().fetch();
+  return assignments.find((assignment: any) => assignment.taskId === taskId && assignment.userId === userId);
+}
+
+async function recalculateTaskAssignmentState(task: any, taskId: string, pendingAction: string | null) {
+  const assignments = await collections.taskAssignments.query().fetch();
+  const taskAssignments = (assignments as any[]).filter((assignment: any) => assignment.taskId === taskId);
+  const nextCount = countActiveAssignments(taskAssignments);
+
+  await task.update((record: any) => {
+    record.assignedCount = nextCount;
+    record.status = nextCount > 0 ? TaskStatus.IN_PROGRESS : TaskStatus.TODO;
+    record.isSynced = pendingAction == null;
+    record.pendingAction = pendingAction;
+    record.lastSyncedAt = pendingAction == null ? Date.now() : null;
+  });
+}
+
+async function applyLocalTaskAction(
+  actionType: string,
+  taskId: string,
+  userId?: string,
+  userName?: string,
+  payload: Record<string, unknown> = {},
+) {
+  const task = await findLocalTask(taskId);
+
+  if (actionType === 'TASK_ASSIGN' && userId) {
+    const assignment = await findLocalAssignment(taskId, userId);
+    if (assignment) {
+      await assignment.update((record: any) => {
+        record.status = AssignmentStatus.ASSIGNED;
+        record.userName = userName ?? record.userName ?? null;
+        record.fulfilledRole = (payload.fulfilledRole as string | undefined) ?? record.fulfilledRole ?? null;
+        record.assignedAt = Date.now();
+        record.isSynced = false;
+        record.pendingAction = 'assign';
+        record.lastSyncedAt = null;
+      });
+    } else {
+      await collections.taskAssignments.create((record: any) => {
+        record.taskId = taskId;
+        record.userId = userId;
+        record.userName = userName ?? null;
+        record.status = AssignmentStatus.ASSIGNED;
+        record.fulfilledRole = (payload.fulfilledRole as string | undefined) ?? null;
+        record.assignedAt = Date.now();
+        record.isSynced = false;
+        record.pendingAction = 'assign';
+        record.lastSyncedAt = null;
+      });
+    }
+
+    if (task) await recalculateTaskAssignmentState(task, taskId, 'assign');
+    return;
+  }
+
+  if (actionType === 'TASK_WITHDRAW' && userId) {
+    const assignment = await findLocalAssignment(taskId, userId);
+    if (assignment) {
+      await assignment.update((record: any) => {
+        record.status = AssignmentStatus.WITHDRAWN;
+        record.isSynced = false;
+        record.pendingAction = 'withdraw';
+        record.lastSyncedAt = null;
+      });
+    }
+
+    if (task) await recalculateTaskAssignmentState(task, taskId, 'withdraw');
+    return;
+  }
+
+  if (task && actionType === 'TASK_COMPLETE') {
+    await task.update((record: any) => {
+      record.status = TaskStatus.PENDING_REVIEW;
+      record.isSynced = false;
+      record.pendingAction = 'complete';
+      record.lastSyncedAt = null;
+    });
+    return;
+  }
+
+  if (task && actionType === 'TASK_RETURN_TO_PROGRESS') {
+    await task.update((record: any) => {
+      record.status = TaskStatus.IN_PROGRESS;
+      record.isSynced = false;
+      record.pendingAction = 'return_to_progress';
+      record.lastSyncedAt = null;
+    });
+  }
+}
+
+async function revertLocalTaskAction(
+  actionType: string,
+  taskId: string,
+  userId?: string,
+) {
+  await safeWrite(async () => {
+    const task = await findLocalTask(taskId);
+
+    if (actionType === 'TASK_ASSIGN' && userId) {
+      const assignment = await findLocalAssignment(taskId, userId);
+      if (assignment) {
+        await assignment.update((record: any) => {
+          record.status = AssignmentStatus.WITHDRAWN;
+          record.pendingAction = null;
+          record.isSynced = true;
+          record.lastSyncedAt = Date.now();
+        });
+      }
+      if (task) await recalculateTaskAssignmentState(task, taskId, null);
+      return;
+    }
+
+    if (actionType === 'TASK_WITHDRAW' && userId) {
+      const assignment = await findLocalAssignment(taskId, userId);
+      if (assignment) {
+        await assignment.update((record: any) => {
+          record.status = AssignmentStatus.ASSIGNED;
+          record.pendingAction = null;
+          record.isSynced = true;
+          record.lastSyncedAt = Date.now();
+        });
+      }
+      if (task) await recalculateTaskAssignmentState(task, taskId, null);
+      return;
+    }
+
+    if (task && actionType === 'TASK_COMPLETE') {
+      await task.update((record: any) => {
+        record.status = TaskStatus.IN_PROGRESS;
+        record.pendingAction = null;
+        record.isSynced = true;
+        record.lastSyncedAt = Date.now();
+      });
+      return;
+    }
+
+    if (task && actionType === 'TASK_RETURN_TO_PROGRESS') {
+      await task.update((record: any) => {
+        record.status = TaskStatus.PENDING_REVIEW;
+        record.pendingAction = null;
+        record.isSynced = true;
+        record.lastSyncedAt = Date.now();
+      });
+    }
+  });
+}
+
 /* ────────── Hook ────────── */
 
 export function usePendingActions(taskId: string): PendingActionsInfo {
+  const { user } = useAuth();
   const [pendingActions, setPendingActions] = useState<PendingAction[]>(() => {
     // INIT: читаємо з IMMEDIATE cache синхронно — без очікування
     const immediate = _immediatePending[taskId];
@@ -210,16 +369,18 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
         const queueItems = (await collections.actionQueue.query().fetch()) as ActionQueueItem[];
         const item = queueItems.find((q) => q.id === actionId);
         if (item) {
-          await database.write(async () => {
+          const actionType = item.actionType;
+          await safeWrite(async () => {
             await item.destroyPermanently();
           });
+          await revertLocalTaskAction(actionType, taskId, user?.id);
           await loadPendingActions();
         }
       } catch (e) {
         console.warn('[usePendingActions] remove error', e);
       }
     },
-    [loadPendingActions, taskId]
+    [loadPendingActions, taskId, user?.id]
   );
 
   /** СПІЛЬНА: enqueue offline action (dedup + immediate UI + DB) */
@@ -235,19 +396,41 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
     if (!payload || !mergedPayload.taskId) {
       console.warn(`[usePendingActions] enqueueOfflineAction: taskId missing for ${actionType}`, { taskId, payload });
     }
-    // 3. Async DB write (only happens once due to dedup guard)
+    // 3. Async DB write + optimistic local mutation (only happens once due to dedup guard)
     // IMPORTANT: include taskId in payload so SyncService.push() can find it
-    await database.write(async () => {
+    await safeWrite(async () => {
+      const queueItems = (await collections.actionQueue.query().fetch()) as ActionQueueItem[];
+      const oppositeAction =
+        actionType === 'TASK_ASSIGN'
+          ? 'TASK_WITHDRAW'
+          : actionType === 'TASK_WITHDRAW'
+            ? 'TASK_ASSIGN'
+            : null;
+
+      for (const item of queueItems) {
+        const queuedPayload = parsePayload(item.payloadRaw) || {};
+        const queuedTaskId = queuedPayload.taskId || queuedPayload.task_id || queuedPayload.id;
+        if (queuedTaskId !== taskId) continue;
+        if (item.actionType === actionType || item.actionType === oppositeAction) {
+          await item.destroyPermanently();
+        }
+      }
+
       await collections.actionQueue.create((aq: any) => {
         aq.actionType = actionType;
         aq.payloadRaw = JSON.stringify(mergedPayload);
         aq.createdAt = Date.now();
         aq.retryCount = 0;
+        aq.error = null;
+        aq.lastErrorCode = null;
+        aq.nextRetryAt = null;
       });
+
+      await applyLocalTaskAction(actionType, taskId, user?.id, user?.fullName, mergedPayload);
     });
     // 4. Notify ALL usePendingActions hooks across the app to refresh
     refreshAllPendingActions();
-  }, [taskId]);
+  }, [taskId, user?.id, user?.fullName]);
 
   // EAGER: update immediately after local mutations + listen for global events
   useEffect(() => {

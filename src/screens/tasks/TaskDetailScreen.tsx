@@ -29,7 +29,7 @@ import { Badge, Card, Button, LoadingScreen, ScreenHeader, Input, ProgressBar } 
 import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
-import { collections, database } from '../../db/index';
+import { collections, database, safeWrite } from '../../db/index';
 import { DBLock } from '../../db/DBLock';
 import { TaskReportModal } from '../../components/TaskReportModal';
 import { fileUtils } from '../../utils/fileUtils';
@@ -107,7 +107,8 @@ export default function TaskDetailScreen() {
         title: (local as any).title, description: (local as any).description, status: (local as any).status,
         neededPeopleCount: (local as any).neededPeopleCount,
         requiredRoles: (local as any).requiredRoles || [],
-        assignedCount: (local as any).assignedCount, priority: (local as any).priority,
+        assignedCount: taskAssignments.length > 0 ? taskAssignments.filter((a: any) => a.status !== 'withdrawn' && a.status !== 'completed').length : (local as any).assignedCount,
+        priority: (local as any).priority,
         deadline: (local as any).deadline ? new Date((local as any).deadline).toISOString() : undefined,
         chatId: (local as any).chatId,
         assignments: taskAssignments,
@@ -123,22 +124,13 @@ export default function TaskDetailScreen() {
   // Якщо не вдалося — логуємо і продовжуємо (не блокуємо UI).
   // Дані оновляться при наступному sync/pull з сервера.
   const trySaveToDB = async (writeFn: () => Promise<void>): Promise<boolean> => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await database.write(writeFn);
-        return true;
-      } catch (err: any) {
-        if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
-          OfflineLogger.cache(`TaskDetail: DB write retry ${attempt + 1}/2 after Diagnostic error`);
-          await new Promise(r => setTimeout(r, 200));
-          continue;
-        }
-        OfflineLogger.cache('TaskDetail: DB write failed (non-critical)', err);
-        return false;
-      }
+    try {
+      await safeWrite(writeFn);
+      return true;
+    } catch (err: any) {
+      OfflineLogger.cache('TaskDetail: DB write failed (non-critical)', err);
+      return false;
     }
-    OfflineLogger.cache('TaskDetail: DB write failed after retry (non-critical, sync will update)');
-    return false;
   };
 
   /* ─── Save task to local DB ─────────────────────────────────────────────── */
@@ -165,7 +157,7 @@ export default function TaskDetailScreen() {
       } else {
         await trySaveToDB(async () => {
           await collections.tasks.create((et: any) => {
-            et.serverId = t.id; et.requestServerId = t.requestId; et.title = t.title;
+            et.serverId = t.id; et.requestId = t.requestId; et.requestServerId = t.requestId; et.title = t.title;
             et.description = t.description ?? null; et.status = t.status;
             et.neededPeopleCount = t.neededPeopleCount ?? 1;
             et.requiredRolesRaw = JSON.stringify(t.requiredRoles ?? []);
@@ -225,7 +217,7 @@ export default function TaskDetailScreen() {
           ops.push(collections.taskReports.prepareCreate((er: any) => { er.serverId = r.id; er.taskId = r.taskId; er.userId = r.userId; er.userName = r.user?.fullName ?? null; er.comment = r.comment; er.attachmentsRaw = JSON.stringify(r.attachments ?? []); er.createdAt = r.createdAt ? new Date(r.createdAt).getTime() : Date.now(); er.isSynced = true; er.lastSyncedAt = Date.now(); }));
         }
       }
-      if (ops.length > 0) { await database.write(async () => { await database.batch(...ops); }); }
+      if (ops.length > 0) { await safeWrite(async () => { await database.batch(...ops); }); }
     } catch (e) { OfflineLogger.cache('TaskDetail: save reports to DB failed', e); }
   }, []);
 
@@ -289,7 +281,7 @@ export default function TaskDetailScreen() {
           setActioning(true);
           try {
             await tasksApi.withdraw(task.id);
-            await database.write(async () => {
+            await safeWrite(async () => {
               const allTasks = await collections.tasks.query().fetch();
               const localTask = allTasks.find((t: any) => t.serverId === task.id || t.id === task.id);
               if (localTask) {
@@ -329,7 +321,7 @@ export default function TaskDetailScreen() {
       setActioning(true);
       try {
         await tasksApi.assign(task.id);
-        await database.write(async () => {
+        await safeWrite(async () => {
           const allTasks = await collections.tasks.query().fetch();
           const localTask = allTasks.find((t: any) => t.serverId === task.id || t.id === task.id);
           if (localTask) {
@@ -344,7 +336,7 @@ export default function TaskDetailScreen() {
           if (existing) {
             await existing.update((a: any) => { a.status = AssignmentStatus.ASSIGNED; a.isSynced = true; a.pendingAction = null; a.lastSyncedAt = Date.now(); });
           } else {
-            await collections.taskAssignments.create((a: any) => { a.taskId = task.id; a.userId = user?.id || ''; a.status = AssignmentStatus.ASSIGNED; a.isSynced = true; a.pendingAction = null; a.lastSyncedAt = Date.now(); });
+            await collections.taskAssignments.create((a: any) => { a.taskId = task.id; a.userId = user?.id || ''; a.userName = user?.fullName ?? null; a.status = AssignmentStatus.ASSIGNED; a.fulfilledRole = null; a.assignedAt = Date.now(); a.isSynced = true; a.pendingAction = null; a.lastSyncedAt = Date.now(); });
           }
         });
         await load();

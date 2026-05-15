@@ -10,7 +10,7 @@
  *   SyncEventLogger.log('sync_success', 'Синхронізація', 'Дані оновлено');
  *   SyncEventLogger.log('offline_enqueue', 'Дію збережено', 'Ви призначили себе на задачу', { taskId: '...' });
  */
-import { database, collections } from '../db/index';
+import { database, collections, safeWrite } from '../db/index';
 
 export type SyncEventType =
   | 'sync_success'
@@ -43,7 +43,7 @@ export class SyncEventLogger {
     metadata?: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await database.write(async () => {
+      await safeWrite(async () => {
         await collections.syncEvents.create((event: any) => {
           event.eventType = eventType;
           event.title = title;
@@ -66,7 +66,7 @@ export class SyncEventLogger {
   static async clearAll(): Promise<void> {
     try {
       const all = await collections.syncEvents.query().fetch();
-      await database.write(async () => {
+      await safeWrite(async () => {
         for (const event of all) {
           await event.destroyPermanently();
         }
@@ -91,7 +91,7 @@ export class SyncEventLogger {
     try {
       const unread = (await collections.syncEvents.query().fetch()).filter((e: any) => !e.isRead);
       if (unread.length === 0) return;
-      await database.write(async () => {
+      await safeWrite(async () => {
         for (const event of unread) {
           await event.update((e: any) => { e.isRead = true; });
         }
@@ -109,7 +109,7 @@ export class SyncEventLogger {
         const toDelete = all
           .sort((a: any, b: any) => b.createdAt - a.createdAt)
           .slice(100);
-        await database.write(async () => {
+        await safeWrite(async () => {
           for (const event of toDelete) {
             await event.destroyPermanently();
           }

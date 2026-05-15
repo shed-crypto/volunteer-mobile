@@ -1,4 +1,4 @@
-import { database, collections } from './index';
+import { database, collections, safeWrite } from './index';
 import { DBLock } from './DBLock';
 import { countActiveAssignments } from './helpers/assignments';
 import { RequestModel } from './models/RequestModel';
@@ -58,7 +58,8 @@ export class SyncService {
     }
 
     this.isSyncing = true;
-    OfflineLogger.sync('Starting sync...');
+    const startedAt = Date.now();
+    OfflineLogger.sync(`=== SYNC START (force=${force}) ===`);
 
     let pushed = 0;
     let pulled = 0;
@@ -68,13 +69,15 @@ export class SyncService {
       pushed = await this.push();
       pulled = await this.pull(userId);
       this._lastFailedAt = null; // Reset on success
-      OfflineLogger.sync(`Sync completed: pushed=${pushed}, pulled=${pulled}`);
+
+      const elapsed = Date.now() - startedAt;
+      OfflineLogger.sync(`=== SYNC DONE in ${elapsed}ms: pushed=${pushed}, pulled=${pulled} ===`);
       if (pushed > 0 || pulled > 0) {
         this.emit('sync-event', {
           type: 'sync_success',
           title: 'Синхронізація',
           description: `Оновлено: ${pushed} дій відправлено, ${pulled} записів отримано`,
-          metadata: { pushed, pulled },
+          metadata: { pushed, pulled, elapsed },
         });
       }
     } catch (err) {
@@ -126,13 +129,16 @@ export class SyncService {
   private static async push(): Promise<number> {
     let count = 0;
     const preparedOps: any[] = [];
+    const pushStartedAt = Date.now();
 
     if (!getServerReachable()) return 0;
 
     // 1. New requests
     try {
       const allRequests = (await collections.requests.query().fetch()) as unknown as RequestModel[];
-      for (const req of allRequests.filter((r) => !r.isSynced && r.pendingAction === 'create')) {
+      const unsyncedRequests = allRequests.filter((r) => !r.isSynced && r.pendingAction === 'create');
+      OfflineLogger.sync(`[PUSH] Found ${unsyncedRequests.length} unsynced requests`);
+      for (const req of unsyncedRequests) {
         try {
           const created = await requestsApi.create({
             title: req.title,
@@ -152,8 +158,9 @@ export class SyncService {
             })
           );
           count++;
+          OfflineLogger.sync(`[PUSH] Created request "${req.title}" → serverId=${created.id}`);
         } catch (err) {
-          OfflineLogger.sync(`Push request failed`, err);
+          OfflineLogger.sync(`[PUSH] Request push failed: ${req.title}`, err);
         }
       }
     } catch (err) {
@@ -163,7 +170,9 @@ export class SyncService {
     // 2. New tasks
     try {
       const allTasks = (await collections.tasks.query().fetch()) as unknown as TaskModel[];
-      for (const task of allTasks.filter((t) => !t.isSynced && t.pendingAction === 'create')) {
+      const unsyncedTasks = allTasks.filter((t) => !t.isSynced && t.pendingAction === 'create');
+      OfflineLogger.sync(`[PUSH] Found ${unsyncedTasks.length} unsynced tasks`);
+      for (const task of unsyncedTasks) {
         if (!task.requestServerId) continue;
         try {
           const created = await tasksApi.create(task.requestServerId, {
@@ -180,8 +189,9 @@ export class SyncService {
             })
           );
           count++;
+          OfflineLogger.sync(`[PUSH] Created task "${task.title}" → serverId=${created.id}`);
         } catch (err) {
-          OfflineLogger.sync(`Push task failed`, err);
+          OfflineLogger.sync(`[PUSH] Task push failed: ${task.title}`, err);
         }
       }
     } catch (err) {
@@ -191,7 +201,9 @@ export class SyncService {
     // 3. Chat messages
     try {
       const allMessages = (await collections.chatMessages.query().fetch()) as unknown as ChatMessageModel[];
-      for (const msg of allMessages.filter((m) => !m.isSynced && m.pendingAction === 'send')) {
+      const unsyncedMessages = allMessages.filter((m) => !m.isSynced && m.pendingAction === 'send');
+      OfflineLogger.sync(`[PUSH] Found ${unsyncedMessages.length} unsynced messages`);
+      for (const msg of unsyncedMessages) {
         try {
           await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
           preparedOps.push(
@@ -202,9 +214,9 @@ export class SyncService {
           );
           count++;
         } catch (err: any) {
-          OfflineLogger.sync('Push message failed:', err);
+          OfflineLogger.sync(`[PUSH] Message push failed`, err);
           if (err.response?.status === 403) {
-            OfflineLogger.sync(`Removing forbidden message: ${msg.id}`);
+            OfflineLogger.sync(`[PUSH] Removing forbidden message: ${msg.id}`);
             preparedOps.push(msg.prepareMarkAsDeleted());
           }
         }
@@ -216,18 +228,20 @@ export class SyncService {
     // 4. Process action_queue (offline task actions: assign, withdraw, complete)
     try {
       const now = Date.now();
-      const queueItems = (await collections.actionQueue.query().fetch()) as unknown as ActionQueueItem[];
-      
+      const allQueueItems = (await collections.actionQueue.query().fetch()) as unknown as ActionQueueItem[];
+
       // Sort by next_retry_at (ready items first, then oldest)
-      queueItems.sort((a, b) => {
+      allQueueItems.sort((a, b) => {
         const aReady = a.nextRetryAt ? Math.max(0, a.nextRetryAt - now) : 0;
         const bReady = b.nextRetryAt ? Math.max(0, b.nextRetryAt - now) : 0;
         return aReady - bReady;
       });
 
-      for (const item of queueItems) {
+      OfflineLogger.sync(`[PUSH] Processing ${allQueueItems.length} action queue items`);
+
+      for (const item of allQueueItems) {
         if (item.retryCount >= 5) { // max 5 retries (2s→5m backoff)
-          OfflineLogger.sync(`ActionQueue: max retries exceeded for ${item.actionType}`);
+          OfflineLogger.sync(`[PUSH] ActionQueue: max retries exceeded for ${item.actionType} (retryCount=${item.retryCount}), removing`);
           preparedOps.push(item.prepareMarkAsDeleted());
           continue;
         }
@@ -245,109 +259,79 @@ export class SyncService {
               const taskIdStr = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
               const fulfilledRole = (payload as any).fulfilledRole;
               if (!taskIdStr) {
-                OfflineLogger.sync(`ActionQueue: TASK_ASSIGN missing taskId, payload:`, JSON.stringify(payload));
-                // Clean up empty legacy payloads
+                OfflineLogger.sync(`[PUSH] ActionQueue: TASK_ASSIGN missing taskId, payload:`, JSON.stringify(payload));
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
+              OfflineLogger.sync(`[PUSH] Sending TASK_ASSIGN for task ${taskIdStr} (role: ${fulfilledRole})`);
               await tasksApi.assign(taskIdStr, fulfilledRole as string);
-              // Clear pendingAction from local taskAssignments after successful push
-              try {
-                const localAssignments = await collections.taskAssignments.query().fetch();
-                const pendingAssignment = (localAssignments as any[]).find(
-                  (a: any) => a.taskId === taskIdStr && a.pendingAction
-                );
-                if (pendingAssignment) {
-                  preparedOps.push(
-                    pendingAssignment.prepareUpdate((a: any) => {
-                      a.pendingAction = null;
-                      a.isSynced = true;
-                      a.lastSyncedAt = Date.now();
-                    })
-                  );
-                }
-              } catch (e) {
-                OfflineLogger.sync(`ActionQueue: TASK_ASSIGN clear pendingAction failed`, e);
-              }
+              await this.prepareTaskActionCleanup(taskIdStr, preparedOps);
               break;
             }
             case 'TASK_WITHDRAW': {
               const taskIdStr2 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
               if (!taskIdStr2) {
-                OfflineLogger.sync(`ActionQueue: TASK_WITHDRAW missing taskId, payload:`, JSON.stringify(payload));
+                OfflineLogger.sync(`[PUSH] ActionQueue: TASK_WITHDRAW missing taskId, payload:`, JSON.stringify(payload));
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
+              OfflineLogger.sync(`[PUSH] Sending TASK_WITHDRAW for task ${taskIdStr2}`);
               await tasksApi.withdraw(taskIdStr2 as string);
-              // Clear pendingAction from local taskAssignments after successful push
-              try {
-                const localAssignments = await collections.taskAssignments.query().fetch();
-                const pendingAssignment = (localAssignments as any[]).find(
-                  (a: any) => a.taskId === taskIdStr2 && a.pendingAction
-                );
-                if (pendingAssignment) {
-                  preparedOps.push(
-                  pendingAssignment.prepareUpdate((a: any) => {
-                    a.pendingAction = null;
-                    a.isSynced = true;
-                    a.lastSyncedAt = Date.now();
-                  })
-                  );
-                }
-              } catch (e) {
-                OfflineLogger.sync(`ActionQueue: TASK_WITHDRAW clear pendingAction failed`, e);
-              }
+              await this.prepareTaskActionCleanup(taskIdStr2, preparedOps);
               break;
             }
             case 'TASK_COMPLETE': {
               const taskIdStr3 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
               if (!taskIdStr3) {
-                OfflineLogger.sync(`ActionQueue: TASK_COMPLETE missing taskId, payload:`, JSON.stringify(payload));
+                OfflineLogger.sync(`[PUSH] ActionQueue: TASK_COMPLETE missing taskId, payload:`, JSON.stringify(payload));
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
+              OfflineLogger.sync(`[PUSH] Sending TASK_COMPLETE for task ${taskIdStr3}`);
               await tasksApi.complete(taskIdStr3 as string);
+              await this.prepareTaskActionCleanup(taskIdStr3, preparedOps);
               break;
             }
             case 'TASK_RETURN_TO_PROGRESS': {
               const taskIdStr4 = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
               if (!taskIdStr4) {
-                OfflineLogger.sync(`ActionQueue: TASK_RETURN_TO_PROGRESS missing taskId, payload:`, JSON.stringify(payload));
+                OfflineLogger.sync(`[PUSH] ActionQueue: TASK_RETURN_TO_PROGRESS missing taskId, payload:`, JSON.stringify(payload));
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
+              OfflineLogger.sync(`[PUSH] Sending TASK_RETURN_TO_PROGRESS for task ${taskIdStr4}`);
               await tasksApi.returnToProgress(taskIdStr4 as string);
+              await this.prepareTaskActionCleanup(taskIdStr4, preparedOps);
               break;
             }
             default:
-              OfflineLogger.sync(`ActionQueue: unknown action type ${item.actionType}`);
+              OfflineLogger.sync(`[PUSH] ActionQueue: unknown action type ${item.actionType}`);
           }
 
           // Success — mark for deletion
           preparedOps.push(item.prepareMarkAsDeleted());
           count++;
+          OfflineLogger.sync(`[PUSH] ActionQueue: ${item.actionType} succeeded`);
         } catch (err: any) {
           const errorStr = String(err);
           const errorCode = err.response?.status || 'UNKNOWN';
-          OfflineLogger.sync(`ActionQueue: ${item.actionType} failed`, err);
+          OfflineLogger.sync(`[PUSH] ActionQueue: ${item.actionType} failed (HTTP ${errorCode})`, err);
 
           // CONFLICT DETECTION: 409 or "already assigned" error
-          const isConflict = err.response?.status === 409 || 
-            errorStr.toLowerCase().includes('already assigned') || 
+          const isConflict = err.response?.status === 409 ||
+            errorStr.toLowerCase().includes('already assigned') ||
             errorStr.toLowerCase().includes('conflict');
 
           if (isConflict || this.isNonRetryableError(err)) {
-            OfflineLogger.sync(`ActionQueue: ${isConflict ? 'CONFLICT' : 'NON-RETRYABLE'} detected for ${item.actionType} — ${errorCode}`);
+            OfflineLogger.sync(`[PUSH] ActionQueue: ${isConflict ? 'CONFLICT' : 'NON-RETRYABLE'} for ${item.actionType} — removing from queue`);
             preparedOps.push(item.prepareMarkAsDeleted());
             const payload = item.payloadData;
 
-            // При конфлікті — НЕГАЙНО очистити pendingAction в локальній БД
-            // Використовуємо окремий database.write, щоб не покладатися на executeBatch
-            // (якщо executeBatch впаде з Diagnostic error, зміни все одно збережуться)
+            // Clean up pendingAction immediately
             if (payload) {
               const conflictTaskId = (payload as any).taskId || (payload as any).task_id || (payload as any).id;
               try {
-                await database.write(async () => {
+                await safeWrite(async () => {
                   const localAssignments = await collections.taskAssignments.query().fetch();
                   const pendingAssignment = (localAssignments as any[]).find(
                     (a: any) => a.taskId === conflictTaskId && a.pendingAction
@@ -371,10 +355,10 @@ export class SyncService {
                     });
                   }
                 });
-                OfflineLogger.sync(`ActionQueue: conflict cleanup immediate for task ${conflictTaskId}`);
+                OfflineLogger.sync(`[PUSH] Conflict cleanup immediate for task ${conflictTaskId}`);
               } catch (e) {
-                OfflineLogger.sync(`ActionQueue: conflict immediate cleanup failed (will retry via preparedOps)`, e);
-                // Fallback: через preparedOps (якщо immediate write не вдався)
+                OfflineLogger.sync(`[PUSH] Conflict immediate cleanup failed`, e);
+                // Fallback: через preparedOps
                 try {
                   const localAssignments = await collections.taskAssignments.query().fetch();
                   const pendingAssignment = (localAssignments as any[]).find(
@@ -390,7 +374,7 @@ export class SyncService {
                     );
                   }
                 } catch (e2) {
-                  OfflineLogger.sync(`ActionQueue: conflict fallback cleanup failed`, e2);
+                  OfflineLogger.sync(`[PUSH] Conflict fallback cleanup failed`, e2);
                 }
               }
             }
@@ -411,6 +395,8 @@ export class SyncService {
             const jitter = Math.random() * 1000; // random 0-1000ms
             const nextRetry = Date.now() + backoffMs + jitter;
 
+            OfflineLogger.sync(`[PUSH] ActionQueue: ${item.actionType} will retry in ${backoffMs + jitter}ms (attempt ${item.retryCount + 1})`);
+
             preparedOps.push(
               item.prepareUpdate((aq: any) => {
                 aq.retryCount = (aq.retryCount || 0) + 1;
@@ -428,15 +414,52 @@ export class SyncService {
 
     if (preparedOps.length > 0) {
       try {
-        await this.executeBatch(preparedOps);
+        await this.executeBatch(preparedOps, 'push');
       } catch (err: any) {
-        // executeBatch вже має retry. Якщо все ще помилка — логуємо і продовжуємо.
-        // Action на сервер вже відправлені успішно, тому не блокуємо sync повністю.
-        OfflineLogger.sync('Push: executeBatch failed after retries, but server actions succeeded', err);
+        OfflineLogger.sync('[PUSH] executeBatch failed after retries, but server actions succeeded', err);
       }
     }
 
+    const pushElapsed = Date.now() - pushStartedAt;
+    OfflineLogger.sync(`[PUSH] Finished in ${pushElapsed}ms: ${count} items pushed, ${preparedOps.length} local ops`);
+
     return count;
+  }
+
+  private static async prepareTaskActionCleanup(taskId: string, preparedOps: any[]): Promise<void> {
+    try {
+      const localAssignments = await collections.taskAssignments.query().fetch();
+      const pendingAssignments = (localAssignments as any[]).filter(
+        (assignment: any) => assignment.taskId === taskId && assignment.pendingAction
+      );
+
+      for (const assignment of pendingAssignments) {
+        preparedOps.push(
+          assignment.prepareUpdate((record: any) => {
+            record.pendingAction = null;
+            record.isSynced = true;
+            record.lastSyncedAt = Date.now();
+          })
+        );
+      }
+
+      const localTasks = await collections.tasks.query().fetch();
+      const task = (localTasks as any[]).find(
+        (record: any) => (record.serverId === taskId || record.id === taskId) && record.pendingAction
+      );
+
+      if (task) {
+        preparedOps.push(
+          task.prepareUpdate((record: any) => {
+            record.pendingAction = null;
+            record.isSynced = true;
+            record.lastSyncedAt = Date.now();
+          })
+        );
+      }
+    } catch (e) {
+      OfflineLogger.sync(`[PUSH] ActionQueue: cleanup pending local state failed for task ${taskId}`, e);
+    }
   }
 
   private static isNonRetryableError(err: any): boolean {
@@ -453,7 +476,7 @@ export class SyncService {
         message.includes('not found') || message.includes('validation failed')) {
       return true;
     }
-    
+
     return false;
   }
 
@@ -472,53 +495,120 @@ export class SyncService {
     }
   }
 
-  private static async executeBatch(operations: any[]): Promise<void> {
+  public static async executeBatch(operations: any[], context: string = 'unknown'): Promise<void> {
+    if (operations.length === 0) return;
+
     const CHUNK_SIZE = 500;
-    // Швидкі retry (200ms) — не блокуємо UI
-    const MAX_RETRIES = 2;
-    
+    const startedAt = Date.now();
+    OfflineLogger.sync(`[DB_BATCH] ${context}: starting ${operations.length} operations in chunks of ${CHUNK_SIZE}`);
+
+    let totalSuccess = 0;
+    let totalSkipped = 0;
+
     for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
       const chunk = operations.slice(i, i + CHUNK_SIZE);
-      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
+      const chunkIdx = Math.floor(i / CHUNK_SIZE) + 1;
+      const totalChunks = Math.ceil(operations.length / CHUNK_SIZE);
+
+      try {
+        // Use DBLock with timeout to prevent deadlocks with other write operations
+        await DBLock.withLock(`executeBatch_${context}_chunk${chunkIdx}`, async () => {
           await database.write(async () => {
             await database.batch(...chunk);
           });
-          break; // success
-        } catch (err: any) {
-          if (err?.name === 'Diagnostic error' || String(err?.message || '').includes('Diagnostic')) {
-            OfflineLogger.sync(`executeBatch retry ${attempt + 1}/${MAX_RETRIES} after Diagnostic error`);
-            await new Promise(r => setTimeout(r, 200));
-            if (attempt < MAX_RETRIES - 1) continue;
+        });
+        totalSuccess += chunk.length;
+        OfflineLogger.sync(`[DB_BATCH] ${context}: chunk ${chunkIdx}/${totalChunks} OK (${chunk.length} ops)`);
+      } catch (err: any) {
+        OfflineLogger.sync(`[DB_BATCH] ${context}: chunk ${chunkIdx}/${totalChunks} FAILED (${chunk.length} ops)`, err);
+
+        // Try each operation individually with detailed logging
+        let individualSuccesses = 0;
+        let individualFailures = 0;
+        for (let opIdx = 0; opIdx < chunk.length; opIdx++) {
+          const op = chunk[opIdx];
+          try {
+            // Log the operation type and details before executing
+            const opDetails = this.describeOperation(op, i + opIdx);
+            OfflineLogger.sync(`[DB_BATCH] ${context}: attempting op ${i + opIdx + 1}/${operations.length} — ${opDetails}`);
+
+            await DBLock.withLock(`executeBatch_${context}_single`, async () => {
+              await database.write(async () => {
+                await database.batch(op);
+              });
+            });
+            individualSuccesses++;
+            OfflineLogger.sync(`[DB_BATCH] ${context}: op ${i + opIdx + 1} SUCCESS`);
+          } catch (opErr: any) {
+            individualFailures++;
+            const opDetails = this.describeOperation(op, i + opIdx);
+            const errStr = String(opErr?.message || opErr?.name || 'Unknown error');
+            OfflineLogger.sync(`[DB_BATCH] ${context}: op ${i + opIdx + 1} FAILED — ${opDetails}`, opErr);
           }
-          // Log and swallow — не блокуємо sync через локальну БД
-          OfflineLogger.sync('executeBatch: failed (non-critical, sync continues)', err);
         }
+        totalSuccess += individualSuccesses;
+        totalSkipped += individualFailures;
+        OfflineLogger.sync(`[DB_BATCH] ${context}: chunk ${chunkIdx}/${totalChunks} individual — ${individualSuccesses} ok, ${individualFailures} skipped`);
       }
+    }
+
+    const elapsed = Date.now() - startedAt;
+    OfflineLogger.sync(`[DB_BATCH] ${context}: FINISHED in ${elapsed}ms — ${totalSuccess} success, ${totalSkipped} skipped`);
+  }
+
+  // Helper to describe an operation for logging
+  private static describeOperation(op: any, index: number): string {
+    try {
+      if (!op) return `op[${index}]: null`;
+      if (typeof op !== 'object') return `op[${index}]: ${String(op)}`;
+
+      const table = op?.constructor?.table || op?.table || 'unknown';
+      const id = op?.id || op?._raw?.id || '?';
+
+      // prepareCreate: модель має _raw._status === 'created'
+      if (op._raw?._status === 'created') {
+        return `prepareCreate [${table}] id=${id || 'new'}`;
+      }
+      // prepareMarkAsDeleted або destroyPermanently
+      if (op._isDeleted) {
+        return `markAsDeleted [${table}] id=${id}`;
+      }
+      // prepareUpdate: модель має _isEditing = true
+      if (op._isEditing) {
+        return `prepareUpdate [${table}] id=${id}`;
+      }
+
+      return `op[${index}]: ${op.constructor?.name || 'unknown'}`;
+    } catch {
+      return `op[${index}]: error describing`;
     }
   }
 
   private static async pull(userId?: string): Promise<number> {
-    OfflineLogger.sync('Pull starting...');
+    OfflineLogger.sync(`[PULL] Starting...`);
+    const pullStartedAt = Date.now();
+
     let count = 0;
     const preparedOperations: any[] = [];
     const loadedIds = new Set<string>();
 
-    // Очищення збережених заявок
+    // Clear saved requests
     if (userId) {
       try {
         const serverSavedIds = await requestsApi.getSavedIds();
         const serverIdSet = new Set(serverSavedIds);
         const localSaved = (await collections.savedRequests.query().fetch()) as any[];
-        
+
         for (const localReq of localSaved) {
-          if (!serverIdSet.has(localReq.id)) {
+          if (!serverIdSet.has(localReq.requestId)) {
             preparedOperations.push(localReq.prepareMarkAsDeleted());
           }
         }
 
         const remoteSaved = await requestsApi.getSaved(100, 0);
+        const existingSavedIds = new Set(localSaved.map((req: any) => req.requestId));
         for (const req of remoteSaved) {
+          if (existingSavedIds.has(req.id)) continue;
           preparedOperations.push(
             collections.savedRequests.prepareCreate((r: any) => {
               r.requestId = req.id;
@@ -528,7 +618,7 @@ export class SyncService {
           );
         }
       } catch (err) {
-        OfflineLogger.sync('Sync saved requests error', err);
+        OfflineLogger.sync('[PULL] Sync saved requests error', err);
       }
     }
 
@@ -550,10 +640,20 @@ export class SyncService {
       try { addUnique(await requestsApi.getAll({ urgency: 'critical' as any, limit: 50 })); } catch {}
       try { addUnique(await requestsApi.getAll({ limit: 100 })); } catch {}
     } catch (err) {
-      OfflineLogger.sync('Pull requests error', err);
+      OfflineLogger.sync('[PULL] Fetch requests error', err);
     }
 
-    const localRequests = (await collections.requests.query().fetch()) as unknown as RequestModel[];
+    OfflineLogger.sync(`[PULL] Fetched ${serverRequests.length} requests (${loadedIds.size} unique)`);
+    if (serverRequests.length > 0) {
+      OfflineLogger.sync(`[PULL] Request IDs: ${serverRequests.map((r: any) => r.id).join(', ')}`);
+    }
+
+    let localRequests: any[] = [];
+    try {
+      localRequests = (await collections.requests.query().fetch()) as unknown as RequestModel[];
+    } catch (fetchErr: any) {
+      OfflineLogger.sync('[PULL] fetch local requests failed', fetchErr);
+    }
     const localRequestsMap = new Map(localRequests.map((r) => [r.serverId, r]));
 
     for (const sr of serverRequests) {
@@ -619,6 +719,8 @@ export class SyncService {
 
     // Process task fetching in batches to avoid 429 rate limiting
     const reqIds = visibleRequestServerIds.slice(0, 50);
+    OfflineLogger.sync(`[PULL] Fetching tasks for ${reqIds.length} requests (concurrency=${CONCURRENCY})`);
+
     for (let i = 0; i < reqIds.length; i += CONCURRENCY) {
       const batch = reqIds.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
@@ -651,7 +753,6 @@ export class SyncService {
                   t.description = st.description ?? null;
                   t.neededPeopleCount = st.neededPeopleCount ?? 1;
                   t.requiredRolesRaw = JSON.stringify(st.requiredRoles ?? []);
-                  // Recalculate assignedCount from server assignments (getter may not be serialized)
                   t.assignedCount = countActiveAssignments(st.assignments);
                   t.priority = st.priority ?? 0;
                   t.deadline = st.deadline ? new Date(st.deadline).getTime() : null;
@@ -660,15 +761,15 @@ export class SyncService {
                 }));
               }
             } else {
-              preparedOperations.push(collections.tasks.prepareCreate((t: any) => {
-                t.serverId = st.id;
-                t.requestServerId = reqId;
-                t.title = st.title;
+          preparedOperations.push(collections.tasks.prepareCreate((t: any) => {
+            t.serverId = st.id;
+            t.requestId = reqId;
+            t.requestServerId = reqId;
+            t.title = st.title;
                 t.description = st.description ?? null;
                 t.status = st.status;
                 t.neededPeopleCount = st.neededPeopleCount ?? 1;
                 t.requiredRolesRaw = JSON.stringify(st.requiredRoles ?? []);
-                // Recalculate assignedCount from server assignments (getter may not be serialized)
                 t.assignedCount = countActiveAssignments(st.assignments);
                 t.priority = st.priority ?? 0;
                 t.deadline = st.deadline ? new Date(st.deadline).getTime() : null;
@@ -686,7 +787,7 @@ export class SyncService {
                 const existingAssignment = assignmentsMap.get(key);
 
                 if (existingAssignment) {
-                  // НЕ перезаписувати assignment з локальними незастосованими змінми (pendingAction)
+                  // Do NOT overwrite assignments with local pending changes
                   if (!existingAssignment.pendingAction) {
                     preparedOperations.push(
                       existingAssignment.prepareUpdate((asgn: any) => {
@@ -698,6 +799,8 @@ export class SyncService {
                         asgn.lastSyncedAt = Date.now();
                       })
                     );
+                  } else {
+                    OfflineLogger.sync(`[PULL] SKIP assignment update for task ${taskId} user ${a.userId} — has pendingAction`);
                   }
                 } else {
                   preparedOperations.push(
@@ -721,38 +824,57 @@ export class SyncService {
       }
     }
 
-    const allLocalTasks = (await collections.tasks.query().fetch()) as unknown as TaskModel[];
+    // Clean up orphaned tasks (tasks whose parent request no longer exists on server)
+    let allLocalTasks: any[] = [];
+    try {
+      allLocalTasks = (await collections.tasks.query().fetch()) as unknown as TaskModel[];
+    } catch (fetchErr: any) {
+      OfflineLogger.sync('[PULL] fetch allLocalTasks failed', fetchErr);
+    }
     const validTaskIds = new Set<string>();
     for (const lt of allLocalTasks) {
       const isOrphan = lt.isSynced && lt.requestServerId && !visibleRequestServerIds.includes(lt.requestServerId as string);
       const isStale = lt.isSynced && lt.serverId && visibleRequestServerIds.includes(lt.requestServerId!) && !activeTaskServerIds.has(lt.serverId);
-      
+
       if ((isOrphan || isStale) && !lt.pendingAction) {
         preparedOperations.push(lt.prepareMarkAsDeleted());
+        OfflineLogger.sync(`[PULL] Removing orphan/stale task: ${lt.id} (serverId: ${lt.serverId})`);
       } else {
         validTaskIds.add(lt.id);
+        if (lt.serverId) validTaskIds.add(lt.serverId);
       }
     }
 
-    const localAssignments = (await collections.taskAssignments.query().fetch()) as unknown as TaskAssignmentModel[];
+    let localAssignments: any[] = [];
+    try {
+      localAssignments = (await collections.taskAssignments.query().fetch()) as unknown as TaskAssignmentModel[];
+    } catch (fetchErr: any) {
+      OfflineLogger.sync('[PULL] fetch localAssignments failed', fetchErr);
+    }
     for (const la of localAssignments) {
       if (!validTaskIds.has(la.taskId) && !la.pendingAction) {
         preparedOperations.push(la.prepareMarkAsDeleted());
       }
     }
 
-    const localReports = (await collections.taskReports.query().fetch()) as unknown as TaskReportModel[];
+    let localReports: any[] = [];
+    try {
+      localReports = (await collections.taskReports.query().fetch()) as unknown as TaskReportModel[];
+    } catch (fetchErr: any) {
+      OfflineLogger.sync('[PULL] fetch localReports failed', fetchErr);
+    }
     for (const lr of localReports) {
       if (!validTaskIds.has(lr.taskId)) {
         preparedOperations.push(lr.prepareMarkAsDeleted());
       }
     }
 
+    // Clean up orphaned chat messages
     try {
       const serverChats = await chatApi.getMyChats();
       const activeChatIds = new Set(serverChats.map((c) => c.id));
       const allMessages = (await collections.chatMessages.query().fetch()) as unknown as ChatMessageModel[];
-      
+
       for (const m of allMessages) {
         if (m.isSynced && !m.pendingAction && !activeChatIds.has(m.chatId)) {
           preparedOperations.push(m.prepareMarkAsDeleted());
@@ -760,6 +882,7 @@ export class SyncService {
       }
     } catch {}
 
+    // Clean stale user cache
     try {
       const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const staleUsers = await collections.usersCache.query().fetch();
@@ -770,23 +893,46 @@ export class SyncService {
       }
     } catch {}
 
-    try {
-      await this.executeBatch(preparedOperations);
-    } catch (err: any) {
-      // executeBatch вже має retry (3 спроби). Якщо все ще помилка — логуємо і продовжуємо
-      OfflineLogger.sync('Pull: executeBatch failed after retries', err);
+    OfflineLogger.sync(`[PULL] Total prepared operations: ${preparedOperations.length} (${count} new/updated)`);
+
+    if (preparedOperations.length > 0) {
+      try {
+        await this.executeBatch(preparedOperations, 'pull');
+      } catch (err: any) {
+        OfflineLogger.sync('[PULL] executeBatch failed after retries', err);
+      }
     }
+
+    const pullElapsed = Date.now() - pullStartedAt;
+    OfflineLogger.sync(`[PULL] Finished in ${pullElapsed}ms: ${count} items updated/created`);
+
     return count;
   }
 
   static async saveRequestOffline(data: any): Promise<RequestModel> {
-    return database.write(async () => {
+    return safeWrite(async () => {
       const req = collections.requests.prepareCreate((r: any) => {
         r.serverId = null;
         r.title = data.title;
+        r.description = data.description ?? null;
+        r.category = data.category ?? 'other';
+        r.urgency = data.urgency ?? 'medium';
+        r.status = data.status ?? 'open';
+        r.requiredClearance = data.requiredClearance ?? 'local';
+        r.creatorId = data.creatorId ?? null;
+        r.creatorName = data.creatorName ?? null;
+        r.latitude = data.latitude ?? null;
+        r.longitude = data.longitude ?? null;
+        r.isLocationHidden = data.isLocationHidden ?? false;
+        r.tagsRaw = JSON.stringify(data.tags ?? []);
+        r.additionalInfoRaw = JSON.stringify(data.additionalInfo ?? []);
+        r.mediaUrlsRaw = JSON.stringify(data.mediaUrls ?? []);
+        r.reportUrlsRaw = JSON.stringify(data.reportUrls ?? []);
+        r.deadline = data.deadline ? new Date(data.deadline).getTime() : null;
         r.isSynced = false;
         r.pendingAction = 'create';
         r.createdAtServer = Date.now();
+        r.lastSyncedAt = null;
       });
       await database.batch(req);
       return req as unknown as RequestModel;
@@ -794,15 +940,23 @@ export class SyncService {
   }
 
   static async saveMessageOffline(data: any): Promise<ChatMessageModel> {
-    return database.write(async () => {
+    return safeWrite(async () => {
       const msg = collections.chatMessages.prepareCreate((m: any) => {
         m.serverId = null;
         m.chatId = data.chatId;
         m.senderId = data.senderId;
+        m.senderName = data.senderName ?? null;
         m.content = data.content;
         m.sentAt = Date.now();
         m.isSynced = false;
         m.pendingAction = 'send';
+        m.messageType = data.messageType ?? 'text';
+        m.attachmentUrl = data.attachmentUrl ?? null;
+        m.messageStatus = 'pending';
+        m.readByRaw = JSON.stringify([]);
+        m.deliveredToRaw = JSON.stringify([]);
+        m.replyToId = data.replyToId ?? null;
+        m.lastSyncedAt = null;
       });
       await database.batch(msg);
       return msg as unknown as ChatMessageModel;
@@ -810,15 +964,24 @@ export class SyncService {
   }
 
   static async saveTaskOffline(data: any): Promise<TaskModel> {
-    return database.write(async () => {
+    return safeWrite(async () => {
       const task = collections.tasks.prepareCreate((t: any) => {
         t.serverId = null;
         t.requestId = data.requestId;
         t.requestServerId = data.requestServerId;
         t.title = data.title;
+        t.description = data.description ?? null;
+        t.status = data.status ?? 'todo';
+        t.neededPeopleCount = data.neededPeopleCount ?? 1;
+        t.requiredRolesRaw = JSON.stringify(data.requiredRoles ?? []);
+        t.assignedCount = 0;
+        t.priority = data.priority ?? 0;
+        t.chatId = data.chatId ?? null;
+        t.deadline = data.deadline ? new Date(data.deadline).getTime() : null;
         t.isSynced = false;
         t.pendingAction = 'create';
         t.createdAtServer = Date.now();
+        t.lastSyncedAt = null;
       });
       await database.batch(task);
       return task as unknown as TaskModel;

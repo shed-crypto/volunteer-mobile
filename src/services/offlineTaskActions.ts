@@ -1,4 +1,4 @@
-import { collections, database } from '../db/index';
+import { collections, database, safeWrite } from '../db/index';
 import { refreshAllPendingActions } from '../hooks/usePendingActions';
 import { AssignmentStatus, TaskStatus } from '../types';
 import { countActiveAssignments } from '../db/helpers/assignments';
@@ -42,8 +42,8 @@ async function removeOppositeQueuedTaskAction(actionType: OfflineTaskActionType,
 
   if (!oppositeAction) return;
 
-  const queue = await collections.actionQueue.query().fetch();
-  const oppositeItems = queue.filter((item: any) => {
+  const allActionQueueItems = await collections.actionQueue.query().fetch();
+  const oppositeItems = allActionQueueItems.filter((item: any) => {
     try {
       const payload = JSON.parse(item.payloadRaw || '{}');
       return item.actionType === oppositeAction && (payload.taskId || payload.task_id || payload.id) === taskId;
@@ -53,6 +53,7 @@ async function removeOppositeQueuedTaskAction(actionType: OfflineTaskActionType,
   });
 
   for (const item of oppositeItems) {
+    console.log(`[OFFLINE] Removing opposite queued action ${oppositeAction} for task ${taskId} (item ${item.id})`);
     await item.destroyPermanently();
   }
 }
@@ -64,7 +65,9 @@ export async function enqueueOfflineTaskAction(
   const taskId = String(payload.taskId || payload.task_id || payload.id || '');
   if (!taskId) throw new Error('taskId is required for offline task action');
 
-  await database.write(async () => {
+  console.log(`[OFFLINE] Enqueue ${actionType} for task ${taskId}`);
+
+  await safeWrite(async () => {
     await removeOppositeQueuedTaskAction(actionType, taskId);
     await collections.actionQueue.create((item: any) => {
       item.actionType = actionType;
@@ -75,6 +78,7 @@ export async function enqueueOfflineTaskAction(
     });
   });
 
+  console.log(`[OFFLINE] Enqueued ${actionType} for task ${taskId} — local DB updated`);
   refreshAllPendingActions();
 }
 
@@ -84,7 +88,9 @@ export async function applyOfflineTaskActionLocally(
   user?: OfflineUser | null,
   payload: Record<string, unknown> = {},
 ) {
-  await database.write(async () => {
+  console.log(`[OFFLINE_LOCAL] apply ${actionType} for task ${taskId} (user: ${user?.id || 'none'})`);
+
+  await safeWrite(async () => {
     const task = await findLocalTask(taskId);
     const userId = user?.id;
 
@@ -186,6 +192,8 @@ export async function applyOfflineTaskActionLocally(
       }
     }
   });
+
+  console.log(`[OFFLINE_LOCAL] applied ${actionType} for task ${taskId} — done`);
 }
 
 export async function revertOfflineTaskActionLocally(
@@ -193,7 +201,9 @@ export async function revertOfflineTaskActionLocally(
   taskId: string,
   user?: OfflineUser | null,
 ) {
-  await database.write(async () => {
+  console.log(`[OFFLINE_LOCAL] revert ${actionType} for task ${taskId} (user: ${user?.id || 'none'})`);
+
+  await safeWrite(async () => {
     const task = await findLocalTask(taskId);
     const userId = user?.id;
 
@@ -280,13 +290,17 @@ export async function cancelOfflineTaskAction(
   taskId: string,
   user?: OfflineUser | null,
 ) {
-  const queue = await collections.actionQueue.query().fetch();
-  const item = queue.find((queued: any) => queued.id === actionId);
+  console.log(`[OFFLINE] Cancel ${actionType} for task ${taskId} (actionId: ${actionId})`);
+
+  const allQueueItems = await collections.actionQueue.query().fetch();
+  const item = allQueueItems.find((queued: any) => queued.id === actionId);
   if (item) {
-    await database.write(async () => {
+    await safeWrite(async () => {
       await item.destroyPermanently();
     });
   }
   await revertOfflineTaskActionLocally(actionType, taskId, user);
   refreshAllPendingActions();
+
+  console.log(`[OFFLINE] Cancelled ${actionType} for task ${taskId} — done`);
 }

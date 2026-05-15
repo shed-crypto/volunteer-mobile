@@ -5,7 +5,7 @@ import { ScreenHeader } from '../../components/ui';
 import { Colors } from '../../utils/theme';
 import { chatApi } from '../../api/chat.api';
 import { Q } from '@nozbe/watermelondb';
-import { database, collections } from '../../db/index';
+import { database, collections, safeWrite } from '../../db/index';
 
 type RouteParams = { ChatSettings: { chatId: string; chatName?: string; isGroupChat: boolean } };
 
@@ -27,11 +27,14 @@ export default function ChatSettingsScreen() {
             try {
               await chatApi.deleteChat(chatId);
               // Додатково видаляємо локальні повідомлення в БД
-              await database.write(async () => {
+              await safeWrite(async () => {
                 const msgs = await collections.chatMessages.query(Q.where('chat_id', chatId)).fetch();
                 await database.batch(...msgs.map((m: any) => m.prepareDestroyPermanently()));
-                const chat = await collections.chats.find(chatId);
-                await chat.markAsDeleted();
+                const allChats = await collections.chats.query().fetch();
+                const chat = allChats.find((item: any) => item.serverId === chatId || item.id === chatId);
+                if (chat) {
+                  await chat.markAsDeleted();
+                }
               });
               Alert.alert('✅', 'Чат видалено');
               navigation.goBack();
@@ -56,7 +59,7 @@ export default function ChatSettingsScreen() {
           onPress: async () => {
             try {
               await chatApi.clearChatHistory(chatId);
-              await database.write(async () => {
+              await safeWrite(async () => {
                 const msgs = await collections.chatMessages.query(Q.where('chat_id', chatId)).fetch();
                 await database.batch(...msgs.map((m: any) => m.prepareDestroyPermanently()));
               });

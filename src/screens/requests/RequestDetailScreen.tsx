@@ -11,7 +11,7 @@ import { MediaViewer } from '../../components/MediaViewer';
 import { requestsApi } from '../../api/requests.api';
 import { tasksApi } from '../../api/tasks.api';
 import { SyncService } from '../../db/SyncService';
-import { Request, Task, TaskStatus, SystemRole, RequestStatus } from '../../types';
+import { Request, Task, TaskStatus, SystemRole, RequestStatus, AssignmentStatus } from '../../types';
 import {
   Colors, urgencyColors, statusColors,
   categoryLabels, clearanceLabels,
@@ -24,8 +24,9 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
-import { collections } from '../../db/index';
+import { collections, safeWrite } from '../../db/index';
 import { database } from '../../db/index';
+import { DBLock } from '../../db/DBLock';
 import { usePendingActions, refreshAllPendingActions, setPendingActionImmediate, removePendingActionImmediate, hasPendingActionImmediate } from '../../hooks/usePendingActions';
 import { countActiveAssignments } from '../../db/helpers/assignments';
 
@@ -101,7 +102,7 @@ export default function RequestDetailScreen() {
     try {
       const localTasks = await collections.tasks.query().fetch();
       const requestTasks = localTasks.filter((t: any) => t.requestId === requestId || t.requestServerId === requestId);
-      
+
       if (requestTasks.length > 0) {
         // Load assignments for these tasks
         const localAssignments = await collections.taskAssignments.query().fetch();
@@ -156,14 +157,14 @@ export default function RequestDetailScreen() {
       const local = localReqs.find((r: any) => r.serverId === requestId || r.id === requestId);
       if (local) {
         OfflineLogger.cache('Loaded request from local DB', { id: (local as any).serverId || local.id });
-        
+
         // Check if request is saved in local DB
         let isSavedLocal = false;
         try {
           const saved = await collections.savedRequests.query().fetch();
           isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
         } catch {}
-        
+
         return {
           id: (local as any).serverId ?? local.id,
           title: (local as any).title,
@@ -194,7 +195,7 @@ export default function RequestDetailScreen() {
   const loadLocalWithTimeout = useCallback(async () => {
     return Promise.race([
       Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
-      new Promise<[Request | null, Task[]]>((resolve) => 
+      new Promise<[Request | null, Task[]]>((resolve) =>
         setTimeout(() => {
           OfflineLogger.cache('RequestDetail: local DB timeout (migration?)');
           resolve([null, []]);
@@ -203,37 +204,159 @@ export default function RequestDetailScreen() {
     ]);
   }, [requestId, loadRequestLocal, loadTasksLocal]);
 
-  // ─── Helper: save request to local DB with retry on Diagnostic error ───
-  const saveRequestToDB = useCallback(async (req: Request, retryCount = 0) => {
-    try {
-      const existing = await collections.requests.query().fetch();
-      const existingReq = existing.find((r: any) => r.serverId === req.id);
-      
+  const saveServerDataToDBDirect = useCallback(async (req: Request, taskList: Task[]) => {
+    await safeWrite(async () => {
+      const existingRequests = await collections.requests.query().fetch();
+      const existingReq = existingRequests.find((r: any) => r.serverId === req.id) as any;
+
+      const writeRequest = (r: any) => {
+        r.serverId = req.id;
+        r.title = req.title;
+        r.description = req.description ?? null;
+        r.category = req.category;
+        r.urgency = req.urgency;
+        r.status = req.status;
+        r.requiredClearance = req.requiredClearance ?? 'local';
+        r.creatorId = req.creatorId ?? null;
+        r.latitude = req.latitude ?? null;
+        r.longitude = req.longitude ?? null;
+        r.isLocationHidden = req.isLocationHidden ?? false;
+        r.tagsRaw = JSON.stringify(req.tags ?? []);
+        r.additionalInfoRaw = JSON.stringify((req as any).additionalInfo ?? []);
+        r.mediaUrlsRaw = JSON.stringify((req as any).mediaUrls ?? []);
+        r.reportUrlsRaw = JSON.stringify((req as any).reportUrls ?? []);
+        r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
+        r.isSynced = true;
+        r.pendingAction = null;
+        r.lastSyncedAt = Date.now();
+      };
+
       if (existingReq) {
-        await database.write(async () => {
-          await existingReq.update((r: any) => {
-            r.title = req.title;
-            r.description = req.description ?? null;
-            r.category = req.category;
-            r.urgency = req.urgency;
-            r.status = req.status;
-            r.requiredClearance = req.requiredClearance ?? 'local';
-            r.latitude = req.latitude ?? null;
-            r.longitude = req.longitude ?? null;
-            r.isLocationHidden = req.isLocationHidden ?? false;
-            r.tagsRaw = JSON.stringify(req.tags ?? []);
-            r.additionalInfoRaw = JSON.stringify((req as any).additionalInfo ?? []);
-            r.mediaUrlsRaw = JSON.stringify((req as any).mediaUrls ?? []);
-            r.reportUrlsRaw = JSON.stringify((req as any).reportUrls ?? []);
-            r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
-            r.isSynced = true;
-            r.pendingAction = null;
-            r.lastSyncedAt = Date.now();
-          });
-        });
+        if (!existingReq.pendingAction) await existingReq.update(writeRequest);
       } else {
-        await database.write(async () => {
-          await collections.requests.create((r: any) => {
+        await collections.requests.create((r: any) => {
+          writeRequest(r);
+          r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
+        });
+      }
+
+      const existingTasks = await collections.tasks.query().fetch();
+      const existingAssignments = await collections.taskAssignments.query().fetch();
+
+      for (const serverTask of taskList) {
+        const existingTask = existingTasks.find((t: any) => t.serverId === serverTask.id) as any;
+        const activeCount = countActiveAssignments(serverTask.assignments as any[]);
+        const writeTask = (t: any) => {
+          t.serverId = serverTask.id;
+          t.requestId = requestId;
+          t.requestServerId = requestId;
+          t.title = serverTask.title;
+          t.description = serverTask.description ?? null;
+          t.status = serverTask.status;
+          t.neededPeopleCount = serverTask.neededPeopleCount ?? 1;
+          t.requiredRolesRaw = JSON.stringify(serverTask.requiredRoles ?? []);
+          t.assignedCount = activeCount;
+          t.priority = serverTask.priority ?? 0;
+          t.deadline = serverTask.deadline ? new Date(serverTask.deadline).getTime() : null;
+          t.chatId = serverTask.chatId ?? null;
+          t.isSynced = true;
+          t.pendingAction = null;
+          t.lastSyncedAt = Date.now();
+        };
+
+        if (existingTask) {
+          if (!existingTask.pendingAction) await existingTask.update(writeTask);
+        } else {
+          await collections.tasks.create(writeTask);
+        }
+
+        if (!Array.isArray(serverTask.assignments)) continue;
+        for (const assignment of serverTask.assignments) {
+          const assignmentTaskId = assignment.taskId || serverTask.id;
+          const existingAssignment = (existingAssignments as any[]).find(
+            (a: any) => a.taskId === assignmentTaskId && a.userId === assignment.userId
+          );
+          const writeAssignment = (a: any) => {
+            a.taskId = assignmentTaskId;
+            a.userId = assignment.userId;
+            a.userName = assignment.user?.fullName || assignment.userName || 'Користувач';
+            a.status = assignment.status;
+            a.fulfilledRole = assignment.fulfilledRole ?? null;
+            a.assignedAt = assignment.assignedAt ? new Date(assignment.assignedAt).getTime() : Date.now();
+            a.isSynced = true;
+            a.pendingAction = null;
+            a.lastSyncedAt = Date.now();
+          };
+
+          if (existingAssignment) {
+            if (!existingAssignment.pendingAction) await existingAssignment.update(writeAssignment);
+          } else {
+            await collections.taskAssignments.create(writeAssignment);
+          }
+        }
+      }
+    });
+  }, [requestId]);
+
+  // ─── Helper: save server data to local DB (single atomic write) ────────
+  const saveServerDataToDB = useCallback(async (req: Request, taskList: Task[]) => {
+    try {
+      // Fetch all records ONCE before write (with fail-safe for each fetch)
+      let existingRequests: any[] = [];
+      let existingTasks: any[] = [];
+      let existingAssignmentsRaw: any[] = [];
+
+      try {
+        existingRequests = await collections.requests.query().fetch();
+      } catch (fetchErr: any) {
+        OfflineLogger.cache(`RequestDetail: fetch requests failed`, fetchErr);
+      }
+
+      try {
+        existingTasks = await collections.tasks.query().fetch();
+      } catch (fetchErr: any) {
+        OfflineLogger.cache(`RequestDetail: fetch tasks failed`, fetchErr);
+      }
+
+      try {
+        existingAssignmentsRaw = await collections.taskAssignments.query().fetch();
+      } catch (fetchErr: any) {
+        OfflineLogger.cache(`RequestDetail: fetch taskAssignments failed`, fetchErr);
+      }
+
+      const operations: any[] = [];
+
+      // --- Save request ---
+      const existingReq = existingRequests.find((r: any) => r.serverId === req.id);
+      if (existingReq) {
+        // Only update if request has no pending action (don't overwrite offline changes)
+        if (!existingReq.pendingAction) {
+          operations.push(
+            existingReq.prepareUpdate((r: any) => {
+              r.title = req.title;
+              r.description = req.description ?? null;
+              r.category = req.category;
+              r.urgency = req.urgency;
+              r.status = req.status;
+              r.requiredClearance = req.requiredClearance ?? 'local';
+              r.latitude = req.latitude ?? null;
+              r.longitude = req.longitude ?? null;
+              r.isLocationHidden = req.isLocationHidden ?? false;
+              r.tagsRaw = JSON.stringify(req.tags ?? []);
+              r.additionalInfoRaw = JSON.stringify((req as any).additionalInfo ?? []);
+              r.mediaUrlsRaw = JSON.stringify((req as any).mediaUrls ?? []);
+              r.reportUrlsRaw = JSON.stringify((req as any).reportUrls ?? []);
+              r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
+              r.isSynced = true;
+              r.lastSyncedAt = Date.now();
+            })
+          );
+        } else {
+          OfflineLogger.cache(`RequestDetail: SKIP request update — has pendingAction`);
+        }
+      } else {
+        operations.push(
+          collections.requests.prepareCreate((r: any) => {
             r.serverId = req.id;
             r.title = req.title;
             r.description = req.description ?? null;
@@ -252,61 +375,44 @@ export default function RequestDetailScreen() {
             r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
             r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
             r.isSynced = true;
-            r.pendingAction = null;
             r.lastSyncedAt = Date.now();
-          });
-        });
+          })
+        );
       }
-      OfflineLogger.cache(`RequestDetail: saved request ${req.id} to DB`);
-    } catch (e: any) {
-      if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
-        if (retryCount < 3) {
-          OfflineLogger.cache(`RequestDetail: save request retry ${retryCount + 1}/3 after Diagnostic error`);
-          await new Promise(r => setTimeout(r, 300 * (retryCount + 1)));
-          return saveRequestToDB(req, retryCount + 1);
-        }
-        OfflineLogger.cache('RequestDetail: save request failed after retries (non-critical, sync will update)');
-        return;
-      }
-      OfflineLogger.cache('RequestDetail: save request to DB failed', e);
-    }
-  }, []);
 
-  // ─── Helper: save tasks to local DB with retry on Diagnostic error ──────
-  const saveTasksToDB = useCallback(async (taskList: Task[], retryCount = 0) => {
-    try {
-      const [existing, existingAssignmentsRaw] = await Promise.all([
-        collections.tasks.query().fetch(),
-        collections.taskAssignments.query().fetch(),
-      ]);
-      const existingMap = new Map(existing.map((t: any) => [t.serverId, t]));
+      // --- Save tasks ---
+      const existingTasksMap = new Map(existingTasks.map((t: any) => [t.serverId, t]));
       const assignmentsMap = new Map(
         (existingAssignmentsRaw as any[]).map((a: any) => [`${a.taskId}-${a.userId}`, a])
       );
-      const operations: any[] = [];
 
       for (const task of taskList) {
-        const existingTask = existingMap.get(task.id);
+        const existingTask = existingTasksMap.get(task.id);
         if (existingTask) {
-          operations.push(
-            existingTask.prepareUpdate((t: any) => {
-              t.title = task.title;
-              t.description = task.description ?? null;
-              t.status = task.status;
-              t.neededPeopleCount = task.neededPeopleCount;
-              t.requiredRolesRaw = JSON.stringify(task.requiredRoles ?? []);
-              t.assignedCount = task.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
-              t.priority = task.priority ?? 0;
-              t.deadline = task.deadline ? new Date(task.deadline).getTime() : null;
-              t.isSynced = true;
-              t.pendingAction = null;
-              t.lastSyncedAt = Date.now();
-            })
-          );
+          // Don't overwrite tasks with pending offline changes
+          if (!existingTask.pendingAction) {
+            operations.push(
+              existingTask.prepareUpdate((t: any) => {
+                t.title = task.title;
+                t.description = task.description ?? null;
+                t.status = task.status;
+                t.neededPeopleCount = task.neededPeopleCount;
+                t.requiredRolesRaw = JSON.stringify(task.requiredRoles ?? []);
+                t.assignedCount = task.assignments?.filter((a: any) => a.status !== 'withdrawn').length ?? 0;
+                t.priority = task.priority ?? 0;
+                t.deadline = task.deadline ? new Date(task.deadline).getTime() : null;
+                t.isSynced = true;
+                t.lastSyncedAt = Date.now();
+              })
+            );
+          } else {
+            OfflineLogger.cache(`RequestDetail: SKIP task update for ${task.id} — has pendingAction`);
+          }
         } else {
           operations.push(
             collections.tasks.prepareCreate((t: any) => {
               t.serverId = task.id;
+              t.requestId = requestId;
               t.requestServerId = requestId;
               t.title = task.title;
               t.description = task.description ?? null;
@@ -317,7 +423,6 @@ export default function RequestDetailScreen() {
               t.priority = task.priority ?? 0;
               t.deadline = task.deadline ? new Date(task.deadline).getTime() : null;
               t.isSynced = true;
-              t.pendingAction = null;
               t.lastSyncedAt = Date.now();
             })
           );
@@ -342,6 +447,8 @@ export default function RequestDetailScreen() {
                     asgn.lastSyncedAt = Date.now();
                   })
                 );
+              } else {
+                OfflineLogger.cache(`RequestDetail: SKIP assignment update for ${key} — has pendingAction`);
               }
             } else {
               operations.push(
@@ -363,24 +470,29 @@ export default function RequestDetailScreen() {
       }
 
       if (operations.length > 0) {
-        await database.write(async () => {
-          await database.batch(...operations);
-        });
-        OfflineLogger.cache(`RequestDetail: saved ${operations.length} operations to DB`);
+        OfflineLogger.cache(`RequestDetail: executing ${operations.length} ops via SyncService.executeBatch`);
+        try {
+          await SyncService.executeBatch(operations, 'requestDetail');
+          OfflineLogger.cache(`RequestDetail: saved ${operations.length} ops to DB for request ${req.id}`);
+        } catch (batchErr: any) {
+          OfflineLogger.cache(`RequestDetail: executeBatch FAILED`, batchErr);
+          throw batchErr; // rethrow so caller sees the error
+        }
       }
     } catch (e: any) {
-      if (e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic')) {
-        if (retryCount < 3) {
-          OfflineLogger.cache(`RequestDetail: save tasks retry ${retryCount + 1}/3 after Diagnostic error`);
-          await new Promise(r => setTimeout(r, 300 * (retryCount + 1)));
-          return saveTasksToDB(taskList, retryCount + 1);
+      // Single attempt only — if Diagnostic error, SyncService.pull will handle it
+      const isDiagnostic = e?.name === 'Diagnostic error' || String(e?.message || '').includes('Diagnostic');
+      if (isDiagnostic) {
+        try {
+          await saveServerDataToDBDirect(req, taskList);
+          OfflineLogger.cache(`RequestDetail: direct fallback saved server data for request ${req.id}`);
+        } catch (fallbackErr) {
+          OfflineLogger.cache('RequestDetail: direct fallback save failed', fallbackErr);
         }
-        OfflineLogger.cache('RequestDetail: save tasks failed after retries (non-critical, sync will update)');
-        return;
       }
-      OfflineLogger.cache('RequestDetail: save tasks to DB failed', e);
+      OfflineLogger.cache(`RequestDetail: save failed${isDiagnostic ? ' (Diagnostic — sync will update)' : ''}`, e);
     }
-  }, [requestId]);
+  }, [requestId, saveServerDataToDBDirect]);
 
   const isLoadingRef = useRef(false);
 
@@ -392,7 +504,7 @@ export default function RequestDetailScreen() {
     }
     isLoadingRef.current = true;
     OfflineLogger.nav(`RequestDetailScreen.load() called, requestId=${requestId}`);
-    
+
     try {
       // КРОК 1: Завантажити з локальної БД (без агресивного таймауту)
       // Таймаут лише для офлайн — 5с, для онлайн чекаємо повністю
@@ -401,12 +513,12 @@ export default function RequestDetailScreen() {
           const result = await Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]);
           if (result[0] || result[1].length > 0) return result;
         } catch {}
-        
+
         // Фолбек тільки якщо локальні дані пусті — тоді таймаут
         if (isOffline) {
           return Promise.race([
             Promise.all([loadRequestLocal(requestId), loadTasksLocal(requestId)]),
-            new Promise<[null, []]>((resolve) => 
+            new Promise<[null, []]>((resolve) =>
               setTimeout(() => {
                 OfflineLogger.cache('RequestDetail: local DB timeout (5000ms, offline)');
                 resolve([null, []]);
@@ -416,7 +528,7 @@ export default function RequestDetailScreen() {
         }
         return [null, []];
       })();
-      
+
       if (localRequest) {
         OfflineLogger.nav('Showing local data first (offline-first)');
         setRequest(localRequest);
@@ -426,14 +538,14 @@ export default function RequestDetailScreen() {
       if (localTasks.length > 0) {
         setTasks(localTasks);
       }
-      
+
       // Also check saved status from local DB for initial state
       try {
         const saved = await collections.savedRequests.query().fetch();
         const isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
         if (isSavedLocal) setIsSaved(true);
       } catch {}
-      
+
       if (!localRequest && !isOffline) {
         setLoading(false);
       }
@@ -451,11 +563,7 @@ export default function RequestDetailScreen() {
             setIsSaved((req as any).isSaved);
           }
           setIsOfflineMode(false);
-          
-          // ЗБЕРЕГТИ заявку в БД (завжди — синхронізація може впасти)
-          // Якщо WatermelonDB викидає Diagnostic error, retry вже є в saveRequestToDB
-          await saveRequestToDB(req);
-          
+
           try {
             const serverTasks = await tasksApi.getByRequest(requestId);
             // Recalculate assignedCount from assignments (backend getter may not be serialized)
@@ -465,9 +573,16 @@ export default function RequestDetailScreen() {
               }
             });
             setTasks(serverTasks);
-            // ЗБЕРЕГТИ задачі в БД (завжди — синхронізація може впасти)
-            await saveTasksToDB(serverTasks);
+            // ЗБЕРЕГТИ заявку та задачі в БД (атомарно)
+            await saveServerDataToDB(req, serverTasks);
           } catch (serverTaskError) {
+            // Tasks fetch failed, still save request alone
+            OfflineLogger.network('Server tasks failed, saving request only to local DB');
+            try {
+              await saveServerDataToDB(req, []);
+            } catch (dbErr) {
+              OfflineLogger.cache('Failed to save request to local DB', dbErr);
+            }
             OfflineLogger.network('Server tasks failed, keeping local tasks');
             // Залишаємо локальні задачі
           }
@@ -480,7 +595,7 @@ export default function RequestDetailScreen() {
               const existing = await collections.requests.query().fetch();
               const localReq = existing.find((r: any) => r.serverId === requestId || r.id === requestId);
               if (localReq) {
-                await database.write(async () => {
+                await safeWrite(async () => {
                   await localReq.destroyPermanently();
                 });
               }
@@ -488,7 +603,7 @@ export default function RequestDetailScreen() {
               const saved = await collections.savedRequests.query().fetch();
               const savedReq = saved.find((s: any) => s.requestId === requestId);
               if (savedReq) {
-                await database.write(async () => {
+                await safeWrite(async () => {
                   await savedReq.destroyPermanently();
                 });
               }
@@ -518,7 +633,7 @@ export default function RequestDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [requestId, loadRequestLocal, loadTasksLocal, navigation, isOffline, saveRequestToDB, saveTasksToDB]);
+  }, [requestId, loadRequestLocal, loadTasksLocal, navigation, isOffline, saveServerDataToDB]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -528,7 +643,7 @@ export default function RequestDetailScreen() {
       setIsSaved((request as any).isSaved);
     }
   }, [request]);
-  
+
   // Check saved status from local DB when offline (fallback)
   useEffect(() => {
     // If request already has isSaved from server, don't check local DB
@@ -552,7 +667,7 @@ export default function RequestDetailScreen() {
     };
     initSaved();
   }, [requestId]);
-  
+
   // ─── Toggle bookmark (save/unsave request) ───────────────────────────────
   const toggleBookmark = async () => {
     if (bookmarkLoading) return;
@@ -564,7 +679,7 @@ export default function RequestDetailScreen() {
         try {
           const saved = await collections.savedRequests.query().fetch();
           const item = saved.find((s: any) => s.requestId === requestId);
-          if (item) await database.write(() => item.destroyPermanently());
+          if (item) await safeWrite(() => item.destroyPermanently());
         } catch (localErr) {
           OfflineLogger.cache('RequestDetail: failed to remove local bookmark entry', localErr);
         }
@@ -573,7 +688,7 @@ export default function RequestDetailScreen() {
         await requestsApi.save(requestId);
         // Add to local DB quietly (don't block UI on error)
         try {
-          await database.write(() =>
+          await safeWrite(() =>
             collections.savedRequests.create((s: any) => {
               s.requestId = requestId;
               s.userId = user?.id || '';
@@ -618,10 +733,10 @@ export default function RequestDetailScreen() {
   const isAdmin = user?.systemRole === SystemRole.ADMIN;
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;
   const isVolunteer = user?.systemRole === SystemRole.VOLUNTEER;
-  
+
   // Перевірка: чи волонтер бере участь хоча б в одній задачі цієї заявки
   const isParticipant = tasks.some(t => t.assignments?.some(a => a.userId === user?.id));
-  
+
   const canManage = isOwner || isAdmin;
   const canCreateTask = isOwner || isAdmin || isCoord;
   const canSubmitReview = isVolunteer && isParticipant;
@@ -658,15 +773,15 @@ export default function RequestDetailScreen() {
       {(isOwner || isAdmin) && (
         <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
           {canEdit && (
-            <TouchableOpacity 
-              style={[styles.headerActionBtn, { backgroundColor: Colors.primary }]} 
+            <TouchableOpacity
+              style={[styles.headerActionBtn, { backgroundColor: Colors.primary }]}
               onPress={() => navigation.navigate('CreateRequest', { requestId })}
             >
               <Text style={styles.headerActionText}>✏️ Редагувати</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity 
-            style={[styles.headerActionBtn, { backgroundColor: Colors.secondary }]} 
+          <TouchableOpacity
+            style={[styles.headerActionBtn, { backgroundColor: Colors.secondary }]}
             onPress={() => navigation.navigate('CreateRequest', { requestId, mode: 'additional' })}
           >
             <Text style={styles.headerActionText}>➕ Доповнити</Text>
@@ -908,8 +1023,8 @@ export default function RequestDetailScreen() {
                                 }}
                               >
                                 {isImage ? (
-                                  <Image 
-                                    source={{ uri: fileUrl }} 
+                                  <Image
+                                    source={{ uri: fileUrl }}
                                     style={{ width: 120, height: 120, borderRadius: 8, backgroundColor: Colors.borderLight }}
                                     resizeMode="cover"
                                   />
@@ -985,6 +1100,7 @@ export default function RequestDetailScreen() {
                     onPress={() => navigation.navigate('TaskDetail', { taskId: task.id, requestTitle: request.title })}
                     onRefresh={load}
                     currentUserId={user?.id ?? ''}
+                    currentUserName={user?.fullName ?? ''}
                     userRole={user?.systemRole ?? SystemRole.VOLUNTEER}
                   />
                 ))}
@@ -1067,9 +1183,9 @@ function LocationDisplay({ request }: { request: Request }) {
         if (request.isLocationHidden) {
           setAddress('Приблизне розташування');
         } else {
-          const results = await Location.reverseGeocodeAsync({ 
-            latitude: Number(request.latitude), 
-            longitude: Number(request.longitude) 
+          const results = await Location.reverseGeocodeAsync({
+            latitude: Number(request.latitude),
+            longitude: Number(request.longitude)
           });
           if (results.length > 0) {
             const addr = results[0];
@@ -1098,11 +1214,11 @@ function LocationDisplay({ request }: { request: Request }) {
 
   return (
     <TouchableOpacity onPress={() => Linking.openURL(url).catch(() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`))}>
-      <MetaRow 
-        icon="📍" 
-        label="Місце" 
-        value={`${address || ''} (${lat.toFixed(4)}, ${lng.toFixed(4)}) → відкрити в картах`} 
-        highlight 
+      <MetaRow
+        icon="📍"
+        label="Місце"
+        value={`${address || ''} (${lat.toFixed(4)}, ${lng.toFixed(4)}) → відкрити в картах`}
+        highlight
       />
     </TouchableOpacity>
   );
@@ -1118,12 +1234,13 @@ function MetaRow({ icon, label, value, highlight }: { icon: string; label: strin
   );
 }
 
-function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTitle }: {
+function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, userRole, requestTitle }: {
   task: Task;
   requestTitle: string;
   onPress: () => void;
   onRefresh: () => void;
   currentUserId: string;
+  currentUserName: string;
   userRole: SystemRole;
 }) {
   const [actioning, setActioning] = useState(false);
@@ -1133,6 +1250,64 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
   const { isOffline } = useNetwork();
   // Pending actions hook (includes shared enqueueOfflineAction)
   const { pendingActions, hasAction: hasPendingAction, removePendingAction, refresh: refreshPendingActions, enqueueOfflineAction } = usePendingActions(task.id);
+
+  const applyOnlineActionLocally = async (action: 'assign' | 'withdraw') => {
+    if (!currentUserId) return;
+
+    await safeWrite(async () => {
+      const allTasks = await collections.tasks.query().fetch();
+      const localTask = allTasks.find((t: any) => t.serverId === task.id || t.id === task.id);
+      const localAssignments = (await collections.taskAssignments.query().fetch()) as any[];
+      const existing = localAssignments.find((a: any) => a.taskId === task.id && a.userId === currentUserId);
+
+      if (action === 'assign') {
+        if (existing) {
+          await existing.update((a: any) => {
+            a.status = AssignmentStatus.ASSIGNED;
+            a.userName = currentUserName || a.userName || null;
+            a.fulfilledRole = a.fulfilledRole ?? null;
+            a.assignedAt = Date.now();
+            a.isSynced = true;
+            a.pendingAction = null;
+            a.lastSyncedAt = Date.now();
+          });
+        } else {
+          await collections.taskAssignments.create((a: any) => {
+            a.taskId = task.id;
+            a.userId = currentUserId;
+            a.userName = currentUserName || null;
+            a.status = AssignmentStatus.ASSIGNED;
+            a.fulfilledRole = null;
+            a.assignedAt = Date.now();
+            a.isSynced = true;
+            a.pendingAction = null;
+            a.lastSyncedAt = Date.now();
+          });
+        }
+      } else if (existing) {
+        await existing.update((a: any) => {
+          a.status = AssignmentStatus.WITHDRAWN;
+          a.isSynced = true;
+          a.pendingAction = null;
+          a.lastSyncedAt = Date.now();
+        });
+      }
+
+      if (localTask) {
+        const updatedAssignments = (await collections.taskAssignments.query().fetch()) as any[];
+        const nextAssignments = updatedAssignments.filter((a: any) => a.taskId === task.id);
+        const nextCount = countActiveAssignments(nextAssignments);
+
+        await localTask.update((t: any) => {
+          t.assignedCount = nextCount;
+          t.status = nextCount > 0 ? TaskStatus.IN_PROGRESS : TaskStatus.TODO;
+          t.isSynced = true;
+          t.pendingAction = null;
+          t.lastSyncedAt = Date.now();
+        });
+      }
+    });
+  };
 
   const handleAssign = async () => {
     if (isAssigned) {
@@ -1146,6 +1321,7 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
               return;
             }
             await tasksApi.withdraw(task.id);
+            await applyOnlineActionLocally('withdraw');
             onRefresh();
           } catch (e: any) {
             const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
@@ -1179,6 +1355,7 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, userRole, requestTi
     setActioning(true);
     try {
       await tasksApi.assign(task.id);
+      await applyOnlineActionLocally('assign');
       onRefresh();
     } catch (e: any) {
       const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';

@@ -17,7 +17,7 @@ import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket, emitWhenReady } from '../../hooks/useSocket';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { database, collections } from '../../db/index';
+import { database, collections, safeWrite } from '../../db/index';
 import { MessageStatusIcon } from '../../components/MessageStatusIcon';
 import { MediaViewer, VideoThumbnail } from '../../components/MediaViewer';
 import { MessageContextMenu } from '../../components/MessageContextMenu';
@@ -218,7 +218,7 @@ export default function ChatRoomScreen() {
       }
 
       if (operations.length > 0) {
-        await database.write(async () => {
+        await safeWrite(async () => {
           await database.batch(...operations);
         });
       }
@@ -301,7 +301,7 @@ export default function ChatRoomScreen() {
             Alert.alert('Доступ обмежено', 'Ви більше не маєте доступу до цього чату.');
             navigation.goBack();
             const toDelete = await collections.chatMessages.query(Q.where('chat_id', chatId)).fetch();
-            await database.write(() => Promise.all(toDelete.map(m => m.destroyPermanently())));
+            await safeWrite(() => Promise.all(toDelete.map(m => m.destroyPermanently())));
           }
         }
       }

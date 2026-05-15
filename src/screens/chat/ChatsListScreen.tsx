@@ -23,7 +23,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../hooks/useSocket';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
-import { collections, database } from '../../db/index';
+import { collections, database, safeWrite } from '../../db/index';
 import { formatDistanceToNow } from 'date-fns';
 import { uk } from 'date-fns/locale';
 
@@ -170,7 +170,7 @@ export default function ChatsListScreen() {
       }
 
       if (operations.length > 0) {
-        await database.write(async () => {
+        await safeWrite(async () => {
           await database.batch(...operations);
         });
         OfflineLogger.cache(`ChatsList: synced ${operations.length} operations to DB`);

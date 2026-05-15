@@ -26,8 +26,7 @@ import { SystemRole } from '../../types';
 import api, { getServerReachable } from '../../api/axios';
 import { SyncService } from '../../db/SyncService';
 import { checkServerReachable } from '../../api/axios';
-import { collections } from '../../db/index';
-import { database } from '../../db/index';
+import { collections, database, safeWrite } from '../../db/index';
 
 const STATUS_FILTERS = [
   { value: 'all',                      label: 'Всі' },
@@ -193,7 +192,7 @@ export default function RequestsListScreen() {
       }
 
       if (operations.length > 0) {
-        await database.write(async () => {
+        await safeWrite(async () => {
           await database.batch(...operations);
         });
         OfflineLogger.cache(`RequestsList: saved ${operations.length} operations to DB`);
@@ -639,7 +638,7 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
         try {
           const localSaved = await collections.savedRequests.query().fetch();
           const item = localSaved.find((s: any) => s.requestId === request.id);
-          if (item) await database.write(() => item.destroyPermanently());
+          if (item) await safeWrite(() => item.destroyPermanently());
         } catch (localErr) {
           OfflineLogger.cache('RequestCard: failed to remove local bookmark', localErr);
         }
@@ -648,7 +647,7 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
         setIsSaved(true);
         // Add to local DB quietly
         try {
-          await database.write(() =>
+          await safeWrite(() =>
             collections.savedRequests.create((s: any) => {
               s.requestId = request.id;
               s.userId = user?.id || '';

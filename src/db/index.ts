@@ -5,6 +5,7 @@ import { Database } from '@nozbe/watermelondb';
 import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
 import { dbSchema } from './schema';
 import { dbMigrations } from './migrations';
+import { DBLock } from './DBLock';
 import { RequestModel } from './models/RequestModel';
 import { TaskModel } from './models/TaskModel';
 import { TaskAssignmentModel } from './models/TaskAssignmentModel';
@@ -58,3 +59,17 @@ export const collections = {
   actionQueue: database.collections.get('action_queue'),
   syncEvents: database.collections.get('sync_events'),
 };
+
+/**
+ * Безпечний wrapper для database.write() з використанням DBLock.
+ * Запобігає конкурентним записам, які викликають "Diagnostic error" у WatermelonDB.
+ */
+export async function safeWrite<T>(writeFn: () => Promise<T>): Promise<T> {
+  const id = `safeWrite_${Date.now()}`;
+  await DBLock.acquire(id);
+  try {
+    return await database.write(writeFn);
+  } finally {
+    DBLock.release();
+  }
+}
