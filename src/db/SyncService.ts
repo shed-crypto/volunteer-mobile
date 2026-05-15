@@ -205,11 +205,15 @@ export class SyncService {
       OfflineLogger.sync(`[PUSH] Found ${unsyncedMessages.length} unsynced messages`);
       for (const msg of unsyncedMessages) {
         try {
-          await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
+          const response = await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
+          const createdMsgId = response.data?.id || response.data?._id;
           preparedOps.push(
             msg.prepareUpdate((m: any) => {
+              if (createdMsgId) m.serverId = createdMsgId;
               m.isSynced = true;
               m.pendingAction = null;
+              m.messageStatus = 'sent';
+              m.lastSyncedAt = Date.now();
             })
           );
           count++;

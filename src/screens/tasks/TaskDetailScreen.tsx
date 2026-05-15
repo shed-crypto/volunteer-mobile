@@ -96,6 +96,7 @@ export default function TaskDetailScreen() {
               user: { fullName: a.userName || 'Користувач' }, status: a.status,
               fulfilledRole: a.fulfilledRole,
               assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
+              pendingAction: a.pendingAction || null,
             });
           }
         });
@@ -503,8 +504,14 @@ export default function TaskDetailScreen() {
   if (!task) return null;
 
   const activeAssignments = task.assignments?.filter(a => a.status !== AssignmentStatus.WITHDRAWN) ?? [];
-  const isMe = task.assignments?.some(a => a.userId === user?.id && a.status !== 'withdrawn');
-  const myAssignment = task.assignments?.find(a => a.userId === user?.id && a.status !== 'withdrawn');
+  const isMe = task.assignments?.some(a => a.userId === user?.id && (
+    a.status !== 'withdrawn' ||
+    (a.status === 'withdrawn' && (a as any).pendingAction === 'withdraw')
+  ));
+  const myAssignment = task.assignments?.find(a => a.userId === user?.id && (
+    a.status !== 'withdrawn' ||
+    (a.status === 'withdrawn' && (a as any).pendingAction === 'withdraw')
+  ));
   const isAdmin = user?.systemRole === SystemRole.ADMIN;
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;
   const isVolunteerOrCoord = user?.systemRole === SystemRole.VOLUNTEER || user?.systemRole === SystemRole.COORDINATOR;
