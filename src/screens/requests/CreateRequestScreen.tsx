@@ -17,10 +17,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import { requestsApi } from '../../api/requests.api';
-import { API_BASE_URL } from '../../api/axios';
+import { API_BASE_URL, getServerReachable } from '../../api/axios';
 import { RequestCategory, RequestUrgency, ClearanceLevel } from '../../types';
 import { Colors, categoryLabels, urgencyColors, clearanceLabels } from '../../utils/theme';
 import { Button, Input, ScreenHeader } from '../../components/ui';
+import { collections } from '../../db/index';
+import { useNetwork } from '../../context/NetworkContext';
 
 type LocationMode = 'none' | 'gps' | 'manual';
 
@@ -190,15 +192,65 @@ export default function CreateRequestScreen() {
     }
   };
 
+  const { isOffline } = useNetwork();
+
   const handleAddInfo = async () => {
     if (!additionalInfo.trim()) return;
     setLoading(true);
     try {
+      if (isOffline || !getServerReachable()) {
+        // Offline: enqueue to action_queue
+        const { collections, safeWrite } = await import('../../db/index');
+        await safeWrite(async () => {
+          await collections.actionQueue.create((item: any) => {
+            item.actionType = 'REQUEST_ADD_INFO';
+            item.payloadRaw = JSON.stringify({
+              requestId: route.params?.requestId,
+              text: additionalInfo.trim(),
+              attachments: selectedFiles.map(f => ({ uri: f.uri, name: f.name, type: f.type })),
+            });
+            item.createdAt = Date.now();
+            item.retryCount = 0;
+            item.error = null;
+            item.lastErrorCode = null;
+            item.nextRetryAt = null;
+          });
+        });
+        Alert.alert('📴 Офлайн', 'Доповнення поставлено в чергу. Воно буде відправлено при відновленні мережі.');
+        navigation.goBack();
+        return;
+      }
       await requestsApi.addInfo(route.params?.requestId, additionalInfo.trim(), selectedFiles);
       navigation.goBack();
     } catch (e: any) {
       const msg = e?.response?.data?.message;
-      Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : (msg ?? 'Щось пішло не так'));
+      if (!e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error') {
+        // Network error during request - enqueue
+        try {
+          const { collections, safeWrite } = await import('../../db/index');
+          await safeWrite(async () => {
+            await collections.actionQueue.create((item: any) => {
+              item.actionType = 'REQUEST_ADD_INFO';
+              item.payloadRaw = JSON.stringify({
+                requestId: route.params?.requestId,
+                text: additionalInfo.trim(),
+                attachments: selectedFiles.map(f => ({ uri: f.uri, name: f.name, type: f.type })),
+              });
+              item.createdAt = Date.now();
+              item.retryCount = 0;
+              item.error = null;
+              item.lastErrorCode = null;
+              item.nextRetryAt = null;
+            });
+          });
+          Alert.alert('📴 Офлайн', 'Мережа зникла. Доповнення поставлено в чергу.');
+          navigation.goBack();
+        } catch {
+          Alert.alert('Помилка', 'Не вдалося зберегти доповнення');
+        }
+      } else {
+        Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : (msg ?? 'Щось пішло не так'));
+      }
     } finally {
       setLoading(false);
     }
@@ -211,28 +263,60 @@ export default function CreateRequestScreen() {
     if (isEditMode && !initialDataLoaded && route.params?.requestId) {
       const loadRequest = async () => {
         try {
-          const req = await requestsApi.getOne(route.params.requestId);
-          setTitle(req.title);
-          setDescription(req.description || '');
-          setCategory(req.category);
-          setUrgency(req.urgency);
-          setClearance(req.requiredClearance);
-          setIsHidden(req.isLocationHidden);
-          setFundraisingUrl(req.fundraisingUrl || '');
-          if (req.latitude != null && req.longitude != null) {
-            setLatitude(Number(req.latitude));
-            setLongitude(Number(req.longitude));
-            setLocMode('gps');
+          if (getServerReachable()) {
+            const req = await requestsApi.getOne(route.params.requestId);
+            setTitle(req.title);
+            setDescription(req.description || '');
+            setCategory(req.category);
+            setUrgency(req.urgency);
+            setClearance(req.requiredClearance);
+            setIsHidden(req.isLocationHidden);
+            setFundraisingUrl(req.fundraisingUrl || '');
+            if (req.latitude != null && req.longitude != null) {
+              setLatitude(Number(req.latitude));
+              setLongitude(Number(req.longitude));
+              setLocMode('gps');
+            }
+            // Pre-populate selectedFiles from existing mediaUrls
+            if (req.mediaUrls && Array.isArray(req.mediaUrls)) {
+              setSelectedFiles(req.mediaUrls.map((m: any) => ({
+                uri: m.url?.startsWith('http') ? m.url : `${API_BASE_URL.replace('/api', '')}${m.url}`,
+                name: m.name || 'file',
+                type: m.type || 'application/octet-stream',
+              })));
+            }
+            setInitialDataLoaded(true);
+          } else {
+            // Offline fallback: load from local DB
+            const localReqs = await collections.requests.query().fetch();
+            const local = localReqs.find((r: any) => r.serverId === route.params.requestId || r.id === route.params.requestId);
+            if (local) {
+              setTitle((local as any).title);
+              setDescription((local as any).description || '');
+              setCategory((local as any).category);
+              setUrgency((local as any).urgency);
+              setClearance((local as any).requiredClearance);
+              setIsHidden((local as any).isLocationHidden);
+              if ((local as any).latitude != null && (local as any).longitude != null) {
+                setLatitude(Number((local as any).latitude));
+                setLongitude(Number((local as any).longitude));
+                setLocMode('gps');
+              }
+              // Pre-populate files from local mediaUrls
+              let mediaUrls: any[] = [];
+              try { mediaUrls = JSON.parse((local as any).mediaUrlsRaw || '[]'); } catch {}
+              if (mediaUrls.length > 0) {
+                setSelectedFiles(mediaUrls.map((m: any) => ({
+                  uri: m.url?.startsWith('http') ? m.url : `${API_BASE_URL.replace('/api', '')}${m.url}`,
+                  name: m.name || 'file',
+                  type: m.type || 'application/octet-stream',
+                })));
+              }
+              setInitialDataLoaded(true);
+            } else {
+              Alert.alert('Офлайн', 'Дані недоступні без мережі');
+            }
           }
-          // Pre-populate selectedFiles from existing mediaUrls
-          if (req.mediaUrls && Array.isArray(req.mediaUrls)) {
-            setSelectedFiles(req.mediaUrls.map((m: any) => ({
-              uri: m.url?.startsWith('http') ? m.url : `${API_BASE_URL.replace('/api', '')}${m.url}`,
-              name: m.name || 'file',
-              type: m.type || 'application/octet-stream',
-            })));
-          }
-          setInitialDataLoaded(true);
         } catch (e) {
           Alert.alert('Помилка', 'Не вдалося завантажити дані для редагування');
         }

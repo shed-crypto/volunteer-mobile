@@ -304,6 +304,21 @@ export class SyncService {
               await this.prepareTaskActionCleanup(taskIdStr4, preparedOps);
               break;
             }
+            case 'REQUEST_ADD_INFO': {
+              const requestId = (payload as any).requestId;
+              const text = (payload as any).text;
+              if (!requestId || !text) {
+                OfflineLogger.sync(`[PUSH] ActionQueue: REQUEST_ADD_INFO missing requestId/text, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              OfflineLogger.sync(`[PUSH] Sending REQUEST_ADD_INFO for request ${requestId}`);
+              await api.post(`/requests/${requestId}/additional-info`, {
+                text,
+                attachments: (payload as any).attachments || [],
+              });
+              break;
+            }
             default:
               OfflineLogger.sync(`[PUSH] ActionQueue: unknown action type ${item.actionType}`);
           }

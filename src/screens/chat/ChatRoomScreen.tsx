@@ -162,14 +162,17 @@ export default function ChatRoomScreen() {
       for (const msg of msgs) {
         const existingByServerId = existing.find((m: any) => m.serverId === msg.id);
         if (existingByServerId) {
-          operations.push(
-            existingByServerId.prepareUpdate((m: any) => {
-              m.messageStatus = (msg as any).messageStatus || 'sent';
-              m.readByRaw = JSON.stringify((msg as any).readBy || []);
-              m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
-              m.lastSyncedAt = Date.now();
-            })
-          );
+          // Don't overwrite pending (unsynced) messages — keep their local state
+          if (!(existingByServerId as any).pendingAction) {
+            operations.push(
+              existingByServerId.prepareUpdate((m: any) => {
+                m.messageStatus = (msg as any).messageStatus || 'sent';
+                m.readByRaw = JSON.stringify((msg as any).readBy || []);
+                m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
+                m.lastSyncedAt = Date.now();
+              })
+            );
+          }
           continue;
         }
         

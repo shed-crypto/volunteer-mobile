@@ -122,6 +122,7 @@ export default function RequestDetailScreen() {
                 status: a.status,
                 fulfilledRole: a.fulfilledRole,
                 assignedAt: a.assignedAt ? new Date(a.assignedAt).toISOString() : '',
+                pendingAction: a.pendingAction || null,
               });
             }
           });
@@ -1244,12 +1245,30 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, us
   userRole: SystemRole;
 }) {
   const [actioning, setActioning] = useState(false);
-  const isAssigned = task.assignments?.some((a) => a.userId === currentUserId && a.status !== 'withdrawn');
-  const isFull = (task.assignments?.filter((a) => a.status !== 'withdrawn').length ?? 0) >= task.neededPeopleCount;
-  const st = statusColors[task.status];
   const { isOffline } = useNetwork();
   // Pending actions hook (includes shared enqueueOfflineAction)
   const { pendingActions, hasAction: hasPendingAction, removePendingAction, refresh: refreshPendingActions, enqueueOfflineAction } = usePendingActions(task.id);
+
+  // Check assignment pendingAction directly from task data (resistant to refresh race conditions)
+  const myAssignment = task.assignments?.find((a: any) => a.userId === currentUserId);
+  const myAssignmentPending = myAssignment?.pendingAction as string | undefined;
+
+  // isAssigned: consider the user as assigned if either:
+  // 1. Status is not 'withdrawn' (normal assignment)
+  // 2. Status is 'withdrawn' but pendingAction is 'withdraw' (offline withdraw queued — still show withdrawal state until sync)
+  const isAssigned = task.assignments?.some((a: any) =>
+    a.userId === currentUserId && (
+      a.status !== 'withdrawn' ||
+      (a.status === 'withdrawn' && a.pendingAction === 'withdraw')
+    )
+  );
+
+  // Pending: either from usePendingActions hook OR from assignment's pendingAction field
+  const pendingAssign = (hasPendingAction('TASK_ASSIGN') || hasPendingAction('TASK_WITHDRAW')) ||
+    (myAssignmentPending === 'assign' || myAssignmentPending === 'withdraw');
+
+  const isFull = (task.assignments?.filter((a: any) => a.status !== 'withdrawn' || a.pendingAction === 'withdraw').length ?? 0) >= task.neededPeopleCount;
+  const st = statusColors[task.status];
 
   const applyOnlineActionLocally = async (action: 'assign' | 'withdraw') => {
     if (!currentUserId) return;
@@ -1369,9 +1388,6 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, us
       setActioning(false);
     }
   };
-
-  /** Check for pending action on this task */
-  const pendingAssign = hasPendingAction('TASK_ASSIGN') || hasPendingAction('TASK_WITHDRAW');
 
   /** Pending action card UI */
   const renderPendingAction = (actionType: string, label: string, variant: 'primary' | 'danger' = 'primary') => {
