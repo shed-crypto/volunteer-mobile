@@ -61,11 +61,7 @@ interface ImmediateEntry {
 }
 
 // taskId → entry[]
-// NOTE: використовуємо globalThis singleton для уникнення подвійних копій
-// при різних шляхах імпорту (RN Metro static vs dynamic require)
-const GLOBAL_KEY = '__VOLUNTEER_IMMEDIATE_PENDING__';
-const _immediatePending: Record<string, ImmediateEntry[]> =
-  (globalThis as any)[GLOBAL_KEY] || ((globalThis as any)[GLOBAL_KEY] = {});
+const _immediatePending: Record<string, ImmediateEntry[]> = {};
 
 /**
  * Синхронно додає pending action до глобального кешу.
@@ -124,13 +120,7 @@ function parsePayload(raw: string | null): any {
 }
 
 /* ────────── Global Event Bus ────────── */
-// NOTE: global singleton для уникнення подвійних копій event bus
-// при різних шляхах імпорту (RN Metro static vs dynamic require)
-const LISTENERS_KEY = '__VOLUNTEER_PENDING_LISTENERS__';
-if (!(globalThis as any)[LISTENERS_KEY]) {
-  (globalThis as any)[LISTENERS_KEY] = new Map<string, Set<() => void>>();
-}
-const globalListeners: Map<string, Set<() => void>> = (globalThis as any)[LISTENERS_KEY];
+const globalListeners = new Map<string, Set<() => void>>();
 
 function emitGlobal(event: string) {
   globalListeners.get(event)?.forEach((cb) => cb());

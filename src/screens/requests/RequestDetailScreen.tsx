@@ -1461,8 +1461,14 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, us
           task.status !== TaskStatus.PENDING_REVIEW && (
           <>
             {pendingAssign ? (
-              // Show pending card (uses global immediate cache — works across screen navigation)
-              renderPendingAction(isAssigned ? 'TASK_WITHDRAW' : 'TASK_ASSIGN', isAssigned ? 'Відміна призначення в черзі' : 'Призначення в черзі', isAssigned ? 'danger' : 'primary')
+              // Show pending card — використовуємо актуальний actionType з черги
+              // Не покладаємося на isAssigned, який може бути true через pendingAction='assign'
+              (() => {
+                const actualActionType = hasPendingAction('TASK_ASSIGN') ? 'TASK_ASSIGN' : 'TASK_WITHDRAW';
+                const actualLabel = actualActionType === 'TASK_ASSIGN' ? 'Призначення в черзі' : 'Відміна призначення в черзі';
+                const actualVariant = actualActionType === 'TASK_ASSIGN' ? 'primary' : 'danger';
+                return renderPendingAction(actualActionType, actualLabel, actualVariant);
+              })()
             ) : (
               <TouchableOpacity
                 style={[styles.assignBtn, isAssigned && styles.assignBtnActive, (isFull && !isAssigned) && styles.assignBtnDisabled]}
