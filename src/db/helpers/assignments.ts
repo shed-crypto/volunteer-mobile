@@ -13,10 +13,21 @@ export type AssignmentLike = {
   status: string;
 };
 
-/** Count assignments that are NOT withdrawn or completed */
-export function countActiveAssignments(assignments?: AssignmentLike[]): number {
+/**
+ * Count assignments that are NOT withdrawn or completed.
+ * Assignment with pendingAction='assign' is NOT counted as active
+ * (offline assign hasn't been confirmed by server yet).
+ * Assignment with pendingAction='withdraw' IS still counted
+ * (offline withdraw hasn't been processed by server yet).
+ */
+export function countActiveAssignments(assignments?: any[]): number {
   if (!Array.isArray(assignments)) return 0;
-  return assignments.filter((a) => a.status !== 'withdrawn' && a.status !== 'completed').length;
+  return assignments.filter((a: any) => {
+    // Pending assign — not yet confirmed, doesn't occupy a slot
+    if (a.pendingAction === 'assign') return false;
+    // Otherwise: active if not withdrawn/completed
+    return a.status !== 'withdrawn' && a.status !== 'completed';
+  }).length;
 }
 
 /** Same as above, but for a full list that's already filtered */

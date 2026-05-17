@@ -1,6 +1,7 @@
 import { database, collections, safeWrite } from './index';
 import { DBLock } from './DBLock';
 import { countActiveAssignments } from './helpers/assignments';
+import { clearPendingActionsForTask, refreshAllPendingActions } from '../hooks/usePendingActions';
 import { RequestModel } from './models/RequestModel';
 import { TaskModel } from './models/TaskModel';
 import { ChatMessageModel } from './models/ChatMessageModel';
@@ -230,6 +231,7 @@ export class SyncService {
     }
 
     // 4. Process action_queue (offline task actions: assign, withdraw, complete)
+    const processedTaskIds: string[] = [];
     try {
       const now = Date.now();
       const allQueueItems = (await collections.actionQueue.query().fetch()) as unknown as ActionQueueItem[];
@@ -269,6 +271,7 @@ export class SyncService {
               }
               OfflineLogger.sync(`[PUSH] Sending TASK_ASSIGN for task ${taskIdStr} (role: ${fulfilledRole})`);
               await tasksApi.assign(taskIdStr, fulfilledRole as string);
+              processedTaskIds.push(taskIdStr);
               await this.prepareTaskActionCleanup(taskIdStr, preparedOps);
               break;
             }
@@ -281,6 +284,7 @@ export class SyncService {
               }
               OfflineLogger.sync(`[PUSH] Sending TASK_WITHDRAW for task ${taskIdStr2}`);
               await tasksApi.withdraw(taskIdStr2 as string);
+              processedTaskIds.push(taskIdStr2);
               await this.prepareTaskActionCleanup(taskIdStr2, preparedOps);
               break;
             }
@@ -293,6 +297,7 @@ export class SyncService {
               }
               OfflineLogger.sync(`[PUSH] Sending TASK_COMPLETE for task ${taskIdStr3}`);
               await tasksApi.complete(taskIdStr3 as string);
+              processedTaskIds.push(taskIdStr3);
               await this.prepareTaskActionCleanup(taskIdStr3, preparedOps);
               break;
             }
@@ -305,6 +310,7 @@ export class SyncService {
               }
               OfflineLogger.sync(`[PUSH] Sending TASK_RETURN_TO_PROGRESS for task ${taskIdStr4}`);
               await tasksApi.returnToProgress(taskIdStr4 as string);
+              processedTaskIds.push(taskIdStr4);
               await this.prepareTaskActionCleanup(taskIdStr4, preparedOps);
               break;
             }
@@ -317,10 +323,13 @@ export class SyncService {
                 continue;
               }
               OfflineLogger.sync(`[PUSH] Sending REQUEST_ADD_INFO for request ${requestId}`);
-              await api.post(`/requests/${requestId}/additional-info`, {
+              // NOTE: Backend endpoint is PATCH /:id/add-info with multipart/form-data
+              // Since we can't upload files from queue, send text only as application/json
+              await api.patch(`/requests/${requestId}/add-info`, {
                 text,
-                attachments: (payload as any).attachments || [],
+                // attachments omitted — will be added when user re-sends with files online
               });
+              // Note: REQUEST_ADD_INFO doesn't have a taskId, so no clearPendingActionsForTask here
               break;
             }
             default:
@@ -437,6 +446,16 @@ export class SyncService {
       } catch (err: any) {
         OfflineLogger.sync('[PUSH] executeBatch failed after retries, but server actions succeeded', err);
       }
+    }
+
+    // Clean up immediate cache AFTER executeBatch (not before!)
+    // This ensures action_queue is already empty in DB, so loadPendingActions()
+    // will see db=0 and combined with cleared immediate — no pending actions shown.
+    if (processedTaskIds.length > 0) {
+      for (const id of processedTaskIds) {
+        clearPendingActionsForTask(id);
+      }
+      refreshAllPendingActions();
     }
 
     const pushElapsed = Date.now() - pushStartedAt;

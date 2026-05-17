@@ -573,6 +573,31 @@ export default function RequestDetailScreen() {
                 t.assignedCount = t.assignments.filter((a: any) => a.status !== 'withdrawn' && a.status !== 'completed').length;
               }
             });
+            // MERGE: preserve local pendingAction in server assignments
+            // Server doesn't know about pendingAction, so we need to carry it over from local tasks
+            const localTasksWithPending = new Map<string, Map<string, any>>();
+            for (const lt of localTasks) {
+              if (lt.assignments && lt.assignments.length > 0) {
+                const taskMap = new Map<string, any>();
+                for (const a of lt.assignments) {
+                  if ((a as any).pendingAction) {
+                    taskMap.set(a.userId, a);
+                  }
+                }
+                if (taskMap.size > 0) localTasksWithPending.set(lt.id, taskMap);
+              }
+            }
+            for (const st of serverTasks) {
+              const pendingAssignments = localTasksWithPending.get(st.id);
+              if (pendingAssignments && st.assignments) {
+                for (const sa of st.assignments) {
+                  const localPending = pendingAssignments.get(sa.userId);
+                  if (localPending) {
+                    (sa as any).pendingAction = (localPending as any).pendingAction;
+                  }
+                }
+              }
+            }
             setTasks(serverTasks);
             // ЗБЕРЕГТИ заявку та задачі в БД (атомарно)
             await saveServerDataToDB(req, serverTasks);
@@ -1250,12 +1275,13 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, us
   const { pendingActions, hasAction: hasPendingAction, removePendingAction, refresh: refreshPendingActions, enqueueOfflineAction } = usePendingActions(task.id);
 
   // Check assignment pendingAction directly from task data (resistant to refresh race conditions)
-  const myAssignment = task.assignments?.find((a: any) => a.userId === currentUserId);
+  const myAssignment = task.assignments?.find((a: any) => a.userId === currentUserId) as any;
   const myAssignmentPending = myAssignment?.pendingAction as string | undefined;
 
   // isAssigned: consider the user as assigned if either:
-  // 1. Status is not 'withdrawn' (normal assignment)
+  // 1. Status is not 'withdrawn' (normal assignment or pending assign)
   // 2. Status is 'withdrawn' but pendingAction is 'withdraw' (offline withdraw queued — still show withdrawal state until sync)
+  // NOTE: pendingAction='assign' also counts as assigned (offline assign in progress)
   const isAssigned = task.assignments?.some((a: any) =>
     a.userId === currentUserId && (
       a.status !== 'withdrawn' ||
@@ -1267,7 +1293,8 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, us
   const pendingAssign = (hasPendingAction('TASK_ASSIGN') || hasPendingAction('TASK_WITHDRAW')) ||
     (myAssignmentPending === 'assign' || myAssignmentPending === 'withdraw');
 
-  const isFull = (task.assignments?.filter((a: any) => a.status !== 'withdrawn' || a.pendingAction === 'withdraw').length ?? 0) >= task.neededPeopleCount;
+  // isFull: use countActiveAssignments which excludes pendingAction='assign' from slot count
+  const isFull = countActiveAssignments(task.assignments) >= task.neededPeopleCount;
   const st = statusColors[task.status];
 
   const applyOnlineActionLocally = async (action: 'assign' | 'withdraw') => {
@@ -1430,7 +1457,7 @@ function TaskCard({ task, onPress, onRefresh, currentUserId, currentUserName, us
         {/* Only volunteers can take tasks — show also when already assigned (IN_PROGRESS) */}
         {/* Hide button for PENDING_REVIEW tasks (already sent for review) */}
         {(userRole === SystemRole.VOLUNTEER || userRole === SystemRole.COORDINATOR) &&
-          (task.status === TaskStatus.TODO || isAssigned) &&
+          (task.status === TaskStatus.TODO || task.status === TaskStatus.IN_PROGRESS || pendingAssign) &&
           task.status !== TaskStatus.PENDING_REVIEW && (
           <>
             {pendingAssign ? (

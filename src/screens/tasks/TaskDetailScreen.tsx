@@ -253,7 +253,7 @@ export default function TaskDetailScreen() {
   /* ─── handleAssign ─────────────────────────────────────────────────────── */
   const handleAssign = async () => {
     if (!task) return;
-    const isMe = task.assignments?.some(a => a.userId === user?.id && a.status !== 'withdrawn');
+    const isMe = task.assignments?.some(a => a.userId === user?.id && a.pendingAction !== 'assign' && a.status !== 'withdrawn');
     const actionType = getActionTypeForAssign(!!isMe);
 
     if (isOffline) {
@@ -504,13 +504,13 @@ export default function TaskDetailScreen() {
   if (!task) return null;
 
   const activeAssignments = task.assignments?.filter(a => a.status !== AssignmentStatus.WITHDRAWN) ?? [];
-  const isMe = task.assignments?.some(a => a.userId === user?.id && (
+  const isMe = task.assignments?.some(a => a.userId === user?.id && a.pendingAction !== 'assign' && (
     a.status !== 'withdrawn' ||
-    (a.status === 'withdrawn' && (a as any).pendingAction === 'withdraw')
+    (a.status === 'withdrawn' && a.pendingAction === 'withdraw')
   ));
-  const myAssignment = task.assignments?.find(a => a.userId === user?.id && (
+  const myAssignment = task.assignments?.find((a: any) => a.userId === user?.id && (
     a.status !== 'withdrawn' ||
-    (a.status === 'withdrawn' && (a as any).pendingAction === 'withdraw')
+    (a.status === 'withdrawn' && a.pendingAction === 'withdraw')
   ));
   const isAdmin = user?.systemRole === SystemRole.ADMIN;
   const isCoord = user?.systemRole === SystemRole.COORDINATOR;

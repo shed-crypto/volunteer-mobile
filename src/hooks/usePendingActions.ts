@@ -61,7 +61,11 @@ interface ImmediateEntry {
 }
 
 // taskId → entry[]
-const _immediatePending: Record<string, ImmediateEntry[]> = {};
+// NOTE: використовуємо globalThis singleton для уникнення подвійних копій
+// при різних шляхах імпорту (RN Metro static vs dynamic require)
+const GLOBAL_KEY = '__VOLUNTEER_IMMEDIATE_PENDING__';
+const _immediatePending: Record<string, ImmediateEntry[]> =
+  (globalThis as any)[GLOBAL_KEY] || ((globalThis as any)[GLOBAL_KEY] = {});
 
 /**
  * Синхронно додає pending action до глобального кешу.
@@ -99,6 +103,18 @@ export function removePendingActionImmediate(taskId: string, actionType: string,
 
 /* ────────── Helpers ────────── */
 
+/**
+ * Очищає глобальний immediate-кеш для taskId.
+ * Викликається після успішної синхронізації, щоб прибрати stale pending actions
+ * з негайної пам'яті, коли action_queue в БД вже порожній.
+ */
+export function clearPendingActionsForTask(taskId: string): void {
+  if (_immediatePending[taskId]) {
+    delete _immediatePending[taskId];
+    emitGlobal('pending-actions-changed');
+  }
+}
+
 function parsePayload(raw: string | null): any {
   try {
     return raw ? JSON.parse(raw) : null;
@@ -108,7 +124,13 @@ function parsePayload(raw: string | null): any {
 }
 
 /* ────────── Global Event Bus ────────── */
-const globalListeners = new Map<string, Set<() => void>>();
+// NOTE: global singleton для уникнення подвійних копій event bus
+// при різних шляхах імпорту (RN Metro static vs dynamic require)
+const LISTENERS_KEY = '__VOLUNTEER_PENDING_LISTENERS__';
+if (!(globalThis as any)[LISTENERS_KEY]) {
+  (globalThis as any)[LISTENERS_KEY] = new Map<string, Set<() => void>>();
+}
+const globalListeners: Map<string, Set<() => void>> = (globalThis as any)[LISTENERS_KEY];
 
 function emitGlobal(event: string) {
   globalListeners.get(event)?.forEach((cb) => cb());
@@ -320,11 +342,6 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
             createdAt: item.createdAt,
           });
         }
-      }
-
-      // If DB has data — clear any immediate entries for this task
-      if (dbActions.length > 0) {
-        delete _immediatePending[taskId];
       }
 
       // MERGE: DB first (authoritative), then immediate (fill gaps)
