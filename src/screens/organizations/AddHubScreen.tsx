@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Alert, Image, ScrollView, Switch, Text, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, Alert, Image, ScrollView, Switch, Text, TouchableOpacity, TextInput as RNTextInput } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { orgsApi } from '../../api/orgs.api';
 import { Button, Input, ScreenHeader } from '../../components/ui';
 import { Colors } from '../../utils/theme';
 import { getMediaUrl } from '../../utils/fileUtils';
 import { Hub } from '../../types';
+
+type LocationMode = 'none' | 'gps' | 'manual';
 
 type RouteParams = { orgId: string; hubId?: string };
 
@@ -25,6 +28,14 @@ export default function AddHubScreen() {
   const [media, setMedia] = useState<string | null>(null);
   const [mediaChanged, setMediaChanged] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Геолокація — три режими
+  const [locMode, setLocMode] = useState<LocationMode>('none');
+  const [latitudeNum, setLatitudeNum] = useState<number | undefined>();
+  const [longitudeNum, setLongitudeNum] = useState<number | undefined>();
+  const [locLoading, setLocLoading] = useState(false);
+  const [manualLat, setManualLat] = useState('');
+  const [manualLng, setManualLng] = useState('');
 
   useEffect(() => {
     if (isEditing) loadHub();
@@ -52,6 +63,16 @@ export default function AddHubScreen() {
     setDescription(hub.description || '');
     setLatitude(hub.latitude === undefined || hub.latitude === null ? '' : String(hub.latitude));
     setLongitude(hub.longitude === undefined || hub.longitude === null ? '' : String(hub.longitude));
+    // New location state
+    if (hub.latitude != null && hub.longitude != null) {
+      setLatitudeNum(Number(hub.latitude));
+      setLongitudeNum(Number(hub.longitude));
+      setLocMode('gps');
+    } else {
+      setLatitudeNum(undefined);
+      setLongitudeNum(undefined);
+      setLocMode('none');
+    }
     setIsPublic(Boolean(hub.isPublic));
     setMedia(hub.mediaUrl || null);
     setMediaChanged(false);
@@ -79,6 +100,84 @@ export default function AddHubScreen() {
     }
   };
 
+  const handleDetectGPS = async () => {
+    setLocLoading(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Доступ відхилено',
+          'GPS недоступний. Ви можете ввести координати вручну.',
+          [
+            { text: 'ОК' },
+            { text: 'Ввести вручну', onPress: () => setLocMode('manual') },
+          ],
+        );
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      setLatitudeNum(loc.coords.latitude);
+      setLongitudeNum(loc.coords.longitude);
+      setLocMode('gps');
+      // Reverse geocode to fill address automatically
+      try {
+        const addresses = await Location.reverseGeocodeAsync({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+        if (addresses.length > 0) {
+          const a = addresses[0];
+          const parts: string[] = [];
+          if (a.street) parts.push(a.street);
+          if (a.city) parts.push(a.city);
+          if (a.region && a.region !== a.city) parts.push(a.region);
+          if (a.country) parts.push(a.country);
+          const full = parts.filter(Boolean).join(', ');
+          if (full) setAddress(full);
+        }
+      } catch {
+        // ignore geocode error, address field stays as is
+      }
+    } catch {
+      Alert.alert(
+        'GPS недоступний',
+        'Можливо активний РЕБ або GPS вимкнено. Хочете ввести координати вручну?',
+        [
+          { text: 'Ні, пропустити' },
+          { text: 'Ввести вручну', onPress: () => setLocMode('manual') },
+        ],
+      );
+    } finally {
+      setLocLoading(false);
+    }
+  };
+
+  const handleApplyManual = () => {
+    const lat = parseFloat(manualLat.replace(',', '.'));
+    const lng = parseFloat(manualLng.replace(',', '.'));
+    if (isNaN(lat) || lat < -90 || lat > 90) {
+      Alert.alert('Помилка', 'Широта має бути від -90 до 90');
+      return;
+    }
+    if (isNaN(lng) || lng < -180 || lng > 180) {
+      Alert.alert('Помилка', 'Довгота має бути від -180 до 180');
+      return;
+    }
+    setLatitudeNum(lat);
+    setLongitudeNum(lng);
+    setLocMode('gps');
+  };
+
+  const handleClearLocation = () => {
+    setLatitudeNum(undefined);
+    setLongitudeNum(undefined);
+    setManualLat('');
+    setManualLng('');
+    setLocMode('none');
+  };
+
   const parseCoordinate = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return undefined;
@@ -92,21 +191,17 @@ export default function AddHubScreen() {
       return;
     }
 
-    const lat = parseCoordinate(latitude);
-    const lng = parseCoordinate(longitude);
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
-      Alert.alert('Помилка', 'Координати мають бути числами');
-      return;
-    }
+    const payloadLat = latitudeNum;
+    const payloadLng = longitudeNum;
 
     setLoading(true);
     try {
-      const payload = {
+      const payload: any = {
         name: name.trim(),
         address: address.trim() || undefined,
         description: description.trim() || undefined,
-        latitude: lat,
-        longitude: lng,
+        latitude: payloadLat,
+        longitude: payloadLng,
         isPublic,
       };
 
@@ -157,10 +252,125 @@ export default function AddHubScreen() {
         <Input label="Назва *" value={name} onChangeText={setName} />
         <Input label="Адреса" value={address} onChangeText={setAddress} />
         <Input label="Опис" value={description} onChangeText={setDescription} multiline />
-        <View style={styles.row}>
-          <Input label="Широта" value={latitude} onChangeText={setLatitude} keyboardType="decimal-pad" containerStyle={styles.coordInput} />
-          <Input label="Довгота" value={longitude} onChangeText={setLongitude} keyboardType="decimal-pad" containerStyle={styles.coordInput} />
-        </View>
+
+        {/* ─── Геолокація ────────────────────────────────────────────────────── */}
+        <Text style={styles.label}>Місцезнаходження (необов'язково)</Text>
+
+        {locMode === 'none' && (
+          <View style={styles.locOptions}>
+            <TouchableOpacity
+              style={styles.locOptionBtn}
+              onPress={handleDetectGPS}
+              disabled={locLoading}
+            >
+              <Text style={styles.locOptionIcon}>📡</Text>
+              <Text style={styles.locOptionLabel}>
+                {locLoading ? 'Визначення...' : 'GPS автоматично'}
+              </Text>
+              <Text style={styles.locOptionHint}>Може не працювати при РЕБ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.locOptionBtn}
+              onPress={() => setLocMode('manual')}
+            >
+              <Text style={styles.locOptionIcon}>⌨️</Text>
+              <Text style={styles.locOptionLabel}>Ввести вручну</Text>
+              <Text style={styles.locOptionHint}>Координати з карти або телефону</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.locOptionBtn}
+              onPress={() => (navigation as any).navigate('Map', {
+                screen: 'SelectLocation',
+                params: {
+                  isSelectionMode: true,
+                  onSelect: (coords: { latitude: number; longitude: number }) => {
+                    setLatitudeNum(coords.latitude);
+                    setLongitudeNum(coords.longitude);
+                    setLocMode('gps');
+                    // Reverse geocode to fill address automatically
+                    Location.reverseGeocodeAsync({
+                      latitude: coords.latitude,
+                      longitude: coords.longitude,
+                    }).then((addresses) => {
+                      if (addresses.length > 0) {
+                        const a = addresses[0];
+                        const parts: string[] = [];
+                        if (a.street) parts.push(a.street);
+                        if (a.city) parts.push(a.city);
+                        if (a.region && a.region !== a.city) parts.push(a.region);
+                        if (a.country) parts.push(a.country);
+                        const full = parts.filter(Boolean).join(', ');
+                        if (full) setAddress(full);
+                      }
+                    }).catch(() => {});
+                  },
+                },
+              })}
+            >
+              <Text style={styles.locOptionIcon}>🗺</Text>
+              <Text style={styles.locOptionLabel}>Вибрати на карті</Text>
+              <Text style={styles.locOptionHint}>Натисніть на точку</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {locMode === 'manual' && !(latitudeNum && longitudeNum) && (
+          <View style={styles.manualBox}>
+            <Text style={styles.manualTitle}>Введіть координати</Text>
+            <Text style={styles.manualHint}>
+              Відкрийте Google Maps, натисніть на потрібну точку — координати з'являться внизу.
+            </Text>
+            <View style={styles.manualRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.manualLabel}>Широта (Lat)</Text>
+                <RNTextInput
+                  style={styles.manualInput}
+                  value={manualLat}
+                  onChangeText={setManualLat}
+                  placeholder="46.6354"
+                  keyboardType="decimal-pad"
+                  placeholderTextColor="#AAA"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.manualLabel}>Довгота (Lng)</Text>
+                <RNTextInput
+                  style={styles.manualInput}
+                  value={manualLng}
+                  onChangeText={setManualLng}
+                  placeholder="32.6169"
+                  keyboardType="decimal-pad"
+                  placeholderTextColor="#AAA"
+                />
+              </View>
+            </View>
+            <View style={styles.manualActions}>
+              <TouchableOpacity style={styles.manualCancelBtn} onPress={handleClearLocation}>
+                <Text style={styles.manualCancelText}>Скасувати</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.manualApplyBtn} onPress={handleApplyManual}>
+                <Text style={styles.manualApplyText}>Підтвердити</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {latitudeNum != null && longitudeNum != null && (
+          <View style={styles.locationBox}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.locationText}>
+                📍 {Number(latitudeNum).toFixed(5)}, {Number(longitudeNum).toFixed(5)}
+              </Text>
+              <Text style={styles.locationHint}>
+                {locMode === 'gps' ? 'GPS / Карта' : 'Введено вручну'}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={handleClearLocation} style={styles.clearLocBtn}>
+              <Text style={styles.clearLocText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.switchRow}>
           <View style={styles.switchText}>
             <Text style={styles.switchTitle}>Публічний хаб</Text>
@@ -192,6 +402,54 @@ const styles = StyleSheet.create({
   removeMediaBtn: { marginBottom: 8 },
   row: { flexDirection: 'row', gap: 12 },
   coordInput: { flex: 1 },
+
+  // Поля для вибору способу локації
+  label: { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 8 },
+  locOptions: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  locOptionBtn: {
+    flex: 1, borderRadius: 12, borderWidth: 1.5, borderColor: Colors.border,
+    backgroundColor: Colors.surface, padding: 14, alignItems: 'center',
+  },
+  locOptionIcon: { fontSize: 24, marginBottom: 6 },
+  locOptionLabel: { fontSize: 13, fontWeight: '600', color: Colors.text, textAlign: 'center' },
+  locOptionHint: { fontSize: 11, color: Colors.textMuted, textAlign: 'center', marginTop: 4 },
+
+  // Ручне введення
+  manualBox: {
+    backgroundColor: Colors.surface, borderRadius: 12,
+    borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 12,
+  },
+  manualTitle: { fontSize: 14, fontWeight: '700', color: Colors.text, marginBottom: 4 },
+  manualHint: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 },
+  manualRow: { flexDirection: 'row', gap: 10 },
+  manualLabel: { fontSize: 12, fontWeight: '600', color: Colors.text, marginBottom: 4 },
+  manualInput: {
+    backgroundColor: Colors.background, borderRadius: 8, borderWidth: 1,
+    borderColor: Colors.border, padding: 10, fontSize: 14, color: Colors.text,
+  },
+  manualActions: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  manualCancelBtn: {
+    flex: 1, paddingVertical: 10, borderRadius: 8,
+    borderWidth: 1.5, borderColor: Colors.border, alignItems: 'center',
+  },
+  manualCancelText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  manualApplyBtn: {
+    flex: 2, paddingVertical: 10, borderRadius: 8,
+    backgroundColor: Colors.primary, alignItems: 'center',
+  },
+  manualApplyText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+
+  // Локація задана
+  locationBox: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#E8F5E9', borderRadius: 10, padding: 12,
+    marginBottom: 12, borderWidth: 1, borderColor: '#4CAF50',
+  },
+  locationText: { fontSize: 14, fontWeight: '600', color: '#2E7D32' },
+  locationHint: { fontSize: 11, color: '#4CAF50', marginTop: 2 },
+  clearLocBtn: { padding: 8 },
+  clearLocText: { fontSize: 16, color: '#888' },
+
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',
