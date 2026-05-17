@@ -7,7 +7,7 @@
  * - Останнє повідомлення та час
  * - Непрочитані через WebSocket
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   RefreshControl, StyleSheet, Modal,
@@ -26,6 +26,7 @@ import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections, database, safeWrite } from '../../db/index';
 import { formatDistanceToNow } from 'date-fns';
 import { uk } from 'date-fns/locale';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface UserItem {
   id: string;
@@ -45,6 +46,7 @@ export default function ChatsListScreen() {
   const [unreadMap, setUnreadMap]   = useState<Record<string, number>>({});
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [pinnedChatIds, setPinnedChatIds] = useState<Set<string>>(new Set());
   const lastChatFetchRef = useRef(0);
   const MIN_CHAT_FETCH_INTERVAL = 5000;
 
@@ -294,6 +296,49 @@ export default function ChatsListScreen() {
     u.email.toLowerCase().includes(userSearch.toLowerCase()),
   );
 
+  // ─── Сортування + закріплені ────────────────────────────────────────────
+  const sortedChats = useMemo(() => {
+    return chats
+      // Сортування: закріплені → за updatedAt (від новіших до старіших)
+      .sort((a, b) => {
+        const aPinned = pinnedChatIds.has(a.id) ? 1 : 0;
+        const bPinned = pinnedChatIds.has(b.id) ? 1 : 0;
+        if (aPinned !== bPinned) return bPinned - aPinned;
+        const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return bTime - aTime;
+      });
+  }, [chats, pinnedChatIds]);
+
+  // ─── Pin/Unpin toggle ────────────────────────────────────────────────────
+  const togglePin = useCallback((chatId: string) => {
+    setPinnedChatIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(chatId)) next.delete(chatId);
+      else next.add(chatId);
+      return next;
+    });
+  }, []);
+
+  // ─── Load pinned from AsyncStorage ───────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('pinnedChats');
+        if (raw) setPinnedChatIds(new Set(JSON.parse(raw)));
+      } catch {}
+    })();
+  }, []);
+
+  // ─── Save pinned to AsyncStorage ─────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        await AsyncStorage.setItem('pinnedChats', JSON.stringify([...pinnedChatIds]));
+      } catch {}
+    })();
+  }, [pinnedChatIds]);
+
   if (loading && chats.length === 0) return <LoadingScreen />;
 
   const getChatName = (chat: Chat) => {
@@ -343,7 +388,7 @@ export default function ChatsListScreen() {
       />
 
       <FlatList
-        data={chats}
+        data={sortedChats}
         keyExtractor={(c) => c.id}
         refreshControl={
       <RefreshControl

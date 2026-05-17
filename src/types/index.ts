@@ -163,6 +163,8 @@ export interface Chat {
   updatedAt: string;
   lastMessage?: Message;
   unreadCount?: number;
+  isPinned?: boolean;
+  messageCount?: number;
 }
 
   export interface Message {
