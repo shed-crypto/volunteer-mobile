@@ -8,6 +8,8 @@ export type AuthStackParamList = {
   Register: undefined;
   ForgotPassword: undefined;
   ResetPassword: { token: string };
+  VerifyResetCode: { email: string };
+  CreateNewPassword: { token: string };
 };
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
@@ -18,6 +20,8 @@ export default function AuthNavigator() {
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
       <Stack.Screen name="ForgotPassword" component={require('../screens/auth/ForgotPasswordScreen').default} />
+      <Stack.Screen name="VerifyResetCode" component={require('../screens/auth/VerifyResetCodeScreen').default} />
+      <Stack.Screen name="CreateNewPassword" component={require('../screens/auth/CreateNewPasswordScreen').default} />
       <Stack.Screen name="ResetPassword" component={require('../screens/auth/ResetPasswordScreen').default} />
     </Stack.Navigator>
   );

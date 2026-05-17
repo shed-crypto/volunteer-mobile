@@ -7,7 +7,7 @@ export const authApi = {
     password: string;
     fullName: string;
     phoneNumber?: string;
-    systemRole?: SystemRole;  // ← виправлено: передаємо роль
+    systemRole?: SystemRole;
   }): Promise<AuthResponse> =>
     api.post('/auth/register', data).then((r) => r.data),
 
@@ -28,9 +28,24 @@ export const authApi = {
   resendVerification: (): Promise<{ message: string }> =>
     api.post('/auth/resend-verification').then((r) => r.data),
 
-  requestPasswordReset: (email: string): Promise<{ message: string }> =>
+  /**
+   * Запит на скидання пароля.
+   * Надсилає 6-значний код на email.
+   * Повертає { message, exists } — exists=false якщо email не знайдено.
+   */
+  requestPasswordReset: (email: string): Promise<{ message: string; exists: boolean }> =>
     api.post('/auth/forgot-password', { email }).then((r) => r.data),
 
+  /**
+   * Підтвердити 6-значний код з листа.
+   * Повертає одноразовий токен для скидання пароля.
+   */
+  verifyResetCode: (email: string, code: string): Promise<{ token: string; message: string }> =>
+    api.post('/auth/verify-reset-code', { email, code }).then((r) => r.data),
+
+  /**
+   * Встановити новий пароль (після підтвердження коду).
+   */
   resetPassword: (token: string, newPassword: string): Promise<{ message: string }> =>
     api.post('/auth/reset-password', { token, newPassword }).then((r) => r.data),
 

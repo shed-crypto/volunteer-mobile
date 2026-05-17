@@ -131,6 +131,11 @@ export default function LoginScreen() {
             </TouchableOpacity>
           )}
 
+          {/* Забули пароль */}
+          <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('ForgotPassword')}>
+            <Text style={styles.linkText}><Text style={styles.link}>Забули пароль?</Text></Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('Register')}>
             <Text style={styles.linkText}>Немає акаунту? <Text style={styles.link}>Зареєструватися</Text></Text>
           </TouchableOpacity>
