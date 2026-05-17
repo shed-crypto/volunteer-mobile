@@ -101,6 +101,7 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="OrgSettings"   component={OrgSettingsScreen} />
       <ProfileStack.Screen name="OrgJoinRequests" component={JoinRequestsScreen} />
       <ProfileStack.Screen name="AddHub"        component={AddHubScreen} />
+      <ProfileStack.Screen name="SelectLocation" component={SelectLocationScreen} />
       <ProfileStack.Screen name="HubDetail"     component={HubDetailScreen} />
       <ProfileStack.Screen name="UserProfile"   component={UserProfileScreen} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />

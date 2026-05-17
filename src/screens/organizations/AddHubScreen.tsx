@@ -279,31 +279,28 @@ export default function AddHubScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.locOptionBtn}
-              onPress={() => (navigation as any).navigate('Map', {
-                screen: 'SelectLocation',
-                params: {
-                  isSelectionMode: true,
-                  onSelect: (coords: { latitude: number; longitude: number }) => {
-                    setLatitudeNum(coords.latitude);
-                    setLongitudeNum(coords.longitude);
-                    setLocMode('gps');
-                    // Reverse geocode to fill address automatically
-                    Location.reverseGeocodeAsync({
-                      latitude: coords.latitude,
-                      longitude: coords.longitude,
-                    }).then((addresses) => {
-                      if (addresses.length > 0) {
-                        const a = addresses[0];
-                        const parts: string[] = [];
-                        if (a.street) parts.push(a.street);
-                        if (a.city) parts.push(a.city);
-                        if (a.region && a.region !== a.city) parts.push(a.region);
-                        if (a.country) parts.push(a.country);
-                        const full = parts.filter(Boolean).join(', ');
-                        if (full) setAddress(full);
-                      }
-                    }).catch(() => {});
-                  },
+              onPress={() => navigation.navigate('SelectLocation', {
+                isSelectionMode: true,
+                onSelect: (coords: { latitude: number; longitude: number }) => {
+                  setLatitudeNum(coords.latitude);
+                  setLongitudeNum(coords.longitude);
+                  setLocMode('gps');
+                  // Reverse geocode to fill address automatically
+                  Location.reverseGeocodeAsync({
+                    latitude: coords.latitude,
+                    longitude: coords.longitude,
+                  }).then((addresses) => {
+                    if (addresses.length > 0) {
+                      const a = addresses[0];
+                      const parts: string[] = [];
+                      if (a.street) parts.push(a.street);
+                      if (a.city) parts.push(a.city);
+                      if (a.region && a.region !== a.city) parts.push(a.region);
+                      if (a.country) parts.push(a.country);
+                      const full = parts.filter(Boolean).join(', ');
+                      if (full) setAddress(full);
+                    }
+                  }).catch(() => {});
                 },
               })}
             >
