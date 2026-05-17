@@ -19,6 +19,7 @@ import { usersApi } from '../../api/users.api';
 import { Chat, ChatType, Message, User } from '../../types';
 import { Colors } from '../../utils/theme';
 import { EmptyState, LoadingScreen, ScreenHeader } from '../../components/ui';
+import { ChatContextMenu } from '../../components/ChatContextMenu';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../hooks/useSocket';
 import { useNetwork } from '../../context/NetworkContext';
@@ -48,6 +49,8 @@ export default function ChatsListScreen() {
   const [hasError, setHasError] = useState(false);
   const [pinnedChatIds, setPinnedChatIds] = useState<Set<string>>(new Set());
   const lastChatFetchRef = useRef(0);
+  const [contextMenuChatId, setContextMenuChatId] = useState<string | null>(null);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const MIN_CHAT_FETCH_INTERVAL = 5000;
 
   // New chat modal
@@ -418,10 +421,18 @@ export default function ChatsListScreen() {
             <TouchableOpacity
               style={styles.chatRow}
               onPress={() => handleOpenChat({ ...chat, id: chat.id || (chat as any).serverId })}
+              onLongPress={() => {
+                setContextMenuChatId(chat.id);
+                setContextMenuVisible(true);
+              }}
+              delayLongPress={500}
               activeOpacity={0.75}
             >
               <View style={[styles.avatar, { backgroundColor: getChatColor(chat) }]}>
                 <Text style={{ fontSize: 22 }}>{getChatIcon(chat)}</Text>
+                {pinnedChatIds.has(chat.id) && (
+                  <Text style={styles.pinBadge}>📌</Text>
+                )}
               </View>
 
               <View style={styles.chatInfo}>
@@ -526,6 +537,15 @@ export default function ChatsListScreen() {
           )}
         </View>
       </Modal>
+
+      <ChatContextMenu
+        visible={contextMenuVisible}
+        onClose={() => setContextMenuVisible(false)}
+        isPinned={contextMenuChatId ? pinnedChatIds.has(contextMenuChatId) : false}
+        onPin={() => {
+          if (contextMenuChatId) togglePin(contextMenuChatId);
+        }}
+      />
     </View>
   );
 }
@@ -560,6 +580,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5,
   },
   unreadText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  pinBadge: { position: 'absolute', top: -4, right: -4, fontSize: 12 },
 
   // Modal
   modalContainer: { flex: 1, backgroundColor: Colors.background },

@@ -204,24 +204,26 @@ export default function OrgDetailScreen() {
         onBack={goBack}
         subtitle={roleLabel}
         rightAction={
-          canManage ? (
-            <View style={styles.headerActions}>
-              <TouchableOpacity onPress={() => navigation.navigate('OrgJoinRequests', { orgId })}>
-                <Ionicons name="mail-outline" size={24} color="#fff" />
+          <View style={styles.headerActions}>
+            {org.chatId && myMembership && (
+              <TouchableOpacity onPress={() => navigation.navigate('Chats', { screen: 'ChatRoom', params: { chatId: org.chatId } })}>
+                <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('OrgSettings', { orgId })}>
-                <Ionicons name="settings-outline" size={24} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('OrgEdit', { orgId })}>
-                <Ionicons name="create-outline" size={24} color="#fff" />
-              </TouchableOpacity>
-              {org.chatId && (
-                <TouchableOpacity onPress={() => navigation.navigate('Chats', { screen: 'ChatRoom', params: { chatId: org.chatId } })}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
+            )}
+            {canManage && (
+              <>
+                <TouchableOpacity onPress={() => navigation.navigate('OrgJoinRequests', { orgId })}>
+                  <Ionicons name="mail-outline" size={24} color="#fff" />
                 </TouchableOpacity>
-              )}
-            </View>
-          ) : null
+                <TouchableOpacity onPress={() => navigation.navigate('OrgSettings', { orgId })}>
+                  <Ionicons name="settings-outline" size={24} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => navigation.navigate('OrgEdit', { orgId })}>
+                  <Ionicons name="create-outline" size={24} color="#fff" />
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
         }
       />
 
