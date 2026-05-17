@@ -100,6 +100,7 @@ export interface Request {
   id: string;
   title: string;
   description?: string;
+  address?: string;
   category: RequestCategory;
   urgency: RequestUrgency;
   status: RequestStatus;
@@ -313,6 +314,7 @@ export interface TrustVouch {
 export interface CreateRequestDto {
   title: string;
   description?: string;
+  address?: string;
   category?: RequestCategory;
   urgency?: RequestUrgency;
   requiredClearance?: ClearanceLevel;

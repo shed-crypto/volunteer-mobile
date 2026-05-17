@@ -59,6 +59,7 @@ function RequestsStackNavigator() {
       <RequestsStack.Screen name="UserProfile"    component={UserProfileScreen} />
       <RequestsStack.Screen name="Kanban"         component={KanbanScreen} />
       <RequestsStack.Screen name="CreateTask"     component={TaskDetailScreen} />
+      <RequestsStack.Screen name="SelectLocation" component={SelectLocationScreen} />
     </RequestsStack.Navigator>
   );
 }

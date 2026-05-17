@@ -64,6 +64,7 @@ export default function CreateRequestScreen() {
   const [urgency, setUrgency]         = useState<RequestUrgency>(RequestUrgency.MEDIUM);
   const [clearance, setClearance]     = useState<ClearanceLevel>(ClearanceLevel.LOCAL);
   const [isHidden, setIsHidden]       = useState(false);
+  const [address, setAddress]     = useState('');
   const [fundraisingUrl, setFundraisingUrl] = useState('');
   const [loading, setLoading]         = useState(false);
   const [errors, setErrors]           = useState<Record<string, string>>({});
@@ -102,6 +103,25 @@ export default function CreateRequestScreen() {
       setLatitude(loc.coords.latitude);
       setLongitude(loc.coords.longitude);
       setLocMode('gps');
+      // Reverse geocode to fill address automatically
+      try {
+        const addresses = await Location.reverseGeocodeAsync({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+        if (addresses.length > 0) {
+          const a = addresses[0];
+          const parts: string[] = [];
+          if (a.street) parts.push(a.street);
+          if (a.city) parts.push(a.city);
+          if (a.region && a.region !== a.city) parts.push(a.region);
+          if (a.country) parts.push(a.country);
+          const full = parts.filter(Boolean).join(', ');
+          if (full) setAddress(full);
+        }
+      } catch {
+        // ignore geocode error
+      }
     } catch {
       Alert.alert(
         'GPS недоступний',
@@ -164,6 +184,7 @@ export default function CreateRequestScreen() {
           requiredClearance: clearance,
           isLocationHidden: isHidden,
           fundraisingUrl: fundraisingUrl.trim() || undefined,
+          address: address.trim() || undefined,
           latitude,
           longitude,
           attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
@@ -178,6 +199,7 @@ export default function CreateRequestScreen() {
           requiredClearance: clearance,
           isLocationHidden: isHidden,
           fundraisingUrl: fundraisingUrl.trim() || undefined,
+          address: address.trim() || undefined,
           latitude,
           longitude,
           attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
@@ -463,16 +485,29 @@ export default function CreateRequestScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.locOptionBtn}
-                  onPress={() => navigation.navigate('Map', {
-                    screen: 'SelectLocation',
-                    params: {
-                      isSelectionMode: true,
-                      onSelect: (coords: { latitude: number; longitude: number }) => {
-                        setLatitude(coords.latitude);
-                        setLongitude(coords.longitude);
-                        setLocMode('gps');
-                      }
-                    }
+                  onPress={() => navigation.navigate('SelectLocation', {
+                    isSelectionMode: true,
+                    onSelect: (coords: { latitude: number; longitude: number }) => {
+                      setLatitude(coords.latitude);
+                      setLongitude(coords.longitude);
+                      setLocMode('gps');
+                      // Reverse geocode to fill address
+                      Location.reverseGeocodeAsync({
+                        latitude: coords.latitude,
+                        longitude: coords.longitude,
+                      }).then((addresses) => {
+                        if (addresses.length > 0) {
+                          const a = addresses[0];
+                          const parts: string[] = [];
+                          if (a.street) parts.push(a.street);
+                          if (a.city) parts.push(a.city);
+                          if (a.region && a.region !== a.city) parts.push(a.region);
+                          if (a.country) parts.push(a.country);
+                          const full = parts.filter(Boolean).join(', ');
+                          if (full) setAddress(full);
+                        }
+                      }).catch(() => {});
+                    },
                   })}
                 >
                   <Text style={styles.locOptionIcon}>🗺</Text>
@@ -550,6 +585,13 @@ export default function CreateRequestScreen() {
                 </View>
               </TouchableOpacity>
             )}
+
+            <Input
+              label="Адреса (необов'язково)"
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Вулиця, місто, область..."
+            />
 
             <Input
               label="Посилання на збір коштів (необов'язково)"

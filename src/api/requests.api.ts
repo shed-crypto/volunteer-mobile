@@ -27,6 +27,7 @@ export const requestsApi = {
       if (data.category) formData.append('category', data.category);
       if (data.urgency) formData.append('urgency', data.urgency);
       if (data.requiredClearance) formData.append('requiredClearance', data.requiredClearance);
+      if (data.address) formData.append('address', data.address);
       if (data.latitude != null) formData.append('latitude', String(data.latitude));
       if (data.longitude != null) formData.append('longitude', String(data.longitude));
       if (data.isLocationHidden != null) formData.append('isLocationHidden', String(data.isLocationHidden));
