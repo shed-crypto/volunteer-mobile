@@ -315,21 +315,40 @@ export class SyncService {
               break;
             }
             case 'REQUEST_ADD_INFO': {
-              const requestId = (payload as any).requestId;
-              const text = (payload as any).text;
-              if (!requestId || !text) {
+              const addInfoRequestId = (payload as any).requestId;
+              const addInfoText = (payload as any).text;
+              if (!addInfoRequestId || !addInfoText) {
                 OfflineLogger.sync(`[PUSH] ActionQueue: REQUEST_ADD_INFO missing requestId/text, payload:`, JSON.stringify(payload));
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
-              OfflineLogger.sync(`[PUSH] Sending REQUEST_ADD_INFO for request ${requestId}`);
+              OfflineLogger.sync(`[PUSH] Sending REQUEST_ADD_INFO for request ${addInfoRequestId}`);
               // NOTE: Backend endpoint is PATCH /:id/add-info with multipart/form-data
               // Since we can't upload files from queue, send text only as application/json
-              await api.patch(`/requests/${requestId}/add-info`, {
-                text,
+              await api.patch(`/requests/${addInfoRequestId}/add-info`, {
+                text: addInfoText,
                 // attachments omitted — will be added when user re-sends with files online
               });
               // Note: REQUEST_ADD_INFO doesn't have a taskId, so no clearPendingActionsForTask here
+              break;
+            }
+            case 'REQUEST_UPDATE': {
+              const updateReqId = (payload as any).requestId;
+              const updateData = (payload as any).data;
+              const expiresAt = (payload as any).expiresAt || 0;
+              if (!updateReqId || !updateData) {
+                OfflineLogger.sync(`[PUSH] ActionQueue: REQUEST_UPDATE missing requestId/data, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              // Check if expired
+              if (expiresAt > 0 && Date.now() > expiresAt) {
+                OfflineLogger.sync(`[PUSH] ActionQueue: REQUEST_UPDATE expired for request ${updateReqId}, removing from queue`);
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              OfflineLogger.sync(`[PUSH] Sending REQUEST_UPDATE for request ${updateReqId}`);
+              await requestsApi.update(updateReqId, updateData);
               break;
             }
             default:

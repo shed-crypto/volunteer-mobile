@@ -96,6 +96,8 @@ export default function RequestDetailScreen() {
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [pendingAddInfoActions, setPendingAddInfoActions] = useState<Array<{ id: string; text: string; createdAt: number }>>([]);
+  const [pendingUpdateActions, setPendingUpdateActions] = useState<Array<{ id: string; expiresAt: number }>>([]);
 
   // ─── Load tasks from local DB ────────────────────────────────────────────
   const loadTasksLocal = useCallback(async (requestId: string): Promise<Task[]> => {
@@ -661,6 +663,39 @@ export default function RequestDetailScreen() {
     }
   }, [requestId, loadRequestLocal, loadTasksLocal, navigation, isOffline, saveServerDataToDB]);
 
+  // ─── Load pending REQUEST_ADD_INFO and REQUEST_UPDATE from action_queue ──
+  const loadPendingRequestActions = useCallback(async () => {
+    try {
+      const queueItems = await collections.actionQueue.query().fetch();
+      const addInfo: Array<{ id: string; text: string; createdAt: number }> = [];
+      const updates: Array<{ id: string; expiresAt: number }> = [];
+
+      for (const item of (queueItems as any[])) {
+        try {
+          const payload = JSON.parse(item.payloadRaw || '{}');
+          if (item.actionType === 'REQUEST_ADD_INFO' && payload.requestId === requestId) {
+            addInfo.push({ id: item.id, text: payload.text || '', createdAt: item.createdAt });
+          }
+          if (item.actionType === 'REQUEST_UPDATE' && payload.requestId === requestId) {
+            updates.push({ id: item.id, expiresAt: payload.expiresAt || 0 });
+          }
+        } catch {}
+      }
+
+      setPendingAddInfoActions(addInfo);
+      setPendingUpdateActions(updates);
+    } catch (e) {
+      console.warn('[RequestDetail] Failed to load pending request actions', e);
+    }
+  }, [requestId]);
+
+  // Load pending request actions on mount + interval
+  useEffect(() => {
+    loadPendingRequestActions();
+    const interval = setInterval(loadPendingRequestActions, 3000);
+    return () => clearInterval(interval);
+  }, [loadPendingRequestActions]);
+
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   // Update isSaved when request changes (e.g., when server data arrives with isSaved flag)
@@ -826,6 +861,81 @@ export default function RequestDetailScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={Colors.primary} />}
         contentContainerStyle={{ paddingBottom: 32 }}
       >
+        {/* Pending cards for request-level offline actions */}
+        {pendingAddInfoActions.length > 0 && (
+          <Card style={{ marginTop: 12 }}>
+            {pendingAddInfoActions.map((pa) => (
+              <View key={pa.id} style={{ padding: 8, marginBottom: 6, backgroundColor: '#FFF8E1', borderRadius: 8, borderWidth: 1.5, borderColor: Colors.primary }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#F57C00', flex: 1, flexWrap: 'wrap' }}>
+                    🕒 Доповнення очікує на мережу
+                  </Text>
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.7)' }}
+                    onPress={async () => {
+                      try {
+                        const queueItems = await collections.actionQueue.query().fetch();
+                        const item = queueItems.find((q: any) => q.id === pa.id);
+                        if (item) await safeWrite(() => item.destroyPermanently());
+                        loadPendingRequestActions();
+                      } catch (e) {
+                        console.warn('Failed to cancel pending add info', e);
+                      }
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#E65100' }}>Скасувати</Text>
+                  </TouchableOpacity>
+                </View>
+                {pa.text ? <Text style={{ fontSize: 12, color: '#666', marginTop: 4, marginLeft: 4 }} numberOfLines={2}>{pa.text}</Text> : null}
+              </View>
+            ))}
+          </Card>
+        )}
+
+        {pendingUpdateActions.length > 0 && pendingUpdateActions.map((pu) => {
+          const remaining = Math.max(0, pu.expiresAt - Date.now());
+          const remainingSec = Math.ceil(remaining / 1000);
+          const remainingMin = Math.floor(remainingSec / 60);
+          const remainingSecDisplay = remainingSec % 60;
+          const expired = remaining <= 0;
+          return (
+            <Card key={pu.id} style={{ marginTop: 12 }}>
+              <View style={{ padding: 8, backgroundColor: expired ? '#FFEBEE' : '#FFF8E1', borderRadius: 8, borderWidth: 1.5, borderColor: expired ? Colors.danger : Colors.primary }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: expired ? Colors.danger : '#F57C00', flex: 1, flexWrap: 'wrap' }}>
+                    {expired ? '⏰ Час вийшов — зміни не застосовано' : `🕒 Редагування очікує на мережу`}
+                  </Text>
+                  {!expired && (
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.7)' }}
+                      onPress={async () => {
+                        try {
+                          const queueItems = await collections.actionQueue.query().fetch();
+                          const item = queueItems.find((q: any) => q.id === pu.id);
+                          if (item) await safeWrite(() => item.destroyPermanently());
+                          loadPendingRequestActions();
+                        } catch (e) {
+                          console.warn('Failed to cancel pending update', e);
+                        }
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#E65100' }}>Скасувати</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {!expired && (
+                  <Text style={{ fontSize: 12, color: '#666', marginTop: 4, marginLeft: 4 }}>
+                    ⏱ Скасується через: {remainingMin}:{remainingSecDisplay.toString().padStart(2, '0')}
+                  </Text>
+                )}
+                <Text style={{ fontSize: 11, color: '#999', marginTop: 4, marginLeft: 4 }}>
+                  💡 Для швидких правок використайте «Доповнити» без часових обмежень
+                </Text>
+              </View>
+            </Card>
+          );
+        })}
+
         {/* Main info card */}
         <Card style={{ marginTop: 16 }}>
           <View style={[styles.urgencyStrip, { backgroundColor: urgency?.bg }]} />

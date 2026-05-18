@@ -174,39 +174,97 @@ export default function CreateRequestScreen() {
   const handleSave = async () => {
     if (!validate()) return;
     setLoading(true);
+
+    const updateData = {
+      title: title.trim(),
+      description: description.trim() || undefined,
+      category,
+      urgency,
+      requiredClearance: clearance,
+      isLocationHidden: isHidden,
+      fundraisingUrl: fundraisingUrl.trim() || undefined,
+      address: address.trim() || undefined,
+      latitude,
+      longitude,
+      attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
+    };
+
     try {
-        if (isEditMode) {
-        await requestsApi.update(route.params.requestId, {
-          title: title.trim(),
-          description: description.trim() || undefined,
-          category,
-          urgency,
-          requiredClearance: clearance,
-          isLocationHidden: isHidden,
-          fundraisingUrl: fundraisingUrl.trim() || undefined,
-          address: address.trim() || undefined,
-          latitude,
-          longitude,
-          attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
-        });
+      if (isEditMode) {
+        // Check if offline — if so, ask user about limited offline edit
+        if (await getServerReachable() === false) {
+          Alert.alert(
+            '⚠️ Немає підключення до мережі',
+            'Якщо мережа не з\'явиться протягом 10 хвилин — зміни буде автоматично скасовано.\n\n💡 Для швидких правок краще використати «Доповнити заявку» — вони збережуться в черзі без часового обмеження.',
+            [
+              { text: 'Скасувати', style: 'cancel' },
+              {
+                text: 'Все одно зберегти',
+                onPress: async () => {
+                  try {
+                    const { collections, safeWrite } = await import('../../db/index');
+                    await safeWrite(async () => {
+                      await collections.actionQueue.create((item: any) => {
+                        item.actionType = 'REQUEST_UPDATE';
+                        item.payloadRaw = JSON.stringify({
+                          requestId: route.params.requestId,
+                          data: updateData,
+                          expiresAt: Date.now() + 10 * 60 * 1000, // 10 хвилин
+                        });
+                        item.createdAt = Date.now();
+                        item.retryCount = 0;
+                        item.error = null;
+                        item.lastErrorCode = null;
+                        item.nextRetryAt = null;
+                      });
+                    });
+                    Alert.alert('📴 Офлайн', 'Редагування поставлено в чергу на 10 хвилин. Якщо мережа не з\'явиться — зміни буде скасовано.');
+                    navigation.goBack();
+                  } catch (err) {
+                    Alert.alert('Помилка', 'Не вдалося зберегти зміни в чергу');
+                  } finally {
+                    setLoading(false);
+                  }
+                },
+              },
+            ]
+          );
+          return; // Don't close loading, Alert handles it
+        }
+        await requestsApi.update(route.params.requestId, updateData);
         navigation.goBack();
       } else {
-        const req = await requestsApi.create({
-          title: title.trim(),
-          description: description.trim() || undefined,
-          category,
-          urgency,
-          requiredClearance: clearance,
-          isLocationHidden: isHidden,
-          fundraisingUrl: fundraisingUrl.trim() || undefined,
-          address: address.trim() || undefined,
-          latitude,
-          longitude,
-          attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
-        });
+        const req = await requestsApi.create(updateData);
         navigation.replace('RequestDetail', { requestId: req.id });
       }
     } catch (e: any) {
+      // Network error during edit — try to enqueue
+      if (isEditMode) {
+        const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
+        if (isNetworkError) {
+          try {
+            const { collections, safeWrite } = await import('../../db/index');
+            await safeWrite(async () => {
+              await collections.actionQueue.create((item: any) => {
+                item.actionType = 'REQUEST_UPDATE';
+                item.payloadRaw = JSON.stringify({
+                  requestId: route.params.requestId,
+                  data: updateData,
+                  expiresAt: Date.now() + 10 * 60 * 1000,
+                });
+                item.createdAt = Date.now();
+                item.retryCount = 0;
+                item.error = null;
+                item.lastErrorCode = null;
+                item.nextRetryAt = null;
+              });
+            });
+            Alert.alert('📴 Офлайн', 'Мережа зникла. Редагування поставлено в чергу на 10 хвилин.');
+            navigation.goBack();
+            return;
+          } catch {}
+        }
+      }
       const msg = e?.response?.data?.message;
       Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : (msg ?? 'Щось пішло не так'));
     } finally {
