@@ -328,6 +328,7 @@ export class SyncService {
               if (addInfoAttachments && Array.isArray(addInfoAttachments) && addInfoAttachments.length > 0) {
                 // Try uploading files — only local files (file:// URI) can be uploaded
                 const uploadFormData = new FormData();
+                uploadFormData.append('text', addInfoText);
                 let hasLocalFiles = false;
                 for (const file of addInfoAttachments) {
                   if (file.uri && (file.uri.startsWith('file://') || file.uri.startsWith('/'))) {

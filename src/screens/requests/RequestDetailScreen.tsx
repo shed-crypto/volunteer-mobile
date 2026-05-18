@@ -96,7 +96,9 @@ export default function RequestDetailScreen() {
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [pendingAddInfoActions, setPendingAddInfoActions] = useState<Array<{ id: string; text: string; createdAt: number }>>([]);
+  // Для редагування доповнення: серверні файли (не для завантаження, тільки для перегляду/видалення)
+  const [existingInfoFiles, setExistingInfoFiles] = useState<Array<{ url: string; name: string; type: string }>>([]);
+  const [pendingAddInfoActions, setPendingAddInfoActions] = useState<Array<{ id: string; text: string; createdAt: number; attachmentsCount: number }>>([]);
   const [pendingUpdateActions, setPendingUpdateActions] = useState<Array<{ id: string; expiresAt: number }>>([]);
 
   // ─── Load tasks from local DB ────────────────────────────────────────────
@@ -667,14 +669,16 @@ export default function RequestDetailScreen() {
   const loadPendingRequestActions = useCallback(async () => {
     try {
       const queueItems = await collections.actionQueue.query().fetch();
-      const addInfo: Array<{ id: string; text: string; createdAt: number }> = [];
+      const addInfo: Array<{ id: string; text: string; createdAt: number; attachmentsCount: number }> = [];
       const updates: Array<{ id: string; expiresAt: number }> = [];
 
       for (const item of (queueItems as any[])) {
         try {
           const payload = JSON.parse(item.payloadRaw || '{}');
           if (item.actionType === 'REQUEST_ADD_INFO' && payload.requestId === requestId) {
-            addInfo.push({ id: item.id, text: payload.text || '', createdAt: item.createdAt });
+            const attachments = payload.attachments;
+            const attachmentsCount = Array.isArray(attachments) ? attachments.length : 0;
+            addInfo.push({ id: item.id, text: payload.text || '', createdAt: item.createdAt, attachmentsCount });
           }
           if (item.actionType === 'REQUEST_UPDATE' && payload.requestId === requestId) {
             updates.push({ id: item.id, expiresAt: payload.expiresAt || 0 });
@@ -887,6 +891,11 @@ export default function RequestDetailScreen() {
                   </TouchableOpacity>
                 </View>
                 {pa.text ? <Text style={{ fontSize: 12, color: '#666', marginTop: 4, marginLeft: 4 }} numberOfLines={2}>{pa.text}</Text> : null}
+                {pa.attachmentsCount > 0 && (
+                  <Text style={{ fontSize: 12, color: '#F57C00', marginTop: 4, marginLeft: 4 }}>
+                    📎 {pa.attachmentsCount} файл{pa.attachmentsCount > 1 ? 'ів' : ''}
+                  </Text>
+                )}
               </View>
             ))}
           </Card>
@@ -1053,8 +1062,9 @@ export default function RequestDetailScreen() {
                     <TouchableOpacity onPress={() => {
                           setEditingInfoId(info.id);
                           setEditingText(info.text);
-                          // Не додаємо старі файли в selectedFiles — вони зберігаються на сервері
-                          // Якщо користувач вибере НОВІ файли, вони додадуться до існуючих
+                          // Зберігаємо старі файли для показу (read-only)
+                          setExistingInfoFiles(info.attachments || []);
+                          // Нові файли — пустий масив
                           setSelectedFiles([]);
                         }}>
                           <Text style={{ fontSize: 12, color: Colors.primary }}>✏️</Text>
@@ -1086,12 +1096,51 @@ export default function RequestDetailScreen() {
                         multiline
                         autoFocus
                       />
-                      <View style={{ marginTop: 8 }}>
+                      {existingInfoFiles.length > 0 && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textMuted, marginBottom: 6 }}>Існуючі вкладення (незмінні при редагуванні):</Text>
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                            {existingInfoFiles.map((file: any, fileIdx: number) => {
+                              const isImage = file.type?.startsWith('image/');
+                              const isVideo = file.type?.startsWith('video/');
+                              const fileUrl = file.url?.startsWith('http') ? file.url : `${API_BASE_URL.replace('/api', '')}${file.url}`;
+                              return (
+                                <TouchableOpacity
+                                  key={fileIdx}
+                                  onPress={() => {
+                                    if (isImage || isVideo) {
+                                      setSelectedMedia({ url: fileUrl, type: isImage ? 'image' : 'video' });
+                                      setMediaViewerVisible(true);
+                                    } else {
+                                      Linking.openURL(fileUrl).catch(() => Alert.alert('Помилка', 'Не вдалося відкрити файл'));
+                                    }
+                                  }}
+                                >
+                                  {isImage ? (
+                                    <Image source={{ uri: fileUrl }} style={{ width: 80, height: 80, borderRadius: 6, backgroundColor: Colors.borderLight, opacity: 0.6 }} resizeMode="cover" />
+                                  ) : isVideo ? (
+                                    <View style={{ width: 80, height: 80, borderRadius: 6, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', opacity: 0.6 }}>
+                                      <Text style={{ fontSize: 20 }}>▶️</Text>
+                                    </View>
+                                  ) : (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, backgroundColor: Colors.borderLight, borderRadius: 6 }}>
+                                      <Text style={{ fontSize: 16 }}>📄</Text>
+                                      <Text style={{ fontSize: 11, flex: 1 }} numberOfLines={1}>{file.name}</Text>
+                                    </View>
+                                  )}
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                          <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 4 }}>💡 Нові файли додаються до існуючих</Text>
+                        </View>
+                      )}
+                      <View style={{ marginTop: 12 }}>
                         <TouchableOpacity onPress={async () => {
                           const res = await DocumentPicker.getDocumentAsync({ multiple: true });
                           if (!res.canceled) setSelectedFiles(res.assets.map(a => ({ uri: a.uri, name: a.name, type: (a as any).mimeType || 'application/octet-stream' })));
                         }} style={{ padding: 8, backgroundColor: Colors.borderLight, borderRadius: 8, alignItems: 'center' }}>
-                          <Text style={{ color: Colors.primary, fontWeight: '600' }}>+ Додати файли</Text>
+                          <Text style={{ color: Colors.primary, fontWeight: '600' }}>{selectedFiles.length > 0 ? `+ Додати ще файли (${selectedFiles.length})` : '+ Додати нові файли'}</Text>
                         </TouchableOpacity>
                         {selectedFiles.map((file, idx) => (
                           <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, padding: 6, backgroundColor: Colors.surface, borderRadius: 6 }}>
