@@ -392,8 +392,10 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
 
   /** СПІЛЬНА: enqueue offline action (dedup + immediate UI + DB) */
   const enqueueOfflineAction = useCallback(async (actionType: string, payload: any) => {
+    // Skip dedup for TASK_REPORT_CREATE — allow multiple reports in queue
+    const isReportAction = actionType.startsWith('TASK_REPORT_CREATE');
     // 0. Dedup: if immediate cache already has this actionType, skip duplicate DB write
-    if (hasPendingActionImmediate(taskId, actionType)) {
+    if (!isReportAction && hasPendingActionImmediate(taskId, actionType)) {
       return;
     }
     // 1. INSTANT UI update — set to global immediate cache (NO DB wait)
@@ -418,6 +420,8 @@ export function usePendingActions(taskId: string): PendingActionsInfo {
         const queuedPayload = parsePayload(item.payloadRaw) || {};
         const queuedTaskId = queuedPayload.taskId || queuedPayload.task_id || queuedPayload.id;
         if (queuedTaskId !== taskId) continue;
+        // For report actions, don't remove existing — allow multiple
+        if (isReportAction) continue;
         if (item.actionType === actionType || item.actionType === oppositeAction) {
           await item.destroyPermanently();
         }

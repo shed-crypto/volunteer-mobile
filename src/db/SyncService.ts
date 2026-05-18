@@ -348,6 +348,22 @@ export class SyncService {
               }
               break;
             }
+            case 'TASK_REPORT_CREATE':
+            case 'TASK_REPORT_CREATE_SILENT': {
+              const reportTaskId = (payload as any).taskId;
+              const reportComment = (payload as any).comment;
+              const reportAttachments = (payload as any).attachments;
+              if (!reportTaskId) {
+                OfflineLogger.sync(`[PUSH] ActionQueue: TASK_REPORT_CREATE missing taskId, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              OfflineLogger.sync(`[PUSH] Sending TASK_REPORT_CREATE for task ${reportTaskId} (actionType=${item.actionType})`);
+              const { taskReportsApi } = await import('../api/task-reports.api');
+              await taskReportsApi.create(reportTaskId, reportComment || '', reportAttachments || []);
+              processedTaskIds.push(reportTaskId);
+              break;
+            }
             case 'REQUEST_UPDATE': {
               const updateReqId = (payload as any).requestId;
               const updateData = (payload as any).data;
@@ -368,7 +384,23 @@ export class SyncService {
               break;
             }
             default:
-              OfflineLogger.sync(`[PUSH] ActionQueue: unknown action type ${item.actionType}`);
+              // Handle dynamic TASK_REPORT_CREATE_* action types (e.g. TASK_REPORT_CREATE_1719132834170)
+              if (item.actionType.startsWith('TASK_REPORT_CREATE')) {
+                const reportTaskId = (payload as any).taskId;
+                const reportComment = (payload as any).comment;
+                const reportAttachments = (payload as any).attachments;
+                if (!reportTaskId) {
+                  OfflineLogger.sync(`[PUSH] ActionQueue: TASK_REPORT_CREATE missing taskId, payload:`, JSON.stringify(payload));
+                  preparedOps.push(item.prepareMarkAsDeleted());
+                  continue;
+                }
+                OfflineLogger.sync(`[PUSH] Sending TASK_REPORT_CREATE for task ${reportTaskId} (actionType=${item.actionType})`);
+                const { taskReportsApi } = await import('../api/task-reports.api');
+                await taskReportsApi.create(reportTaskId, reportComment || '', reportAttachments || []);
+                processedTaskIds.push(reportTaskId);
+              } else {
+                OfflineLogger.sync(`[PUSH] ActionQueue: unknown action type ${item.actionType}`);
+              }
           }
 
           // Success — mark for deletion

@@ -439,8 +439,25 @@ export default function TaskDetailScreen() {
   const handleReportSubmit = async (comment: string, attachments: { uri: string; name: string; type: string }[]) => {
     if (!task) return;
     setUploading(true);
+    const uniqueActionType = `TASK_REPORT_CREATE_${Date.now()}`;
+    if (isOffline) {
+      await enqueueOfflineAction(uniqueActionType, { taskId: task.id, comment, attachments });
+      setShowReportModal(false);
+      Alert.alert('✅ Збережено', 'Звіт поставлено в чергу синхронізації');
+      setUploading(false);
+      return;
+    }
     try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.create(task.id, comment, attachments); setShowReportModal(false); const updated = await taskReportsApi.getAll(task.id); setReports(updated); }
-    catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося надіслати звіт'); } finally { setUploading(false); }
+    catch (e: any) {
+      const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
+      if (isNetworkError) {
+        await enqueueOfflineAction(uniqueActionType, { taskId: task.id, comment, attachments });
+        setShowReportModal(false);
+        Alert.alert('📴 Офлайн', 'Мережа зникла. Звіт поставлено в чергу синхронізації');
+      } else {
+        Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося надіслати звіт');
+      }
+    } finally { setUploading(false); }
   };
 
   const handleConfirm = async () => {
@@ -526,6 +543,7 @@ export default function TaskDetailScreen() {
   const pendingAssign = hasPendingAction('TASK_ASSIGN') || hasPendingAction('TASK_WITHDRAW');
   const pendingComplete = hasPendingAction('TASK_COMPLETE');
   const pendingReturn = hasPendingAction('TASK_RETURN_TO_PROGRESS');
+  const pendingReports = pendingActions.filter(a => a.actionType.startsWith('TASK_REPORT_CREATE'));
 
   return (
     <View style={{ flex: 1 }}>
@@ -643,6 +661,25 @@ export default function TaskDetailScreen() {
           )}
         </Card>
 
+        {/* Pending report actions */}
+        {pendingReports.length > 0 && (
+          <Card style={{ padding: 16, marginTop: 12 }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 8, color: Colors.text }}>Звіти в черзі ({pendingReports.length})</Text>
+            {pendingReports.map((p) => (
+              <View key={p.id} style={[styles.pendingContainer, { borderColor: Colors.primary, marginBottom: 8 }]}>
+                <View style={{ marginBottom: 6 }}>
+                  <Text style={styles.pendingText}>🕒 Звіт очікує на мережу</Text>
+                  {p.payload?.comment ? <Text style={{ fontSize: 13, color: '#BF6A00', marginTop: 4 }}>«{p.payload.comment.substring(0, 80)}»</Text> : null}
+                  {p.payload?.attachments?.length > 0 && <Text style={{ fontSize: 12, color: '#BF6A00', marginTop: 2 }}>📎 {p.payload.attachments.length} файл(ів)</Text>}
+                </View>
+                <TouchableOpacity onPress={async () => { await removePendingAction(p.id); }} style={styles.cancelBtn}>
+                  <Text style={styles.cancelText}>Скасувати</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </Card>
+        )}
+
         {/* Reports history */}
         {reports.length > 0 && (
           <Card style={{ padding: 16, marginTop: 12 }}>
@@ -672,7 +709,10 @@ export default function TaskDetailScreen() {
                   {r.userId === user?.id && (
                     <>
                       <TouchableOpacity onPress={() => Alert.alert('Редагування', 'Редагування поки в процесі розробки')}><Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={async () => { try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.delete(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити'); } }}><Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => Alert.alert('🗑️ Видалити звіт?', 'Цю дію неможливо скасувати після 30 хвилин з моменту створення.', [
+                        { text: 'Ні', style: 'cancel' },
+                        { text: 'Так, видалити', style: 'destructive', onPress: async () => { try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.delete(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити'); } } },
+                      ])}><Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text></TouchableOpacity>
                     </>
                   )}
                   {isCoordOrAdmin && !r.isVerified && (<TouchableOpacity onPress={async () => { try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.verify(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося підтвердити'); } }}><Text style={{ color: Colors.success, fontSize: 12 }}>✓ Підтвердити</Text></TouchableOpacity>)}
