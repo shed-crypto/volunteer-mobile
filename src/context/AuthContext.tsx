@@ -171,10 +171,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync('biometricEnabled');
     await AsyncStorage.removeItem(CACHED_USER_KEY);
     
-    // ДОДАТИ: Очистка БД при виході
+    // Очистка БД при виході
     try {
       const { database } = await import('../db/index');
-      await database.unsafeResetDatabase();
+      await database.write(async () => {
+        await database.unsafeResetDatabase();
+      });
     } catch (e) {
       console.warn('DB cleanup failed', e);
     }
