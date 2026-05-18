@@ -672,10 +672,10 @@ export default function TaskDetailScreen() {
                   {r.userId === user?.id && (
                     <>
                       <TouchableOpacity onPress={() => Alert.alert('Редагування', 'Редагування поки в процесі розробки')}><Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={async () => { try { const { reportsApi } = await import('../../api/reports.api'); await reportsApi.delete(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити'); } }}><Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={async () => { try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.delete(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити'); } }}><Text style={{ color: Colors.danger, fontSize: 12 }}>🗑️ Видалити</Text></TouchableOpacity>
                     </>
                   )}
-                  {isCoordOrAdmin && !r.isVerified && (<TouchableOpacity onPress={async () => { try { const { reportsApi } = await import('../../api/reports.api'); await reportsApi.verify(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося підтвердити'); } }}><Text style={{ color: Colors.success, fontSize: 12 }}>✓ Підтвердити</Text></TouchableOpacity>)}
+                  {isCoordOrAdmin && !r.isVerified && (<TouchableOpacity onPress={async () => { try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.verify(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося підтвердити'); } }}><Text style={{ color: Colors.success, fontSize: 12 }}>✓ Підтвердити</Text></TouchableOpacity>)}
                   {r.isVerified && <Text style={{ color: Colors.success, fontSize: 12, fontWeight: 'bold' }}>✓ Підтверджено</Text>}
                 </View>
               </View>

@@ -33,4 +33,13 @@ export const taskReportsApi = {
 
   getAll: (taskId: string): Promise<TaskReport[]> =>
     api.get(`/tasks/${taskId}/reports`).then((r) => r.data),
+
+  delete: (taskId: string, reportId: string): Promise<void> =>
+    api.post(`/tasks/${taskId}/reports/${reportId}/delete`).then((r) => r.data),
+
+  verify: (taskId: string, reportId: string): Promise<void> =>
+    api.post(`/tasks/${taskId}/reports/${reportId}/verify`).then((r) => r.data),
+
+  update: (taskId: string, reportId: string, comment: string): Promise<void> =>
+    api.post(`/tasks/${taskId}/reports/${reportId}/edit`, { comment }).then((r) => r.data),
 };
