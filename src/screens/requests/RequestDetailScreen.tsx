@@ -96,8 +96,9 @@ export default function RequestDetailScreen() {
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
   const [isUploading, setIsUploading] = useState(false);
-  // Для редагування доповнення: серверні файли (не для завантаження, тільки для перегляду/видалення)
+  // Для редагування доповнення: серверні файли з можливістю видалення
   const [existingInfoFiles, setExistingInfoFiles] = useState<Array<{ url: string; name: string; type: string }>>([]);
+  const [removedInfoUrls, setRemovedInfoUrls] = useState<string[]>([]);
   const [pendingAddInfoActions, setPendingAddInfoActions] = useState<Array<{ id: string; text: string; createdAt: number; attachmentsCount: number }>>([]);
   const [pendingUpdateActions, setPendingUpdateActions] = useState<Array<{ id: string; expiresAt: number }>>([]);
 
@@ -1062,9 +1063,8 @@ export default function RequestDetailScreen() {
                     <TouchableOpacity onPress={() => {
                           setEditingInfoId(info.id);
                           setEditingText(info.text);
-                          // Зберігаємо старі файли для показу (read-only)
                           setExistingInfoFiles(info.attachments || []);
-                          // Нові файли — пустий масив
+                          setRemovedInfoUrls([]);
                           setSelectedFiles([]);
                         }}>
                           <Text style={{ fontSize: 12, color: Colors.primary }}>✏️</Text>
@@ -1098,41 +1098,57 @@ export default function RequestDetailScreen() {
                       />
                       {existingInfoFiles.length > 0 && (
                         <View style={{ marginTop: 12 }}>
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textMuted, marginBottom: 6 }}>Існуючі вкладення (незмінні при редагуванні):</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textMuted, marginBottom: 6 }}>Вкладення:</Text>
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                             {existingInfoFiles.map((file: any, fileIdx: number) => {
+                              const isRemoved = removedInfoUrls.includes(file.url);
                               const isImage = file.type?.startsWith('image/');
                               const isVideo = file.type?.startsWith('video/');
                               const fileUrl = file.url?.startsWith('http') ? file.url : `${API_BASE_URL.replace('/api', '')}${file.url}`;
                               return (
-                                <TouchableOpacity
-                                  key={fileIdx}
-                                  onPress={() => {
-                                    if (isImage || isVideo) {
-                                      setSelectedMedia({ url: fileUrl, type: isImage ? 'image' : 'video' });
-                                      setMediaViewerVisible(true);
-                                    } else {
-                                      Linking.openURL(fileUrl).catch(() => Alert.alert('Помилка', 'Не вдалося відкрити файл'));
-                                    }
-                                  }}
-                                >
-                                  {isImage ? (
-                                    <Image source={{ uri: fileUrl }} style={{ width: 80, height: 80, borderRadius: 6, backgroundColor: Colors.borderLight, opacity: 0.6 }} resizeMode="cover" />
-                                  ) : isVideo ? (
-                                    <View style={{ width: 80, height: 80, borderRadius: 6, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', opacity: 0.6 }}>
-                                      <Text style={{ fontSize: 20 }}>▶️</Text>
-                                    </View>
+                                <View key={fileIdx} style={{ position: 'relative' }}>
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      if (!isRemoved && (isImage || isVideo)) {
+                                        setSelectedMedia({ url: fileUrl, type: isImage ? 'image' : 'video' });
+                                        setMediaViewerVisible(true);
+                                      } else if (!isRemoved) {
+                                        Linking.openURL(fileUrl).catch(() => Alert.alert('Помилка', 'Не вдалося відкрити файл'));
+                                      }
+                                    }}
+                                  >
+                                    {isImage ? (
+                                      <Image source={{ uri: fileUrl }} style={{ width: 80, height: 80, borderRadius: 6, backgroundColor: Colors.borderLight, opacity: isRemoved ? 0.3 : 0.8 }} resizeMode="cover" />
+                                    ) : isVideo ? (
+                                      <View style={{ width: 80, height: 80, borderRadius: 6, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', opacity: isRemoved ? 0.3 : 0.8 }}>
+                                        <Text style={{ fontSize: 20 }}>▶️</Text>
+                                      </View>
+                                    ) : (
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, backgroundColor: Colors.borderLight, borderRadius: 6, opacity: isRemoved ? 0.3 : 1 }}>
+                                        <Text style={{ fontSize: 16 }}>📄</Text>
+                                        <Text style={{ fontSize: 11, flex: 1 }} numberOfLines={1}>{file.name}</Text>
+                                      </View>
+                                    )}
+                                  </TouchableOpacity>
+                                  {isRemoved ? (
+                                    <TouchableOpacity
+                                      onPress={() => setRemovedInfoUrls(prev => prev.filter(u => u !== file.url))}
+                                      style={{ position: 'absolute', top: -4, right: -4, backgroundColor: Colors.secondary, borderRadius: 12, width: 22, height: 22, justifyContent: 'center', alignItems: 'center' }}
+                                    >
+                                      <Text style={{ color: '#fff', fontSize: 12 }}>↩</Text>
+                                    </TouchableOpacity>
                                   ) : (
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, backgroundColor: Colors.borderLight, borderRadius: 6 }}>
-                                      <Text style={{ fontSize: 16 }}>📄</Text>
-                                      <Text style={{ fontSize: 11, flex: 1 }} numberOfLines={1}>{file.name}</Text>
-                                    </View>
+                                    <TouchableOpacity
+                                      onPress={() => setRemovedInfoUrls(prev => [...prev, file.url])}
+                                      style={{ position: 'absolute', top: -4, right: -4, backgroundColor: Colors.danger, borderRadius: 12, width: 22, height: 22, justifyContent: 'center', alignItems: 'center' }}
+                                    >
+                                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>✕</Text>
+                                    </TouchableOpacity>
                                   )}
-                                </TouchableOpacity>
+                                </View>
                               );
                             })}
                           </View>
-                          <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 4 }}>💡 Нові файли додаються до існуючих</Text>
                         </View>
                       )}
                       <View style={{ marginTop: 12 }}>
@@ -1160,7 +1176,7 @@ export default function RequestDetailScreen() {
                             if (!editingText.trim()) return;
                             setIsUploading(true);
                             try {
-                              await requestsApi.updateAdditionalInfo(request.id, info.id, editingText.trim(), selectedFiles);
+                              await requestsApi.updateAdditionalInfo(request.id, info.id, editingText.trim(), selectedFiles, removedInfoUrls.length > 0 ? removedInfoUrls : undefined);
                               setEditingInfoId(null);
                               setSelectedFiles([]);
                               load();

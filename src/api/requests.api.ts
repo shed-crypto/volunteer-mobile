@@ -100,9 +100,12 @@ export const requestsApi = {
     }).then((r) => r.data);
   },
 
-  updateAdditionalInfo: (id: string, infoId: string, text: string, attachments?: any[]): Promise<Request> => {
+  updateAdditionalInfo: (id: string, infoId: string, text: string, attachments?: any[], removedAttachments?: string[]): Promise<Request> => {
     const formData = new FormData();
     formData.append('text', text);
+    if (removedAttachments?.length) {
+      formData.append('removedAttachments', JSON.stringify(removedAttachments));
+    }
     attachments?.forEach((file, index) => {
       formData.append('attachments', {
         uri: file.uri,
