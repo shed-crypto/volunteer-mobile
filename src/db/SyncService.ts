@@ -317,19 +317,34 @@ export class SyncService {
             case 'REQUEST_ADD_INFO': {
               const addInfoRequestId = (payload as any).requestId;
               const addInfoText = (payload as any).text;
+              const addInfoAttachments = (payload as any).attachments;
               if (!addInfoRequestId || !addInfoText) {
                 OfflineLogger.sync(`[PUSH] ActionQueue: REQUEST_ADD_INFO missing requestId/text, payload:`, JSON.stringify(payload));
                 preparedOps.push(item.prepareMarkAsDeleted());
                 continue;
               }
               OfflineLogger.sync(`[PUSH] Sending REQUEST_ADD_INFO for request ${addInfoRequestId}`);
-              // NOTE: Backend endpoint is PATCH /:id/add-info with multipart/form-data
-              // Since we can't upload files from queue, send text only as application/json
-              await api.patch(`/requests/${addInfoRequestId}/add-info`, {
-                text: addInfoText,
-                // attachments omitted — will be added when user re-sends with files online
-              });
-              // Note: REQUEST_ADD_INFO doesn't have a taskId, so no clearPendingActionsForTask here
+              // Upload files first if any
+              if (addInfoAttachments && Array.isArray(addInfoAttachments) && addInfoAttachments.length > 0) {
+                // Try uploading files — only local files (file:// URI) can be uploaded
+                const uploadFormData = new FormData();
+                let hasLocalFiles = false;
+                for (const file of addInfoAttachments) {
+                  if (file.uri && (file.uri.startsWith('file://') || file.uri.startsWith('/'))) {
+                    uploadFormData.append('attachments', { uri: file.uri, name: file.name || 'file', type: file.type || 'application/octet-stream' } as any);
+                    hasLocalFiles = true;
+                  }
+                }
+                if (hasLocalFiles) {
+                  await api.patch(`/requests/${addInfoRequestId}/add-info`, uploadFormData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                  });
+                } else {
+                  await api.patch(`/requests/${addInfoRequestId}/add-info`, { text: addInfoText });
+                }
+              } else {
+                await api.patch(`/requests/${addInfoRequestId}/add-info`, { text: addInfoText });
+              }
               break;
             }
             case 'REQUEST_UPDATE': {

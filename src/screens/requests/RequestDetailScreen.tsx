@@ -1050,19 +1050,12 @@ export default function RequestDetailScreen() {
                     </Text>
                     {canEditInfo && editingInfoId !== info.id && (
                       <View style={{ flexDirection: 'row', gap: 12 }}>
-                        <TouchableOpacity onPress={() => {
+                    <TouchableOpacity onPress={() => {
                           setEditingInfoId(info.id);
                           setEditingText(info.text);
-                          // Pre-fill existing attachments to avoid losing them during edit
-                          if (info.attachments?.length > 0) {
-                            setSelectedFiles(info.attachments.map((att: any) => ({
-                              uri: att.url?.startsWith('http') ? att.url : `http://10.0.2.2:3000${att.url}`,
-                              name: att.name || 'file',
-                              type: getMimeType(att.url),
-                            })));
-                          } else {
-                            setSelectedFiles([]);
-                          }
+                          // Не додаємо старі файли в selectedFiles — вони зберігаються на сервері
+                          // Якщо користувач вибере НОВІ файли, вони додадуться до існуючих
+                          setSelectedFiles([]);
                         }}>
                           <Text style={{ fontSize: 12, color: Colors.primary }}>✏️</Text>
                         </TouchableOpacity>
