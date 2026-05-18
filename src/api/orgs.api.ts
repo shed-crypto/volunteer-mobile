@@ -109,6 +109,9 @@ export const orgsApi = {
     }).then((r) => r.data);
   },
 
+  createChat: (id: string): Promise<Organization> =>
+    api.post(`/organizations/${id}/create-chat`).then((r) => r.data),
+
   uploadBanner: async (id: string, fileUri: string): Promise<{ url: string }> => {
     const formData = new FormData();
     await appendImage(formData, fileUri, 'banner.jpg');

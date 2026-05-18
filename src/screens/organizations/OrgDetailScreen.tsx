@@ -210,6 +210,19 @@ export default function OrgDetailScreen() {
                 <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
               </TouchableOpacity>
             )}
+            {!org.chatId && canManage && (
+              <TouchableOpacity onPress={() =>
+                Alert.alert('Створити чат', 'Створити чат для цієї організації?', [
+                  { text: 'Ні', style: 'cancel' },
+                  {
+                    text: 'Так',
+                    onPress: () => orgsApi.createChat(orgId).then(() => fetchOrg({ showLoader: false })),
+                  },
+                ])
+              }>
+                <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
             {canManage && (
               <>
                 <TouchableOpacity onPress={() => navigation.navigate('OrgJoinRequests', { orgId })}>
