@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal,
   ScrollView, TextInput, Image, Alert,
@@ -20,6 +20,9 @@ interface ReportModalProps {
   onClose: () => void;
   onSubmit: (comment: string, attachments: Attachment[]) => void;
   loading: boolean;
+  mode?: 'create' | 'edit';
+  initialComment?: string;
+  initialAttachments?: Attachment[];
 }
 
 // Таблиця MIME-типів по розширенню файлу
@@ -46,9 +49,17 @@ function resolveMime(mimeType: string | undefined, uri: string, fileName: string
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
-export const TaskReportModal = ({ visible, onClose, onSubmit, loading }: ReportModalProps) => {
-  const [comment, setComment] = useState('');
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+export const TaskReportModal = ({ visible, onClose, onSubmit, loading, mode = 'create', initialComment = '', initialAttachments = [] }: ReportModalProps) => {
+  const [comment, setComment] = useState(initialComment);
+  const [attachments, setAttachments] = useState<Attachment[]>(initialAttachments);
+
+  // Reset state when modal opens with new initial values
+  useEffect(() => {
+    if (visible) {
+      setComment(initialComment);
+      setAttachments(initialAttachments);
+    }
+  }, [visible, initialComment]);
 
   const handleAttach = async () => {
     try {
@@ -136,7 +147,7 @@ export const TaskReportModal = ({ visible, onClose, onSubmit, loading }: ReportM
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
       <View style={{ flex: 1, backgroundColor: Colors.background }}>
-        <ScreenHeader title="Звіт про виконання" onBack={onClose} />
+        <ScreenHeader title={mode === 'edit' ? 'Редагувати звіт' : 'Звіт про виконання'} onBack={onClose} />
         <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
           <TextInput
             value={comment}
@@ -176,7 +187,7 @@ export const TaskReportModal = ({ visible, onClose, onSubmit, loading }: ReportM
 
           <Button title="Додати медіа" variant="outline" onPress={handleAttach} />
           <Button title="Додати файл" variant="outline" onPress={handleAttachDocument} />
-          <Button title="Надіслати звіт" onPress={handleSubmit} loading={loading} />
+          <Button title={mode === 'edit' ? 'Зберегти зміни' : 'Надіслати звіт'} onPress={handleSubmit} loading={loading} />
         </ScrollView>
       </View>
     </Modal>

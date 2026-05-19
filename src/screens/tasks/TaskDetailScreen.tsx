@@ -68,6 +68,7 @@ export default function TaskDetailScreen() {
   const [newRoles, setNewRoles] = useState('');
   const [creating, setCreating] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [reportEditData, setReportEditData] = useState<{ id: string; comment: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
@@ -460,6 +461,20 @@ export default function TaskDetailScreen() {
     } finally { setUploading(false); }
   };
 
+  const handleEditReportSubmit = async (comment: string, _attachments: { uri: string; name: string; type: string }[]) => {
+    if (!task || !reportEditData) return;
+    setUploading(true);
+    try {
+      const { taskReportsApi } = await import('../../api/task-reports.api');
+      await taskReportsApi.update(task.id, reportEditData.id, comment);
+      setReportEditData(null);
+      const updated = await taskReportsApi.getAll(task.id);
+      setReports(updated);
+    } catch (e: any) {
+      Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося зберегти зміни');
+    } finally { setUploading(false); }
+  };
+
   const handleConfirm = async () => {
     if (!task) return;
     Alert.alert('✓ Підтвердити виконання', `Задачу буде вважати виконаною`, [
@@ -708,7 +723,7 @@ export default function TaskDetailScreen() {
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
                   {r.userId === user?.id && (
                     <>
-                      <TouchableOpacity onPress={() => Alert.alert('Редагування', 'Редагування поки в процесі розробки')}><Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => setReportEditData({ id: r.id, comment: r.comment })}><Text style={{ color: Colors.primary, fontSize: 12 }}>✏️ Редагувати</Text></TouchableOpacity>
                       <TouchableOpacity onPress={() => Alert.alert('🗑️ Видалити звіт?', 'Цю дію неможливо скасувати після 30 хвилин з моменту створення.', [
                         { text: 'Ні', style: 'cancel' },
                         { text: 'Так, видалити', style: 'destructive', onPress: async () => { try { const { taskReportsApi } = await import('../../api/task-reports.api'); await taskReportsApi.delete(task.id, r.id); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося видалити'); } } },
@@ -739,8 +754,19 @@ export default function TaskDetailScreen() {
         </View>
       </Modal>
 
-      {/* Report modal */}
-      <TaskReportModal visible={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={handleReportSubmit} loading={uploading} />
+      {/* Report modal — create */}
+      <TaskReportModal visible={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={handleReportSubmit} loading={uploading} mode="create" />
+
+      {/* Report modal — edit */}
+      <TaskReportModal
+        visible={!!reportEditData}
+        onClose={() => setReportEditData(null)}
+        onSubmit={handleEditReportSubmit}
+        loading={uploading}
+        mode="edit"
+        initialComment={reportEditData?.comment || ''}
+        initialAttachments={[]}
+      />
 
       {/* Media Viewer */}
       <MediaViewer visible={mediaViewerVisible} url={selectedMedia.url} type={selectedMedia.type} onClose={() => setMediaViewerVisible(false)} />
