@@ -529,25 +529,17 @@ export default function RequestsListScreen() {
         style={{ maxHeight: 44, flexGrow: 0 }}
         contentContainerStyle={styles.filterRow}
       >
-        {STATUS_FILTERS.map((f) => {
-          const count = f.value === 'all' 
-            ? requests.length 
-            : f.value === 'my'
-              ? requests.filter(r => r.creatorId === user?.id).length
-              : requests.filter(r => r.status === f.value).length;
-          
-          return (
-            <TouchableOpacity
-              key={f.label}
-              onPress={() => setStatusFilter(f.value as any)}
-              style={[styles.pill, statusFilter === f.value && styles.pillActive]}
-            >
-              <Text style={[styles.pillText, statusFilter === f.value && styles.pillTextActive]}>
-                {f.label} ({count})
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+        {STATUS_FILTERS.map((f) => (
+          <TouchableOpacity
+            key={f.label}
+            onPress={() => setStatusFilter(f.value as any)}
+            style={[styles.pill, statusFilter === f.value && styles.pillActive]}
+          >
+            <Text style={[styles.pillText, statusFilter === f.value && styles.pillTextActive]}>
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
         {activeFiltersCount > 0 && (
           <TouchableOpacity onPress={clearFilters} style={styles.clearBtn}>
             <Text style={styles.clearBtnText}>✕ Скинути</Text>
