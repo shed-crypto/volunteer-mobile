@@ -7,12 +7,12 @@ import { chatApi } from '../../api/chat.api';
 import { Q } from '@nozbe/watermelondb';
 import { database, collections, safeWrite } from '../../db/index';
 
-type RouteParams = { ChatSettings: { chatId: string; chatName?: string; isGroupChat: boolean } };
+type RouteParams = { ChatSettings: { chatId: string; chatName?: string; isGroupChat: boolean; participantUserId?: string } };
 
 export default function ChatSettingsScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const route = useRoute<RouteProp<RouteParams, 'ChatSettings'>>();
-  const { chatId, chatName, isGroupChat } = route.params;
+  const { chatId, chatName, isGroupChat, participantUserId } = route.params;
 
   const handleDeleteChat = async () => {
     Alert.alert(
@@ -84,11 +84,10 @@ export default function ChatSettingsScreen() {
   };
 
   const handleViewProfile = () => {
-    if (!isGroupChat) {
-      // Assuming direct chat has only two participants, one is current user
-      // Need to fetch the other participant's ID
-      // For now, let's just show an alert
-      Alert.alert('У розробці', 'Перегляд профілю співрозмовника буде реалізовано пізніше.');
+    if (participantUserId) {
+      navigation.navigate('UserProfile', { userId: participantUserId });
+    } else if (!isGroupChat) {
+      Alert.alert('Недоступно', 'ID співрозмовника не знайдено. Спробуйте натиснути на аватар у чаті.');
     } else {
       Alert.alert('Недоступно', 'Перегляд профілю окремих учасників доступний лише в особистих чатах.');
     }
