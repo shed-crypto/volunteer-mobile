@@ -71,6 +71,7 @@ export default function RequestsListScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const PAGE_SIZE = 20;
+  const serverDataReceivedRef = useRef(false);
   
   // Reverse geocoding state for location names
   const [locationName, setLocationName] = useState<string | null>(null);
@@ -254,7 +255,7 @@ export default function RequestsListScreen() {
     try {
       // Load from local DB first (with ADAPTIVE timeout)
       const localData = await loadFromLocalDBWithTimeout();
-      if (localData.length > 0) {
+      if (localData.length > 0 && !serverDataReceivedRef.current) {
         OfflineLogger.nav('RequestsList: showing local data first');
         setRequests(localData);
       }
@@ -284,6 +285,7 @@ export default function RequestsListScreen() {
               if (categoryFilter) params.category = categoryFilter;
 
               const data = await requestsApi.getAll(params);
+              serverDataReceivedRef.current = true;
               setRequests(data);
           OfflineLogger.nav(`RequestsList: loaded ${data.length} from server`);
           
@@ -298,6 +300,7 @@ export default function RequestsListScreen() {
         }
       } else {
         OfflineLogger.nav('RequestsList: offline — showing cached data');
+        serverDataReceivedRef.current = false;
       }
     } catch (e) {
       OfflineLogger.nav('RequestsList: unexpected error', e);
