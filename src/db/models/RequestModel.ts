@@ -17,6 +17,10 @@ export class RequestModel extends Model {
   @field('required_clearance') requiredClearance!: string;
   @field('creator_id') creatorId!: string | null;
   @field('creator_name') creatorName!: string | null;
+  @field('managing_organization_id') managingOrganizationId!: string | null;
+  @field('cancelled_by_user_id') cancelledByUserId!: string | null;
+  @field('cancelled_at') cancelledAt!: number | null;
+  @field('cancel_reason') cancelReason!: string | null;
   @field('latitude') latitude!: number | null;
   @field('longitude') longitude!: number | null;
   @field('is_location_hidden') isLocationHidden!: boolean;

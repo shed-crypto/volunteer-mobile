@@ -6,7 +6,7 @@ import { appSchema, tableSchema } from '@nozbe/watermelondb';
 export const dbSchema = appSchema({
   // NOTE: migrations were reset in development. Version was lowered to 1
   // so WatermelonDB recreates the database from the current schema.
-  version: 5,
+  version: 7,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -21,6 +21,10 @@ export const dbSchema = appSchema({
         { name: 'required_clearance', type: 'string' },
         { name: 'creator_id', type: 'string', isOptional: true },
         { name: 'creator_name', type: 'string', isOptional: true },
+        { name: 'managing_organization_id', type: 'string', isOptional: true },
+        { name: 'cancelled_by_user_id', type: 'string', isOptional: true },
+        { name: 'cancelled_at', type: 'number', isOptional: true },
+        { name: 'cancel_reason', type: 'string', isOptional: true },
         { name: 'latitude', type: 'number', isOptional: true },
         { name: 'longitude', type: 'number', isOptional: true },
         { name: 'is_location_hidden', type: 'boolean' },
@@ -43,6 +47,9 @@ export const dbSchema = appSchema({
         { name: 'server_id', type: 'string', isIndexed: true },
         { name: 'request_id', type: 'string', isIndexed: true },
         { name: 'request_server_id', type: 'string', isOptional: true },
+        { name: 'created_by_user_id', type: 'string', isOptional: true },
+        { name: 'origin', type: 'string', isOptional: true },
+        { name: 'is_auto_generated', type: 'boolean', isOptional: true },
         { name: 'title', type: 'string' },
         { name: 'description', type: 'string', isOptional: true },
         { name: 'status', type: 'string' },

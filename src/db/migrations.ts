@@ -6,7 +6,7 @@
  * v4 — різні зміни
  * v5 — додано sync_events таблицю
  */
-import { schemaMigrations, createTable } from '@nozbe/watermelondb/Schema/migrations';
+import { schemaMigrations, createTable, addColumns } from '@nozbe/watermelondb/Schema/migrations';
 
 export const dbMigrations = schemaMigrations({
   migrations: [
@@ -35,6 +35,38 @@ export const dbMigrations = schemaMigrations({
             { name: 'is_read', type: 'boolean' },
             { name: 'created_at', type: 'number', isIndexed: true },
             { name: 'metadata_raw', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
+    {
+      toVersion: 6,
+      steps: [
+        addColumns({
+          table: 'requests',
+          columns: [
+            { name: 'managing_organization_id', type: 'string', isOptional: true },
+          ],
+        }),
+        addColumns({
+          table: 'tasks',
+          columns: [
+            { name: 'created_by_user_id', type: 'string', isOptional: true },
+            { name: 'origin', type: 'string', isOptional: true },
+            { name: 'is_auto_generated', type: 'boolean', isOptional: true },
+          ],
+        }),
+      ],
+    },
+    {
+      toVersion: 7,
+      steps: [
+        addColumns({
+          table: 'requests',
+          columns: [
+            { name: 'cancelled_by_user_id', type: 'string', isOptional: true },
+            { name: 'cancelled_at', type: 'number', isOptional: true },
+            { name: 'cancel_reason', type: 'string', isOptional: true },
           ],
         }),
       ],
