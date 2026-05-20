@@ -287,7 +287,7 @@ export default function RequestsListScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [search, statusFilter, urgencyFilter, categoryFilter, isOffline, loadFromLocalDBWithTimeout, saveRequestsToLocalDB]);
+  }, [search, statusFilter, urgencyFilter, categoryFilter, isOffline, loadFromLocalDBWithTimeout, saveRequestsToLocalDB, user]);
 
   // ─── Load more (pagination) ─────────────────────────────────────────────
   const loadMore = useCallback(async () => {
@@ -329,7 +329,7 @@ export default function RequestsListScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [isOffline, hasMore, loadingMore, offset, search, statusFilter, urgencyFilter, categoryFilter, saveRequestsToLocalDB]);
+  }, [isOffline, hasMore, loadingMore, offset, search, statusFilter, urgencyFilter, categoryFilter, saveRequestsToLocalDB, user]);
 
   useEffect(() => { load(); }, [load]);
 
