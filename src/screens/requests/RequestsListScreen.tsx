@@ -521,7 +521,8 @@ export default function RequestsListScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Status pills */}
+      {/* Status pills — only show when data + user are ready */}
+      {!loading && (
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -553,6 +554,7 @@ export default function RequestsListScreen() {
           </TouchableOpacity>
         )}
       </ScrollView>
+      )}
 
       <FlatList
         data={filteredRequests}
