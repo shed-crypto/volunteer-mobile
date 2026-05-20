@@ -7,7 +7,7 @@ import {
   View, Text, FlatList, TouchableOpacity, TextInput,
   RefreshControl, StyleSheet, Modal, ScrollView,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { requestsApi } from '../../api/requests.api';
 import { Request, RequestStatus, RequestCategory, RequestUrgency } from '../../types';
 import { Colors, urgencyColors, statusColors, categoryLabels } from '../../utils/theme';
@@ -331,7 +331,7 @@ export default function RequestsListScreen() {
     }
   }, [isOffline, hasMore, loadingMore, offset, search, statusFilter, urgencyFilter, categoryFilter, saveRequestsToLocalDB, user]);
 
-  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   // Apply all filters when requests or any filter changes
   useEffect(() => {
