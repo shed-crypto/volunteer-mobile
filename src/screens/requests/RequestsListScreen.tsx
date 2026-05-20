@@ -91,9 +91,9 @@ export default function RequestsListScreen() {
       const savedIds = new Set(savedRequests.map((s: any) => s.requestId));
       
        const mapped = localReqs.map((r: any) => ({
-         id: r.serverId || r.id,
+         id: r.serverId || '',
          localId: r.id,
-         serverId: r.serverId,
+         serverId: r.serverId || undefined,
          title: r.title,
          description: r.description ?? '',
          category: r.category,
@@ -197,21 +197,29 @@ export default function RequestsListScreen() {
         }
       }
 
-      // Clean up stale records: delete local DB entries whose serverId is NOT in the new response,
-      // UNLESS they have a pendingAction (created offline and not yet synced).
+      // DO NOT clean up stale records — it causes data loss when server ID format differs from local
+      // Offline-created records that haven't been synced will have a local ID that doesn't match
+      // any server ID. Deleting them would remove user's work.
+      // We only delete records that have NO serverId AND NO pendingAction AND are not in server set
+      // (truly orphaned records)
       const staleRecords = existing.filter((r: any) => {
-        if (!r.serverId) return false; // local-only record with no serverId — keep
-        if (r.pendingAction) return false; // pending offline-created — keep
-        return !newServerIds.has(r.serverId);
+        // Never delete records with pendingAction (offline-created)
+        if (r.pendingAction) return false;
+        // Never delete records that have no serverId (fully local)
+        if (!r.serverId) return false;
+        // Never delete records that are in the server response
+        if (newServerIds.has(r.serverId)) return false;
+        // Only delete if ALL conditions met: has serverId, no pending action, not in server response
+        // AND the serverId looks like a request UUID (not a user ID that leaked into the field)
+        // For now, we NEVER delete — safer to keep stale data than lose user's records
+        OfflineLogger.cache(`RequestsList: NOT deleting stale record serverId="${r.serverId}" — preserving local data`);
+        return false;
       });
 
-      for (const stale of staleRecords) {
-        operations.push(stale.prepareDestroyPermanently());
-      }
-
-      if (staleRecords.length > 0) {
-        OfflineLogger.cache(`RequestsList: cleaning up ${staleRecords.length} stale records from local DB`);
-      }
+      // stale removal is DISABLED to prevent data loss
+      // for (const stale of staleRecords) {
+      //   operations.push(stale.prepareDestroyPermanently());
+      // }
 
       if (operations.length > 0) {
         await safeWrite(async () => {
@@ -253,6 +261,27 @@ export default function RequestsListScreen() {
     OfflineLogger.nav('RequestsListScreen.load() called');
 
     try {
+      // ── CLEANUP: remove local records with junk serverIds (user IDs leaked into the field) ──
+      try {
+        const allLocal = await collections.requests.query().fetch();
+        const currentUserId = user?.id || '';
+        const junkRecords = allLocal.filter((r: any) => {
+          // Records where serverId equals the current user's ID are junk
+          if (r.serverId && r.serverId === currentUserId) return true;
+          return false;
+        });
+        if (junkRecords.length > 0) {
+          OfflineLogger.cache(`RequestsList: removing ${junkRecords.length} junk records with user ID as serverId`);
+          await safeWrite(async () => {
+            for (const junk of junkRecords) {
+              await junk.destroyPermanently();
+            }
+          });
+        }
+      } catch (cleanupError) {
+        OfflineLogger.cache('RequestsList: cleanup failed (non-fatal)', cleanupError);
+      }
+
       // Load from local DB first (with ADAPTIVE timeout)
       const localData = await loadFromLocalDBWithTimeout();
       if (localData.length > 0 && !serverDataReceivedRef.current) {
@@ -260,23 +289,16 @@ export default function RequestsListScreen() {
         setRequests(localData);
       }
 
-      // If online, update from server AND save to DB
-          if (!isOffline) {
-            try {
-              let latitude, longitude;
-              try {
-                const loc = await Location.getLastKnownPositionAsync({});
-                if (loc) {
-                  latitude = loc.coords.latitude;
-                  longitude = loc.coords.longitude;
-                }
-              } catch {}
+       // If online, update from server AND save to DB
+           if (!isOffline) {
+             try {
+               // DO NOT pass coordinates here — geo-sorting is only for map view.
+               // Passing lat/lng without radiusKm triggers unnecessary PostGIS raw SQL
+               // on the server and causes 500 errors.
 
       const params: any = {
         limit: PAGE_SIZE,
         offset: 0,
-        latitude,
-        longitude,
       };
               if (search) params.search = search;
               if (statusFilter === 'my') params.creatorId = user?.id;
@@ -318,21 +340,12 @@ export default function RequestsListScreen() {
     if (isOffline || !hasMore || loadingMore || isLoadingRef.current) return;
     setLoadingMore(true);
     try {
-      let latitude, longitude;
-      try {
-        const loc = await Location.getLastKnownPositionAsync({});
-        if (loc) {
-          latitude = loc.coords.latitude;
-          longitude = loc.coords.longitude;
-        }
-      } catch {}
-
+      // DO NOT pass coordinates in list views — geo-sorting is map-only.
+      // Passing lat/lng without radiusKm triggers unnecessary PostGIS raw SQL
       const nextOffset = offset + PAGE_SIZE;
       const params: any = {
         limit: PAGE_SIZE,
         offset: nextOffset,
-        latitude,
-        longitude,
       };
       if (search) params.search = search;
       if (statusFilter === 'my') params.creatorId = user?.id;

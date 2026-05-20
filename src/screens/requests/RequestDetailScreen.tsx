@@ -663,32 +663,36 @@ export default function RequestDetailScreen() {
           }
         } catch (serverError: any) {
           OfflineLogger.network('Server request failed:', serverError);
-          // If server returns 404, the request was deleted
+          // If server returns 404, check if this is a real server request or local-only
           if (serverError.response?.status === 404) {
-            // Delete from local DB
-            try {
-              const existing = await collections.requests.query().fetch();
-              const localReq = existing.find((r: any) => r.serverId === requestId || r.id === requestId);
-              if (localReq) {
+            // Check if this request has a valid serverId (not a local-only record)
+            const existing = await collections.requests.query().fetch();
+            const localReq = existing.find((r: any) => r.serverId === requestId || r.id === requestId);
+            if (localReq && (localReq as any).serverId && (localReq as any).serverId === requestId) {
+              // Only delete if it has matching serverId — this means server confirmed deletion
+              try {
                 await safeWrite(async () => {
                   await localReq.destroyPermanently();
                 });
+                // Also remove from saved requests
+                const saved = await collections.savedRequests.query().fetch();
+                const savedReq = saved.find((s: any) => s.requestId === requestId);
+                if (savedReq) {
+                  await safeWrite(async () => {
+                    await savedReq.destroyPermanently();
+                  });
+                }
+              } catch (localErr) {
+                OfflineLogger.cache('Error deleting local request after 404', localErr);
               }
-              // Also remove from saved requests
-              const saved = await collections.savedRequests.query().fetch();
-              const savedReq = saved.find((s: any) => s.requestId === requestId);
-              if (savedReq) {
-                await safeWrite(async () => {
-                  await savedReq.destroyPermanently();
-                });
-              }
-            } catch (localErr) {
-              OfflineLogger.cache('Error deleting local request after 404', localErr);
+              Alert.alert('Заявка не знайдена', 'Ця заявка більше не існує');
+              if (navigation.canGoBack()) navigation.goBack();
+              else navigation.navigate('RequestsList' as never);
+              return;
+            } else {
+              // This is a local request that hasn't been synced yet or has wrong ID — don't delete
+              OfflineLogger.cache(`RequestDetail: 404 for local/non-synced request ${requestId} — keeping local data`);
             }
-            Alert.alert('Заявка не знайдена', 'Ця заявка більше не існує');
-            if (navigation.canGoBack()) navigation.goBack();
-            else navigation.navigate('RequestsList' as never);
-            return;
           }
           if (!localRequest) {
             // Немає ні локальних, ні серверних даних
