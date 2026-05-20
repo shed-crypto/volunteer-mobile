@@ -333,67 +333,64 @@ export default function RequestsListScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Effect to update filteredRequests when filters change (except regionSearch)
+  // Apply all filters when requests or any filter changes
   useEffect(() => {
-    if (regionSearch.trim()) return; // region search overrides
     let filtered = requests;
+
     // Apply status filter
     if (statusFilter === 'my') {
       filtered = filtered.filter(r => r.creatorId === user?.id);
     } else if (statusFilter && statusFilter !== 'all') {
       filtered = filtered.filter(r => r.status === statusFilter);
     }
+
     // Apply urgency filter
     if (urgencyFilter) {
       filtered = filtered.filter(r => r.urgency === urgencyFilter);
     }
+
     // Apply category filter
     if (categoryFilter) {
       filtered = filtered.filter(r => r.category === categoryFilter);
     }
+
     // Apply search filter
     if (search) {
       const searchLower = search.toLowerCase();
       filtered = filtered.filter(r => r.title.toLowerCase().includes(searchLower));
     }
-    setFilteredRequests(filtered);
-  }, [requests, statusFilter, urgencyFilter, categoryFilter, search, regionSearch]);
 
-  useEffect(() => {
-    const applyRegionFilter = async () => {
-      if (!regionSearch.trim()) {
-        setFilteredRequests(requests);
-        return;
-      }
+    // Apply region filter (async — only if regionSearch is not empty)
+    if (regionSearch.trim()) {
       setGeocodingLoading(true);
-      try {
-        const geocodedRegions = await Location.geocodeAsync(regionSearch);
-        if (geocodedRegions.length > 0) {
-          const { latitude, longitude } = geocodedRegions[0];
-          const filtered = requests.filter(req => {
-            if (req.latitude && req.longitude) {
-              const distance = Math.sqrt(
-                Math.pow(req.latitude - latitude, 2) +
-                Math.pow(req.longitude - longitude, 2)
-              );
-              // Simple distance check (e.g., within 0.5 degrees lat/lon)
-              return distance < 0.5; 
-            }
-            return false;
-          });
-          setFilteredRequests(filtered);
-        } else {
+      Location.geocodeAsync(regionSearch)
+        .then((geocodedRegions) => {
+          if (geocodedRegions.length > 0) {
+            const { latitude, longitude } = geocodedRegions[0];
+            const regionFiltered = filtered.filter(req => {
+              if (req.latitude && req.longitude) {
+                const distance = Math.sqrt(
+                  Math.pow(req.latitude - latitude, 2) +
+                  Math.pow(req.longitude - longitude, 2)
+                );
+                return distance < 0.5;
+              }
+              return false;
+            });
+            setFilteredRequests(regionFiltered);
+          } else {
+            setFilteredRequests([]);
+          }
+        })
+        .catch((error) => {
+          console.error('Region geocoding error:', error);
           setFilteredRequests([]);
-        }
-      } catch (error) {
-        console.error('Region geocoding error:', error);
-        setFilteredRequests([]);
-      } finally {
-        setGeocodingLoading(false);
-      }
-    };
-    applyRegionFilter();
-  }, [requests, regionSearch]);
+        })
+        .finally(() => setGeocodingLoading(false));
+    } else {
+      setFilteredRequests(filtered);
+    }
+  }, [requests, statusFilter, urgencyFilter, categoryFilter, search, regionSearch, user?.id]);
 
   const onRefresh = async () => {
     setRefreshing(true);
