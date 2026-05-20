@@ -91,6 +91,8 @@ export default function RequestsListScreen() {
       
        const mapped = localReqs.map((r: any) => ({
          id: r.serverId || r.id,
+         localId: r.id,
+         serverId: r.serverId,
          title: r.title,
          description: r.description ?? '',
          category: r.category,
@@ -103,32 +105,25 @@ export default function RequestsListScreen() {
          tags: r.tags ?? [],
          additionalInfo: r.additionalInfo ?? [],
          mediaUrls: r.mediaUrls ?? [],
+         reportUrls: r.reportUrls ?? [],
+         managingOrganizationId: r.managingOrganizationId ?? undefined,
+         cancelledByUserId: r.cancelledByUserId ?? undefined,
+         cancelledAt: r.cancelledAt ? new Date(r.cancelledAt).toISOString() : undefined,
+         cancelReason: r.cancelReason ?? undefined,
          creatorId: r.creatorId ?? '',
          createdAt: r.createdAtServer
            ? new Date(r.createdAtServer).toISOString()
            : new Date().toISOString(),
+         updatedAt: r.lastSyncedAt ? new Date(r.lastSyncedAt).toISOString() : new Date().toISOString(),
          isSaved: savedIds.has(r.serverId || r.id),
        }));
       
-      // Apply filters locally
-      return mapped.filter((r: any) => {
-        if (statusFilter === 'my') {
-          if (r.creatorId !== user?.id) return false;
-        } else if (statusFilter === 'all') {
-          if (r.creatorId === user?.id) return false;
-        } else if (statusFilter && r.status !== statusFilter) {
-          return false;
-        }
-        if (urgencyFilter && r.urgency !== urgencyFilter) return false;
-        if (categoryFilter && r.category !== categoryFilter) return false;
-        if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
-        return true;
-      }) as Request[];
+      return mapped as Request[];
     } catch (e) {
       OfflineLogger.cache('RequestsList: local DB load failed', e);
       return [];
     }
-  }, [search, statusFilter, urgencyFilter, categoryFilter]);
+  }, []);
 
   // ─── Helper: save server data to local DB ───────────────────────────────
   const saveRequestsToLocalDB = useCallback(async (requestsData: Request[]) => {
@@ -149,6 +144,11 @@ export default function RequestsListScreen() {
               r.urgency = req.urgency;
               r.status = req.status;
               r.requiredClearance = req.requiredClearance ?? 'local';
+              r.creatorId = req.creatorId ?? null;
+              r.managingOrganizationId = (req as any).managingOrganizationId ?? null;
+              r.cancelledByUserId = (req as any).cancelledByUserId ?? null;
+              r.cancelledAt = (req as any).cancelledAt ? new Date((req as any).cancelledAt).getTime() : null;
+              r.cancelReason = (req as any).cancelReason ?? null;
               r.latitude = req.latitude ?? null;
               r.longitude = req.longitude ?? null;
               r.isLocationHidden = req.isLocationHidden ?? false;
@@ -173,6 +173,10 @@ export default function RequestsListScreen() {
               r.status = req.status;
               r.requiredClearance = req.requiredClearance ?? 'local';
               r.creatorId = req.creatorId ?? null;
+              r.managingOrganizationId = (req as any).managingOrganizationId ?? null;
+              r.cancelledByUserId = (req as any).cancelledByUserId ?? null;
+              r.cancelledAt = (req as any).cancelledAt ? new Date((req as any).cancelledAt).getTime() : null;
+              r.cancelReason = (req as any).cancelReason ?? null;
               r.latitude = req.latitude ?? null;
               r.longitude = req.longitude ?? null;
               r.isLocationHidden = req.isLocationHidden ?? false;
@@ -258,7 +262,7 @@ export default function RequestsListScreen() {
               if (search) params.search = search;
               if (statusFilter === 'my') params.creatorId = user?.id;
               else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
-              if (statusFilter === 'all') params.excludeCreatorId = user?.id;
+              if (statusFilter === 'all' && user?.id) params.excludeCreatorId = user.id;
               if (urgencyFilter) params.urgency = urgencyFilter;
               if (categoryFilter) params.category = categoryFilter;
 
@@ -313,7 +317,7 @@ export default function RequestsListScreen() {
       if (search) params.search = search;
       if (statusFilter === 'my') params.creatorId = user?.id;
       else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
-      if (statusFilter === 'all') params.excludeCreatorId = user?.id;
+      if (statusFilter === 'all' && user?.id) params.excludeCreatorId = user.id;
       if (urgencyFilter) params.urgency = urgencyFilter;
       if (categoryFilter) params.category = categoryFilter;
 
@@ -550,7 +554,7 @@ export default function RequestsListScreen() {
 
       <FlatList
         data={filteredRequests}
-        keyExtractor={(r) => r.id}
+        keyExtractor={(r: any) => r.serverId || r.localId || r.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
         contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
         onEndReached={loadMore}
@@ -566,7 +570,15 @@ export default function RequestsListScreen() {
           <EmptyState icon="📋" title="Заявок не знайдено" subtitle={hasError ? 'Немає мережі. Спробуйте оновити.' : 'Спробуйте змінити фільтри'} />
         }
         renderItem={({ item }) => (
-          <RequestCard request={item} onPress={() => navigation.navigate('RequestDetail', { requestId: item.id })} initialSaved={(item as any).isSaved} />
+          <RequestCard
+            request={item}
+            onPress={() => navigation.navigate('RequestDetail', {
+              requestId: (item as any).serverId || item.id,
+              localId: (item as any).localId,
+              serverId: (item as any).serverId || item.id,
+            })}
+            initialSaved={(item as any).isSaved}
+          />
         )}
       />
 

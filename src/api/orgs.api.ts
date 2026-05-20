@@ -6,6 +6,8 @@ import {
   Hub,
   OrganizationSettings,
   OrganizationJoinRequest,
+  Request,
+  Task,
 } from '../types';
 import { fileUtils, getMediaUrl } from '../utils/fileUtils';
 
@@ -43,6 +45,12 @@ export const orgsApi = {
 
   getMembers: (id: string): Promise<OrganizationMember[]> =>
     api.get(`/organizations/${id}/members`).then((r) => r.data),
+
+  getTasks: (id: string): Promise<Task[]> =>
+    api.get(`/organizations/${id}/tasks`).then((r) => r.data),
+
+  getRequests: (id: string): Promise<Request[]> =>
+    api.get(`/organizations/${id}/requests`).then((r) => r.data),
 
   addMember: (id: string, userId: string, role: OrgRole): Promise<OrganizationMember> =>
     api.post(`/organizations/${id}/members`, { userId, role }).then((r) => r.data),

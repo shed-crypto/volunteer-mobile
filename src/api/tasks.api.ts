@@ -14,6 +14,9 @@ export const tasksApi = {
   update: (id: string, data: Partial<CreateTaskDto>): Promise<Task> =>
     api.patch(`/tasks/${id}`, data).then((r) => r.data),
 
+  delete: (id: string): Promise<void> =>
+    api.delete(`/tasks/${id}`).then(() => undefined),
+
   assign: (taskId: string, fulfilledRole?: string): Promise<TaskAssignment> =>
     api.post(`/tasks/${taskId}/assign`, { fulfilledRole }).then((r) => r.data),
 
@@ -39,6 +42,12 @@ export const tasksApi = {
 
   delegate: (taskId: string, organizationId: string, message?: string): Promise<any> =>
     api.post(`/tasks/${taskId}/delegate`, { organizationId, message }).then((r) => r.data),
+
+  acceptDelegation: (taskId: string, organizationId: string): Promise<any> =>
+    api.post(`/tasks/${taskId}/delegation/accept`, { organizationId }).then((r) => r.data),
+
+  declineDelegation: (taskId: string, organizationId: string): Promise<any> =>
+    api.post(`/tasks/${taskId}/delegation/decline`, { organizationId }).then((r) => r.data),
 
   cancel: (taskId: string): Promise<Task> =>
     api.patch(`/tasks/${taskId}/cancel`).then((r) => r.data),

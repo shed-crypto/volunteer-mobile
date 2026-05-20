@@ -76,6 +76,9 @@ export const requestsApi = {
   delete: (id: string): Promise<void> =>
     api.delete(`/requests/${id}`).then(() => undefined),
 
+  cancel: (id: string, reason?: string): Promise<Request> =>
+    api.post(`/requests/${id}/cancel`, { reason }).then((r) => r.data),
+
   markAsPendingReview: (id: string): Promise<Request> =>
     api.post(`/requests/${id}/pending-review`).then((r) => r.data),
 
