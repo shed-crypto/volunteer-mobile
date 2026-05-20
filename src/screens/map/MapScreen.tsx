@@ -344,6 +344,18 @@ export default function MapScreen() {
   // Throttle: не частіше ніж раз на 5 секунд
   const lastLoadRef = useRef(0);
   const throttledLoadRef = useRef<(() => Promise<void>) | null>(null);
+  const deferredTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Відстань між двома точками (гаверсинус) в метрах
+  const haversineDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371000; // радіус Землі в метрах
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
 
   // Оновлюємо межі карти при зміні регіону, але НЕ тригеримо завантаження
   const handleRegionChange = useCallback((region: Region) => {
@@ -358,8 +370,9 @@ export default function MapScreen() {
     regionRef.current = region;
     setMapBounds(region);
     
-    // Завантажуємо тільки якщо карта реально змістилась і це режим 'bounds'
-    if (hasMoved && mapMode === 'bounds') {
+    // Завантажуємо тільки якщо карта реально змістилась і це режим, де рух має сенс
+    // Режим 'radius' НЕ оновлюється при русі — тільки при зміні радіуса
+    if (hasMoved && (mapMode === 'bounds' || mapMode === 'all')) {
       throttledLoadRef.current?.();
     }
   }, [mapMode]);
@@ -410,7 +423,15 @@ export default function MapScreen() {
        }
       
       if (seq === loadSeqRef.current) {
-        setPins(data);
+        // Deduplicate: усуваємо дублікати за ID (можливі через асинхронне підвантаження)
+        const seen = new Set<string>();
+        const deduped = data.filter((pin) => {
+          const key = pin.id || (pin as any).serverId || (pin as any).localId;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        setPins(deduped);
       }
     } catch (err) {
       console.error('Failed to load requests:', err);
@@ -424,19 +445,47 @@ export default function MapScreen() {
     }
   }, [userLocation, radiusKm, mapMode, mapBounds, filters]);
 
-  // Throttled load: не частіше ніж раз на 5 секунд
-  const throttledLoad = useCallback(async () => {
+  // Throttled load: не частіше ніж раз на 5 секунд, з відкладеним оновленням при русі карти
+  const throttledLoad = useCallback(async (force = false) => {
+    // Очищаємо попередній deferred таймер (користувач продовжує рухати карту)
+    if (deferredTimerRef.current) {
+      clearTimeout(deferredTimerRef.current);
+      deferredTimerRef.current = null;
+    }
+
     const now = Date.now();
-    if (now - lastLoadRef.current < 5000) {
-      OfflineLogger?.nav?.('MapScreen: load throttled');
+    const elapsed = now - lastLoadRef.current;
+    const remainingMs = 5000 - elapsed;
+
+    if (remainingMs > 0 && !force) {
+      // Throttle активний — плануємо відкладене оновлення
+      OfflineLogger?.nav?.(`MapScreen: load deferred, ${remainingMs}ms remaining`);
+      deferredTimerRef.current = setTimeout(() => {
+        deferredTimerRef.current = null;
+        lastLoadRef.current = Date.now();
+        loadRequests();
+      }, remainingMs);
       return;
     }
+
     lastLoadRef.current = now;
     await loadRequests();
   }, [loadRequests]);
 
+  // Force refresh — без throttle
+  const forceRefresh = useCallback(() => {
+    throttledLoad(true);
+  }, [throttledLoad]);
+
   // Sync ref for handleRegionChange (avoids circular dependency)
   throttledLoadRef.current = throttledLoad;
+
+  // Cleanup deferred timer on unmount
+  useEffect(() => {
+    return () => {
+      if (deferredTimerRef.current) clearTimeout(deferredTimerRef.current);
+    };
+  }, []);
 
   // Завантажуємо тільки при зміні режиму, радіусу або фільтрів (не при фокусі таба)
   useEffect(() => {
@@ -473,10 +522,26 @@ export default function MapScreen() {
     );
   };
 
-  const visiblePins = useMemo(
-    () => pins.filter((pin) => Boolean(getPinCoordinate(pin))),
-    [pins],
-  );
+  const visiblePins = useMemo(() => {
+    const filtered = pins.filter((pin) => Boolean(getPinCoordinate(pin)));
+
+    // Для режиму 'radius': клієнтська фільтрація за відстанню від центру
+    // (backup на випадок якщо бекенд не відфільтрував правильно)
+    if (mapMode === 'radius') {
+      const center = userLocation ?? {
+        latitude:  regionRef.current.latitude,
+        longitude: regionRef.current.longitude,
+      };
+      return filtered.filter((pin) => {
+        const coord = getPinCoordinate(pin);
+        if (!coord) return false;
+        const dist = haversineDistance(center.latitude, center.longitude, coord.latitude, coord.longitude);
+        return dist <= radiusKm * 1000;
+      });
+    }
+
+    return filtered;
+  }, [pins, mapMode, radiusKm, userLocation]);
 
   const setFilter = useCallback(<K extends keyof MapFilters>(key: K, value: MapFilters[K]) => {
     setFilters((current) => ({
@@ -780,11 +845,20 @@ export default function MapScreen() {
               Фільтри{activeFilterCount(filters) ? ` (${activeFilterCount(filters)})` : ''}
             </Text>
           </TouchableOpacity>
-          {activeFilterCount(filters) > 0 && (
-            <TouchableOpacity onPress={clearFilters}>
-              <Text style={styles.clearFiltersText}>Скинути</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {activeFilterCount(filters) > 0 && (
+              <TouchableOpacity onPress={clearFilters}>
+                <Text style={styles.clearFiltersText}>Скинути</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.refreshBtn}
+              onPress={forceRefresh}
+              disabled={loading}
+            >
+              <Text style={[styles.refreshBtnText, loading && { opacity: 0.4 }]}>🔄</Text>
             </TouchableOpacity>
-          )}
+          </View>
         </View>
 
         {filtersOpen && (
@@ -1213,6 +1287,17 @@ const styles = StyleSheet.create({
    filterToggleText: { color: Colors.primary, fontSize: 13, fontWeight: '800' },
    filterToggleTextActive: { color: '#fff' },
    clearFiltersText: { color: Colors.primary, fontSize: 12, fontWeight: '700', paddingHorizontal: 8 },
+   refreshBtn: {
+     width: 34,
+     height: 34,
+     borderRadius: 8,
+     backgroundColor: Colors.primaryLight,
+     borderWidth: 1,
+     borderColor: Colors.primary,
+     alignItems: 'center',
+     justifyContent: 'center',
+   },
+   refreshBtnText: { fontSize: 16 },
    filtersBlock: { gap: 4, paddingHorizontal: 4 },
    filterGroupTitle: { fontSize: 11, fontWeight: '700', color: Colors.textMuted, marginTop: 2 },
    filterChipsRow: { gap: 6, paddingRight: 8 },

@@ -537,9 +537,19 @@ export default function RequestDetailScreen() {
   const isLoadingRef = useRef(false);
 
   // ─── Main load: OFFLINE-FIRST ────────────────────────────────────────────
+  // Перевірка що requestId є валідним UUID (не локальний ID)
+  const isValidRequestId = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId ?? '');
+
   const load = useCallback(async () => {
     if (isLoadingRef.current) {
       OfflineLogger.nav('RequestDetailScreen.load() skipped — already loading');
+      return;
+    }
+    if (!isValidRequestId) {
+      OfflineLogger.nav(`RequestDetailScreen: invalid requestId "${requestId}", skipping server load`);
+      setLoading(false);
+      Alert.alert('Невірний ID', 'Спробуйте оновити сторінку');
+      if (navigation.canGoBack()) navigation.goBack();
       return;
     }
     isLoadingRef.current = true;
