@@ -185,6 +185,27 @@ export default function ChatRoomScreen() {
           return Math.abs(tempTime - serverTime) < 30000;
         });
         
+        const dupByContent = existing.find((m: any) => {
+          if ((m as any).serverId === msg.id) return false;
+          if (m.content !== msg.content) return false;
+          if (m.senderId !== msg.senderId) return false;
+          const msgTime = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
+          return Math.abs(m.sentAt - msgTime) < 5000;
+        });
+        if (dupByContent) {
+          if (!dupByContent.serverId) {
+            operations.push(
+              dupByContent.prepareUpdate((m: any) => {
+                m.serverId = msg.id;
+                m.isSynced = true;
+                m.pendingAction = null;
+                m.lastSyncedAt = Date.now();
+              })
+            );
+          }
+          continue;
+        }
+
         if (tempMatch) {
           operations.push(
             tempMatch.prepareUpdate((m: any) => {
