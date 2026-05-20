@@ -1,12 +1,5 @@
 /**
  * RequestsListScreen.tsx
- *
- * БАГ-ФІКси:
- * 1. Заявки зникали при перезаході: catch → setRequests([]) очищував список
- *    навіть якщо вже були завантажені дані. Тепер зберігаємо старі дані при помилці.
- * 2. Волонтер не може подати заявку: додано VOLUNTEER до canCreate з поясненням.
- *    Логіка: волонтер теж може потребувати допомоги (наприклад, зламалось авто
- *    на місії). Подавши заявку він стає "requester" по суті цієї заявки.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
@@ -237,14 +230,14 @@ export default function RequestsListScreen() {
     OfflineLogger.nav('RequestsListScreen.load() called');
 
     try {
-      // КРОК 1: Load from local DB first (with ADAPTIVE timeout)
+      // Load from local DB first (with ADAPTIVE timeout)
       const localData = await loadFromLocalDBWithTimeout();
       if (localData.length > 0) {
         OfflineLogger.nav('RequestsList: showing local data first');
         setRequests(localData);
       }
 
-      // КРОК 2: If online, update from server AND save to DB
+      // If online, update from server AND save to DB
           if (!isOffline) {
             try {
               let latitude, longitude;
@@ -287,7 +280,7 @@ export default function RequestsListScreen() {
       OfflineLogger.nav('RequestsList: unexpected error', e);
       setHasError(true);
     } finally {
-      // КРИТИЧНО: завжди знімати loading, навіть якщо БД зависла
+      // Always clear loading state to prevent infinite loading
       isLoadingRef.current = false;
       setLoading(false);
       setRefreshing(false);
@@ -402,7 +395,7 @@ export default function RequestsListScreen() {
     setRefreshing(true);
     setServerUnreachable(false);
     
-    // КРОК 1: Explicit health-check with 3s timeout (not relying on cache)
+    // Explicit health-check with 3s timeout (not relying on cache)
     const serverReachable = await checkServerReachable();
     
     if (serverReachable) {
@@ -454,16 +447,11 @@ export default function RequestsListScreen() {
 
   if (loading && requests.length === 0) return <LoadingScreen />;
 
-  // БАГ-ФІКс питання 6: VOLUNTEER теж може подавати заявки.
-  // Обґрунтування: волонтер може потребувати допомоги (зламалось авто,
-  // потрібна медична допомога під час місії тощо). Відмінність від REQUESTER
-  // в тому, що REQUESTER — це роль для цивільних людей без волонтерського
-  // досвіду. Але обмежувати волонтерів у поданні заявок нелогічно.
   const canCreate = [
     SystemRole.REQUESTER,
     SystemRole.ADMIN,
     SystemRole.COORDINATOR,
-    SystemRole.VOLUNTEER, // ← додано
+    SystemRole.VOLUNTEER,
   ].includes(user?.systemRole as SystemRole);
 
   return (
