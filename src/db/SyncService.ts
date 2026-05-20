@@ -16,6 +16,7 @@ import { getServerReachable } from '../api/axios';
 import { OfflineLogger } from '../utils/offlineLogger';
 import NetInfo from '@react-native-community/netinfo';
 import { Q } from '@nozbe/watermelondb';
+import { ActionPayload, ServerRequest, ServerTask, ServerTaskAssignment, SyncEvent } from '../types/sync';
 
 export class SyncService {
   static get isRunning(): boolean {
@@ -259,7 +260,7 @@ export class SyncService {
         }
 
         try {
-          const payload = item.payloadData;
+          const payload = item.payloadData as ActionPayload;
           switch (item.actionType) {
             case 'TASK_ASSIGN': {
               const taskIdStr = (payload as any).taskId || (payload as any).task_id || (payload as any).id;

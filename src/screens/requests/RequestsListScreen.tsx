@@ -133,6 +133,8 @@ export default function RequestsListScreen() {
       const existingMap = new Map(existing.map((r: any) => [r.serverId, r]));
       const operations: any[] = [];
 
+      const newServerIds = new Set(requestsData.map(r => r.id));
+
       for (const req of requestsData) {
         const existingReq = existingMap.get(req.id);
         if (existingReq) {
@@ -192,6 +194,22 @@ export default function RequestsListScreen() {
             })
           );
         }
+      }
+
+      // Clean up stale records: delete local DB entries whose serverId is NOT in the new response,
+      // UNLESS they have a pendingAction (created offline and not yet synced).
+      const staleRecords = existing.filter((r: any) => {
+        if (!r.serverId) return false; // local-only record with no serverId — keep
+        if (r.pendingAction) return false; // pending offline-created — keep
+        return !newServerIds.has(r.serverId);
+      });
+
+      for (const stale of staleRecords) {
+        operations.push(stale.prepareDestroyPermanently());
+      }
+
+      if (staleRecords.length > 0) {
+        OfflineLogger.cache(`RequestsList: cleaning up ${staleRecords.length} stale records from local DB`);
       }
 
       if (operations.length > 0) {
@@ -262,7 +280,6 @@ export default function RequestsListScreen() {
               if (search) params.search = search;
               if (statusFilter === 'my') params.creatorId = user?.id;
               else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
-              if (statusFilter === 'all' && user?.id) params.excludeCreatorId = user.id;
               if (urgencyFilter) params.urgency = urgencyFilter;
               if (categoryFilter) params.category = categoryFilter;
 
@@ -317,7 +334,6 @@ export default function RequestsListScreen() {
       if (search) params.search = search;
       if (statusFilter === 'my') params.creatorId = user?.id;
       else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
-      if (statusFilter === 'all' && user?.id) params.excludeCreatorId = user.id;
       if (urgencyFilter) params.urgency = urgencyFilter;
       if (categoryFilter) params.category = categoryFilter;
 
@@ -376,7 +392,7 @@ export default function RequestsListScreen() {
     // Normalize tags to prevent "tags.filter is not a function" crash
     filtered = (filtered as Request[]).map(r => ({
       ...r,
-      tags: Array.isArray(r.tags) ? r.tags : (typeof r.tags === 'string' ? r.tags.split(',').filter(Boolean) : []),
+      tags: Array.isArray(r.tags) ? r.tags : (typeof r.tags === 'string' ? (r.tags as string).split(',').filter(Boolean) : []),
       additionalInfo: Array.isArray(r.additionalInfo) ? r.additionalInfo : [],
       mediaUrls: Array.isArray(r.mediaUrls) ? r.mediaUrls : [],
       reportUrls: Array.isArray(r.reportUrls) ? r.reportUrls : [],
