@@ -73,6 +73,12 @@ export default function RequestsListScreen() {
   const { isOffline } = useNetwork();
   const isLoadingRef = useRef(false);
   
+  // Pagination state
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 20;
+  
   // Reverse geocoding state for location names
   const [locationName, setLocationName] = useState<string | null>(null);
   const [geocodingLoading, setGeocodingLoading] = useState(false);
@@ -250,11 +256,12 @@ export default function RequestsListScreen() {
                 }
               } catch {}
 
-              const params: any = {
-                limit: 50,
-                latitude,
-                longitude,
-              };
+      const params: any = {
+        limit: PAGE_SIZE,
+        offset: 0,
+        latitude,
+        longitude,
+      };
               if (search) params.search = search;
               if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my') params.status = statusFilter;
               if (urgencyFilter) params.urgency = urgencyFilter;
@@ -265,7 +272,9 @@ export default function RequestsListScreen() {
           OfflineLogger.nav(`RequestsList: loaded ${data.length} from server`);
           
           // ЗБЕРЕГТИ в БД для офлайн-роботи
-          await saveRequestsToLocalDB(data);
+            await saveRequestsToLocalDB(data);
+            setOffset(0);
+            setHasMore(data.length === PAGE_SIZE);
         } catch (error) {
           OfflineLogger.network('RequestsList: server load failed, keeping local data');
           setHasError(true);
@@ -284,6 +293,46 @@ export default function RequestsListScreen() {
       setRefreshing(false);
     }
   }, [search, statusFilter, urgencyFilter, categoryFilter, isOffline, loadFromLocalDBWithTimeout, saveRequestsToLocalDB]);
+
+  // ─── Load more (pagination) ─────────────────────────────────────────────
+  const loadMore = useCallback(async () => {
+    if (isOffline || !hasMore || loadingMore || isLoadingRef.current) return;
+    setLoadingMore(true);
+    try {
+      let latitude, longitude;
+      try {
+        const loc = await Location.getLastKnownPositionAsync({});
+        if (loc) {
+          latitude = loc.coords.latitude;
+          longitude = loc.coords.longitude;
+        }
+      } catch {}
+
+      const nextOffset = offset + 1;
+      const params: any = {
+        limit: PAGE_SIZE,
+        offset: nextOffset,
+        latitude,
+        longitude,
+      };
+      if (search) params.search = search;
+      if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my') params.status = statusFilter;
+      if (urgencyFilter) params.urgency = urgencyFilter;
+      if (categoryFilter) params.category = categoryFilter;
+
+      const data = await requestsApi.getAll(params);
+      if (data.length > 0) {
+        setRequests(prev => [...prev, ...data]);
+        setOffset(nextOffset);
+      }
+      setHasMore(data.length === PAGE_SIZE);
+      await saveRequestsToLocalDB(data);
+    } catch (error) {
+      OfflineLogger.network('RequestsList: loadMore failed', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [isOffline, hasMore, loadingMore, offset, search, statusFilter, urgencyFilter, categoryFilter, saveRequestsToLocalDB]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -521,6 +570,15 @@ export default function RequestsListScreen() {
         keyExtractor={(r) => r.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
         contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={{ padding: 16, alignItems: 'center' }}>
+              <Text style={{ color: Colors.textMuted, fontSize: 12 }}>Завантаження...</Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <EmptyState icon="📋" title="Заявок не знайдено" subtitle={hasError ? 'Немає мережі. Спробуйте оновити.' : 'Спробуйте змінити фільтри'} />
         }
