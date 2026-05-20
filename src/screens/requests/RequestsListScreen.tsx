@@ -364,6 +364,24 @@ export default function RequestsListScreen() {
       filtered = filtered.filter(r => r.title.toLowerCase().includes(searchLower));
     }
 
+    // Deduplicate by ID to avoid React duplicate keys
+    const seen = new Set<string>();
+    filtered = filtered.filter(r => {
+      const key = r.id || (r as any).serverId || (r as any).localId;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // Normalize tags to prevent "tags.filter is not a function" crash
+    filtered = (filtered as Request[]).map(r => ({
+      ...r,
+      tags: Array.isArray(r.tags) ? r.tags : (typeof r.tags === 'string' ? r.tags.split(',').filter(Boolean) : []),
+      additionalInfo: Array.isArray(r.additionalInfo) ? r.additionalInfo : [],
+      mediaUrls: Array.isArray(r.mediaUrls) ? r.mediaUrls : [],
+      reportUrls: Array.isArray(r.reportUrls) ? r.reportUrls : [],
+    }));
+
     // Apply region filter (async — only if regionSearch is not empty)
     if (regionSearch.trim()) {
       setGeocodingLoading(true);

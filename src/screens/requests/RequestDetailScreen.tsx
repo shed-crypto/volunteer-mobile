@@ -174,6 +174,11 @@ export default function RequestDetailScreen() {
           isSavedLocal = saved.some((s: any) => String(s.requestId) === String(requestId));
         } catch {}
 
+        const rawTags = (local as any).tags;
+        const rawAdditionalInfo = (local as any).additionalInfo;
+        const rawMediaUrls = (local as any).mediaUrls;
+        const rawReportUrls = (local as any).reportUrls;
+
         return {
           id: (local as any).serverId ?? local.id,
           title: (local as any).title,
@@ -185,10 +190,10 @@ export default function RequestDetailScreen() {
           latitude: (local as any).latitude != null ? (local as any).latitude : undefined,
           longitude: (local as any).longitude != null ? (local as any).longitude : undefined,
           isLocationHidden: (local as any).isLocationHidden,
-          tags: (local as any).tags,
-          additionalInfo: (local as any).additionalInfo,
-          mediaUrls: (local as any).mediaUrls,
-          reportUrls: (local as any).reportUrls,
+          tags: Array.isArray(rawTags) ? rawTags : (typeof rawTags === 'string' ? rawTags.split(',').filter(Boolean) : []),
+          additionalInfo: Array.isArray(rawAdditionalInfo) ? rawAdditionalInfo : [],
+          mediaUrls: Array.isArray(rawMediaUrls) ? rawMediaUrls : [],
+          reportUrls: Array.isArray(rawReportUrls) ? rawReportUrls : [],
           managingOrganizationId: (local as any).managingOrganizationId ?? undefined,
           cancelledByUserId: (local as any).cancelledByUserId ?? undefined,
           cancelledAt: (local as any).cancelledAt ? new Date((local as any).cancelledAt).toISOString() : undefined,
