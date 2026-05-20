@@ -256,7 +256,9 @@ export default function RequestsListScreen() {
         longitude,
       };
               if (search) params.search = search;
-              if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my') params.status = statusFilter;
+              if (statusFilter === 'my') params.creatorId = user?.id;
+              else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
+              if (statusFilter === 'all') params.excludeCreatorId = user?.id;
               if (urgencyFilter) params.urgency = urgencyFilter;
               if (categoryFilter) params.category = categoryFilter;
 
@@ -301,7 +303,7 @@ export default function RequestsListScreen() {
         }
       } catch {}
 
-      const nextOffset = offset + 1;
+      const nextOffset = offset + PAGE_SIZE;
       const params: any = {
         limit: PAGE_SIZE,
         offset: nextOffset,
@@ -309,7 +311,9 @@ export default function RequestsListScreen() {
         longitude,
       };
       if (search) params.search = search;
-      if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my') params.status = statusFilter;
+      if (statusFilter === 'my') params.creatorId = user?.id;
+      else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
+      if (statusFilter === 'all') params.excludeCreatorId = user?.id;
       if (urgencyFilter) params.urgency = urgencyFilter;
       if (categoryFilter) params.category = categoryFilter;
 
