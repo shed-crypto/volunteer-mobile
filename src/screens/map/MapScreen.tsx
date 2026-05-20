@@ -21,11 +21,13 @@ import MapView, { Marker, Circle, PROVIDER_GOOGLE, Region } from 'react-native-m
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, categoryLabels, statusColors } from '../../utils/theme';
+import { OfflineLogger } from '../../utils/offlineLogger';
 import { requestsApi } from '../../api/requests.api';
+import { SyncService } from '../../db/SyncService';
 import { Request, RequestCategory, RequestStatus, RequestUrgency } from '../../types';
 
 type RootStackParamList = {
@@ -339,11 +341,28 @@ export default function MapScreen() {
     })();
   }, []);
 
-  // Оновлюємо межі карти при зміні регіону
+  // Throttle: не частіше ніж раз на 5 секунд
+  const lastLoadRef = useRef(0);
+  const throttledLoadRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Оновлюємо межі карти при зміні регіону, але НЕ тригеримо завантаження
   const handleRegionChange = useCallback((region: Region) => {
+    const oldRegion = regionRef.current;
+    // Перевіряємо чи карта реально змістилась (значна зміна позиції чи масштабу)
+    const hasMoved = 
+      Math.abs(region.latitude - oldRegion.latitude) > 0.001 ||
+      Math.abs(region.longitude - oldRegion.longitude) > 0.001 ||
+      Math.abs(region.latitudeDelta - oldRegion.latitudeDelta) > 0.01 ||
+      Math.abs(region.longitudeDelta - oldRegion.longitudeDelta) > 0.01;
+    
     regionRef.current = region;
     setMapBounds(region);
-  }, []);
+    
+    // Завантажуємо тільки якщо карта реально змістилась і це режим 'bounds'
+    if (hasMoved && mapMode === 'bounds') {
+      throttledLoadRef.current?.();
+    }
+  }, [mapMode]);
 
   // ─── Завантаження заявок ──────────────────────────────────────────────────
   const loadRequests = useCallback(async () => {
@@ -405,8 +424,33 @@ export default function MapScreen() {
     }
   }, [userLocation, radiusKm, mapMode, mapBounds, filters]);
 
-  // Перезавантажуємо коли таб активний і змінюються параметри карти/фільтрів.
-  useFocusEffect(useCallback(() => { loadRequests(); }, [loadRequests]));
+  // Throttled load: не частіше ніж раз на 5 секунд
+  const throttledLoad = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastLoadRef.current < 5000) {
+      OfflineLogger?.nav?.('MapScreen: load throttled');
+      return;
+    }
+    lastLoadRef.current = now;
+    await loadRequests();
+  }, [loadRequests]);
+
+  // Sync ref for handleRegionChange (avoids circular dependency)
+  throttledLoadRef.current = throttledLoad;
+
+  // Завантажуємо тільки при зміні режиму, радіусу або фільтрів (не при фокусі таба)
+  useEffect(() => {
+    throttledLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapMode, radiusKm, filters]);
+
+  // SyncService listener: оновлюємо після синхронізації
+  useEffect(() => {
+    const unsub = SyncService.on('sync-event', () => {
+      throttledLoad();
+    });
+    return unsub;
+  }, [throttledLoad]);
 
   // ─── Обробник слайдера з debounce ─────────────────────────────────────────
   const handleSliderChange = (v: number) => {
