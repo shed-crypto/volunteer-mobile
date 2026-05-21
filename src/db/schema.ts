@@ -6,7 +6,7 @@ import { appSchema, tableSchema } from '@nozbe/watermelondb';
 export const dbSchema = appSchema({
   // NOTE: migrations were reset in development. Version was lowered to 1
   // so WatermelonDB recreates the database from the current schema.
-  version: 7,
+  version: 8,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -37,7 +37,8 @@ export const dbSchema = appSchema({
         { name: 'additional_info_raw', type: 'string', isOptional: true }, // JSON array of objects
         { name: 'media_urls_raw', type: 'string', isOptional: true }, // JSON array of objects
         { name: 'report_urls_raw', type: 'string', isOptional: true }, // JSON array of strings
-       ],
+        { name: 'task_count', type: 'number', isOptional: true },
+      ],
     }),
 
     // ─── Задачі / підзадачі ──────────────────────────────────────────────────

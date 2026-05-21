@@ -33,6 +33,7 @@ export class RequestModel extends Model {
   @field('additional_info_raw') additionalInfoRaw!: string | null; // JSON array of objects
   @field('media_urls_raw') mediaUrlsRaw!: string | null; // JSON array of objects
   @field('report_urls_raw') reportUrlsRaw!: string | null; // JSON array of strings
+  @field('task_count') taskCount!: number;
 
   /** Зручний геттер для десеріалізованих тегів */
   get tags(): string[] {

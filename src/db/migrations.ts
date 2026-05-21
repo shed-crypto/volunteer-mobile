@@ -71,5 +71,16 @@ export const dbMigrations = schemaMigrations({
         }),
       ],
     },
+    {
+      toVersion: 8,
+      steps: [
+        addColumns({
+          table: 'requests',
+          columns: [
+            { name: 'task_count', type: 'number', isOptional: true },
+          ],
+        }),
+      ],
+    },
   ],
 });

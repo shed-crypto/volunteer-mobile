@@ -4,6 +4,8 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import { useAuth } from '../../context/AuthContext';
+import { SystemRole } from '../../types';
 import { orgsApi } from '../../api/orgs.api';
 import { Colors } from '../../utils/theme';
 import { ScreenHeader, Button, Card, LoadingScreen } from '../../components/ui';
@@ -18,6 +20,7 @@ export default function EditOrganizationScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { orgId, parentOrgId } = route.params ?? {};
+  const { user } = useAuth();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -110,7 +113,8 @@ export default function EditOrganizationScreen() {
     setSaving(true);
     try {
       const priv = orgId ? await orgsApi.getMemberPrivileges(orgId) : null;
-      if (orgId && !priv?.canEdit && user?.systemRole !== 'admin') {
+      const isAdmin = user?.systemRole === SystemRole.ADMIN;
+      if (orgId && !priv?.canEdit && !isAdmin) {
         throw new Error('Недостатньо прав для редагування');
       }
 
@@ -127,8 +131,8 @@ export default function EditOrganizationScreen() {
         await orgsApi.update(orgId, {
           name: name.trim(),
           description: description.trim() || undefined,
-          logoUrl: logo === null && logoChanged ? null : undefined,
-          bannerUrl: (banner === null && bannerChanged) ? undefined : undefined,
+          logoUrl: logoChanged ? (logo === null ? null : undefined) : undefined,
+          bannerUrl: bannerChanged ? (banner === null ? null : undefined) : undefined,
           tags: tags.length > 0 ? tags : undefined,
         });
       }

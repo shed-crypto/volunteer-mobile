@@ -786,6 +786,7 @@ export class SyncService {
               r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
               r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
               r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
+              r.taskCount = sr.taskCount ?? 0;
               r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
               r.lastSyncedAt = Date.now();
             })
@@ -814,6 +815,7 @@ export class SyncService {
             r.additionalInfoRaw = JSON.stringify(sr.additionalInfo ?? []);
             r.mediaUrlsRaw = JSON.stringify(sr.mediaUrls ?? []);
             r.reportUrlsRaw = JSON.stringify(sr.reportUrls ?? []);
+            r.taskCount = sr.taskCount ?? 0;
             r.deadline = sr.deadline ? new Date(sr.deadline).getTime() : null;
             r.createdAtServer = sr.createdAt ? new Date(sr.createdAt).getTime() : Date.now();
             r.isSynced = true;

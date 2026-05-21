@@ -111,6 +111,7 @@ export default function RequestsListScreen() {
          cancelledByUserId: r.cancelledByUserId ?? undefined,
          cancelledAt: r.cancelledAt ? new Date(r.cancelledAt).toISOString() : undefined,
          cancelReason: r.cancelReason ?? undefined,
+         taskCount: r.taskCount ?? 0,
          creatorId: r.creatorId ?? '',
          createdAt: r.createdAtServer
            ? new Date(r.createdAtServer).toISOString()
@@ -159,6 +160,7 @@ export default function RequestsListScreen() {
               r.additionalInfoRaw = JSON.stringify(req.additionalInfo ?? []);
               r.mediaUrlsRaw = JSON.stringify(req.mediaUrls ?? []);
               r.reportUrlsRaw = JSON.stringify(req.reportUrls ?? []);
+              r.taskCount = req.taskCount ?? 0;
               r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
               r.isSynced = true;
               r.pendingAction = null;
@@ -187,6 +189,7 @@ export default function RequestsListScreen() {
               r.additionalInfoRaw = JSON.stringify(req.additionalInfo ?? []);
               r.mediaUrlsRaw = JSON.stringify(req.mediaUrls ?? []);
               r.reportUrlsRaw = JSON.stringify(req.reportUrls ?? []);
+              r.taskCount = req.taskCount ?? 0;
               r.deadline = req.deadline ? new Date(req.deadline).getTime() : null;
               r.createdAtServer = req.createdAt ? new Date(req.createdAt).getTime() : Date.now();
               r.isSynced = true;
@@ -861,7 +864,7 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
               </>
             )
             : <Text style={styles.metaText}>📍 Місце не вказано</Text>}
-          <Text style={styles.metaText}>🗂 {request.tasks?.length ?? 0} підзадач</Text>
+          <Text style={styles.metaText}>🗂 {(request as any).taskCount ?? request.tasks?.length ?? 0} підзадач</Text>
           {request.deadline && (
             <Text style={[styles.metaText, { color: Colors.warning }]}>
               ⏰ {new Date(request.deadline).toLocaleDateString('uk-UA')}
