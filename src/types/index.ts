@@ -207,6 +207,7 @@ export interface Organization {
   description?: string;
   logoUrl?: string;
   parentOrgId?: string;
+  tags?: string[];
   parentOrg?: Organization;
   children?: Organization[];
   members?: OrganizationMember[];

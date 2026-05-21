@@ -42,6 +42,7 @@ interface OrgNode {
   name: string;
   description?: string;
   parentOrgId?: string;
+  tags?: string[];
 }
 
 interface OrgDetail {
@@ -296,6 +297,15 @@ export default function OrgDetailScreen() {
           )}
 
           {org.description ? <Text style={styles.descText}>{org.description}</Text> : null}
+          {org.tags && org.tags.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10, gap: 6 }}>
+              {org.tags.map((tag, i) => (
+                <View key={i} style={{ backgroundColor: "#E3F2FD", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 }}>
+                  <Text style={{ fontSize: 12, color: "#1976D2", fontWeight: "700" }}>{tag}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
 
         <View style={styles.statsRow}>

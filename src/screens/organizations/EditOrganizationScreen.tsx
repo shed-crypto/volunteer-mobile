@@ -36,6 +36,7 @@ export default function EditOrganizationScreen() {
       const org = await orgsApi.getOne(orgId);
       setName(org.name);
       setDescription(org.description || '');
+      setTags(org.tags || []);
       setLogo(org.logoUrl || null);
       setLogoChanged(false);
       setBanner(org.bannerUrl || null);
