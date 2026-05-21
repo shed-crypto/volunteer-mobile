@@ -9,6 +9,11 @@ import { Colors } from '../../utils/theme';
 import { ScreenHeader, Button, Card, LoadingScreen } from '../../components/ui';
 import { getMediaUrl } from '../../utils/fileUtils';
 
+const AVAILABLE_TAGS = [
+  '#Медицина', '#Евакуація', '#Логістика', '#Військо',
+  '#Гуманітарна', '#Житло', '#Психологічна', '#Термінова',
+];
+
 export default function EditOrganizationScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
