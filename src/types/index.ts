@@ -132,6 +132,7 @@ export interface Request {
   createdAt: string;
   updatedAt: string;
   isSaved?: boolean;
+  taskCount?: number;
 }
 
 export interface Task {
