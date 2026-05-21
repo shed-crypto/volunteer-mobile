@@ -16,6 +16,7 @@ export default function EditOrganizationScreen() {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [logo, setLogo] = useState<string | null>(null);
   const [logoChanged, setLogoChanged] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
