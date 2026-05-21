@@ -120,6 +120,7 @@ export default function EditOrganizationScreen() {
           name: name.trim(),
           description: description.trim() || undefined,
           parentOrgId,
+          tags: tags.length > 0 ? tags : undefined,
         });
         currentOrgId = newOrg.id;
       } else {
@@ -127,7 +128,8 @@ export default function EditOrganizationScreen() {
           name: name.trim(),
           description: description.trim() || undefined,
           logoUrl: logo === null && logoChanged ? null : undefined,
-          bannerUrl: banner === null && bannerChanged ? null : undefined,
+          bannerUrl: (banner === null && bannerChanged) ? undefined : undefined,
+          tags: tags.length > 0 ? tags : undefined,
         });
       }
 
@@ -216,6 +218,29 @@ export default function EditOrganizationScreen() {
             numberOfLines={4}
           />
 
+          <Text style={styles.label}>Теги</Text>
+          <Text style={styles.tagHint}>Виберіть теги, які описують організацію</Text>
+          <View style={styles.tagGrid}>
+            {AVAILABLE_TAGS.map((tag) => {
+              const isSelected = tags.includes(tag);
+              return (
+                <TouchableOpacity
+                  key={tag}
+                  onPress={() => {
+                    setTags((prev) =>
+                      isSelected ? prev.filter((t) => t !== tag) : [...prev, tag],
+                    );
+                  }}
+                  style={[styles.tagChip, isSelected && styles.tagChipSelected]}
+                >
+                  <Text style={[styles.tagChipText, isSelected && styles.tagChipTextSelected]}>
+                    {tag}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
           <Button
             title="Зберегти зміни"
             onPress={handleSave}
@@ -277,5 +302,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   textArea: { height: 120, textAlignVertical: 'top' },
+  tagHint: { fontSize: 12, color: Colors.textMuted, marginBottom: 10 },
+  tagGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tagChip: {
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1.5, borderColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  tagChipSelected: { borderColor: Colors.primary, backgroundColor: Colors.primaryLight },
+  tagChipText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  tagChipTextSelected: { color: Colors.primary },
   saveBtn: { marginTop: 24 },
 });

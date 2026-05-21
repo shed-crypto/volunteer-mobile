@@ -40,7 +40,7 @@ export const orgsApi = {
   getOne: (id: string): Promise<Organization> =>
     api.get(`/organizations/${id}`).then((r) => r.data),
 
-  create: (data: { name: string; description?: string; parentOrgId?: string }): Promise<Organization> =>
+  create: (data: { name: string; description?: string; parentOrgId?: string; tags?: string[] }): Promise<Organization> =>
     api.post('/organizations', data).then((r) => r.data),
 
   getMembers: (id: string): Promise<OrganizationMember[]> =>

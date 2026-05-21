@@ -77,6 +77,7 @@ export default function CreateRequestScreen() {
   const [locLoading, setLocLoading] = useState(false);
   // Доповнення (для режиму редагування/доповнення)
   const [additionalInfo, setAdditionalInfo] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
   // Для ручного введення
   const [manualLat, setManualLat] = useState('');
@@ -187,6 +188,7 @@ export default function CreateRequestScreen() {
       latitude,
       longitude,
       attachments: selectedFiles.length > 0 ? selectedFiles : undefined,
+      tags: tags.length > 0 ? tags : undefined,
     };
 
     try {

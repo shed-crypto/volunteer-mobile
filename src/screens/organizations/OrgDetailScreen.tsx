@@ -59,10 +59,11 @@ interface OrgDetail {
   members: OrgMember[];
   children: OrgNode[];
   hubs: Hub[];
+  tags?: string[];
 }
 
 type RouteParams = { orgId: string; parentPath?: OrgNode[] };
-type OrgTab = 'members' | 'hubs' | 'groups';
+type OrgTab = 'members' | 'hubs' | 'groups' | 'requests';
 
 const ORG_ROLE_LABELS: Record<string, string> = {
   leader: 'Лідер',
@@ -74,6 +75,7 @@ const TAB_CONFIG: Record<OrgTab, { label: string; icon: keyof typeof Ionicons.gl
   members: { label: 'Учасники', icon: 'people-outline' },
   hubs: { label: 'Хаби', icon: 'cube-outline' },
   groups: { label: 'Підгрупи', icon: 'git-branch-outline' },
+  requests: { label: 'Заявки', icon: 'document-text-outline' },
 };
 
 function compactPath(nodes: OrgNode[], current: OrgNode): OrgNode[] {
@@ -113,6 +115,8 @@ export default function OrgDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<OrgTab>('members');
   const [privileges, setPrivileges] = useState<any>(null);
+  const [orgRequests, setOrgRequests] = useState<any[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
   const hasLoadedRef = useRef(false);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; targetName: string; onConfirm: () => void; title?: string }>({
     visible: false,
@@ -148,6 +152,19 @@ export default function OrgDetailScreen() {
       setRefreshing(false);
     }
   }, [navigation, orgId, parentPath.length]);
+
+  const fetchRequests = useCallback(async () => {
+    if (!orgId) return;
+    setRequestsLoading(true);
+    try {
+      const data = await orgsApi.getRequests(orgId);
+      setOrgRequests(data);
+    } catch {
+      // requests tab is optional, ignore errors
+    } finally {
+      setRequestsLoading(false);
+    }
+  }, [orgId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -393,6 +410,33 @@ export default function OrgDetailScreen() {
                 <View style={styles.cardText}>
                   <Text style={styles.cardTitle}>{hub.name}</Text>
                   {hub.address ? <Text style={styles.cardSubtitle}>{hub.address}</Text> : null}
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {tab === 'requests' && (
+          <View>
+            {requestsLoading ? (
+              <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 20 }} />
+            ) : (orgRequests.length === 0) ? (
+              <EmptyState icon="📄" title="Заявок ще немає" />
+            ) : orgRequests.map((req) => (
+              <TouchableOpacity
+                key={req.id}
+                style={styles.listCard}
+                onPress={() => navigation.navigate('RequestsList', { screen: 'RequestDetail', params: { requestId: req.id } })}
+              >
+                <View style={styles.listIcon}>
+                  <Ionicons name="document-text-outline" size={19} color={Colors.primary} />
+                </View>
+                <View style={styles.cardText}>
+                  <Text style={styles.cardTitle} numberOfLines={1}>{req.title ?? 'Без назви'}</Text>
+                  <Text style={styles.cardSubtitle} numberOfLines={1}>
+                    {req.status ?? 'pending'} {req.category ? `· ${req.category}` : ''}
+                  </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
