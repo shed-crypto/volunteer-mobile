@@ -862,6 +862,7 @@ export default function RequestDetailScreen() {
   const isWithinDeleteGrace = createdAtMs > 0 && Date.now() - createdAtMs <= 10 * 60 * 1000;
   const canDeleteRequest = !isOfflineMode && (isAdmin || (isOwner && isWithinDeleteGrace && !hasActiveAssignments));
   const canCancelRequest = !isOfflineMode && (isOwner || isAdmin || isCoord) && ![RequestStatus.COMPLETED, RequestStatus.CANCELLED].includes(request.status);
+  const canRestoreRequest = !isOfflineMode && (isOwner || isAdmin) && request.status === RequestStatus.CANCELLED && !!request.cancelledAt && (Date.now() - new Date(request.cancelledAt).getTime()) <= 10 * 60 * 1000;
 
   const handleUpdate = async (data: any) => {
     try {
@@ -941,6 +942,26 @@ export default function RequestDetailScreen() {
               onPress={handleCancelRequest}
             >
               <Text style={styles.headerActionText}>Скасувати</Text>
+            </TouchableOpacity>
+          )}
+          {canRestoreRequest && (
+            <TouchableOpacity
+              style={[styles.headerActionBtn, { backgroundColor: Colors.secondary }]}
+              onPress={() => {
+                Alert.alert('Відновити заявку?', 'Заявка знову стане активною.', [
+                  { text: 'Ні', style: 'cancel' },
+                  { text: 'Відновити', onPress: async () => {
+                    try {
+                      await requestsApi.returnToProgress(request.id);
+                      load();
+                    } catch (e: any) {
+                      Alert.alert('Помилка', e?.response?.data?.message ?? 'Не вдалося відновити заявку');
+                    }
+                  }},
+                ]);
+              }}
+            >
+              <Text style={styles.headerActionText}>Відновити</Text>
             </TouchableOpacity>
           )}
           {canDeleteRequest && (
