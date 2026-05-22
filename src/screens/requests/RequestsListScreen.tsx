@@ -90,35 +90,50 @@ export default function RequestsListScreen() {
       const savedRequests = await collections.savedRequests.query().fetch();
       const savedIds = new Set(savedRequests.map((s: any) => s.requestId));
       
-       const mapped = localReqs.map((r: any) => ({
-         id: r.serverId || '',
-         localId: r.id,
-         serverId: r.serverId || undefined,
-         title: r.title,
-         description: r.description ?? '',
-         category: r.category,
-         urgency: r.urgency,
-         status: r.status,
-         requiredClearance: r.requiredClearance,
-         latitude: r.latitude ?? undefined,
-         longitude: r.longitude ?? undefined,
-         isLocationHidden: r.isLocationHidden ?? false,
-         tags: r.tags ?? [],
-         additionalInfo: r.additionalInfo ?? [],
-         mediaUrls: r.mediaUrls ?? [],
-         reportUrls: r.reportUrls ?? [],
-         managingOrganizationId: r.managingOrganizationId ?? undefined,
-         cancelledByUserId: r.cancelledByUserId ?? undefined,
-         cancelledAt: r.cancelledAt ? new Date(r.cancelledAt).toISOString() : undefined,
-         cancelReason: r.cancelReason ?? undefined,
-         taskCount: r.taskCount ?? 0,
-         creatorId: r.creatorId ?? '',
-         createdAt: r.createdAtServer
-           ? new Date(r.createdAtServer).toISOString()
-           : new Date().toISOString(),
-         updatedAt: r.lastSyncedAt ? new Date(r.lastSyncedAt).toISOString() : new Date().toISOString(),
-         isSaved: savedIds.has(r.serverId || r.id),
-       }));
+      // Завантажуємо всі локальні задачі для підрахунку taskCount
+      const allLocalTasks = await collections.tasks.query().fetch();
+      const taskCountByRequest = new Map<string, number>();
+      for (const t of allLocalTasks) {
+        const reqId = (t as any).requestServerId || (t as any).requestId;
+        if (reqId) taskCountByRequest.set(reqId, (taskCountByRequest.get(reqId) || 0) + 1);
+      }
+      
+      const mapped = localReqs.map((r: any) => {
+        const serverId = r.serverId || '';
+        // Якщо taskCount збережено в БД — використовуємо його, інакше рахуємо локально
+        const savedCount = r.taskCount ?? 0;
+        const localCount = taskCountByRequest.get(serverId) || 0;
+        const effectiveCount = savedCount > 0 ? savedCount : localCount;
+        return {
+          id: serverId,
+          localId: r.id,
+          serverId: r.serverId || undefined,
+          title: r.title,
+          description: r.description ?? '',
+          category: r.category,
+          urgency: r.urgency,
+          status: r.status,
+          requiredClearance: r.requiredClearance,
+          latitude: r.latitude ?? undefined,
+          longitude: r.longitude ?? undefined,
+          isLocationHidden: r.isLocationHidden ?? false,
+          tags: r.tags ?? [],
+          additionalInfo: r.additionalInfo ?? [],
+          mediaUrls: r.mediaUrls ?? [],
+          reportUrls: r.reportUrls ?? [],
+          managingOrganizationId: r.managingOrganizationId ?? undefined,
+          cancelledByUserId: r.cancelledByUserId ?? undefined,
+          cancelledAt: r.cancelledAt ? new Date(r.cancelledAt).toISOString() : undefined,
+          cancelReason: r.cancelReason ?? undefined,
+          taskCount: effectiveCount,
+          creatorId: r.creatorId ?? '',
+          createdAt: r.createdAtServer
+            ? new Date(r.createdAtServer).toISOString()
+            : new Date().toISOString(),
+          updatedAt: r.lastSyncedAt ? new Date(r.lastSyncedAt).toISOString() : new Date().toISOString(),
+          isSaved: savedIds.has(r.serverId || r.id),
+        };
+      });
       
       return mapped as Request[];
     } catch (e) {
