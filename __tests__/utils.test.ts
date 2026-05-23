@@ -1,56 +1,55 @@
 import { getMediaUrl } from '../src/utils/fileUtils';
 import { Colors, urgencyColors, statusColors, categoryLabels, clearanceLabels, roleLabels } from '../src/utils/theme';
+import { OfflineLogger } from '../src/utils/offlineLogger';
 
 describe('fileUtils — getMediaUrl', () => {
-  it('повертає undefined для null', () => {
+  it('returns undefined for null', () => {
     expect(getMediaUrl(null as any)).toBeUndefined();
   });
 
-  it('повертає undefined для undefined', () => {
+  it('returns undefined for undefined', () => {
     expect(getMediaUrl(undefined)).toBeUndefined();
   });
 
-  it('повертає абсолютний https URL без змін', () => {
+  it('returns absolute https URL unchanged', () => {
     expect(getMediaUrl('https://example.com/image.png')).toBe('https://example.com/image.png');
   });
 
-  it('повертає file:// без змін', () => {
+  it('returns file:// unchanged', () => {
     expect(getMediaUrl('file:///data/image.png')).toBe('file:///data/image.png');
   });
 
-  it('додає serverRoot для відносного шляху', () => {
+  it('prepends serverRoot for relative path', () => {
     const result = getMediaUrl('/uploads/test.jpg');
     expect(result).toContain('/test.jpg');
   });
 });
 
-describe('theme — кольори та маппінги', () => {
-  it('кольорова палітра містить primary', () => {
+describe('theme — colors & mappings', () => {
+  it('palette contains primary', () => {
     expect(Colors.primary).toBe('#1a56db');
   });
 
-  it('urgencyColors має 4 рівні', () => {
+  it('urgencyColors has 4 levels', () => {
     expect(Object.keys(urgencyColors)).toHaveLength(4);
   });
 
-  it('statusColors має 8 ключів', () => {
+  it('statusColors has 8 keys', () => {
     expect(Object.keys(statusColors)).toHaveLength(8);
   });
 
-  it('categoryLabels містить medical', () => {
+  it('categoryLabels contains medical', () => {
     expect(categoryLabels.medical).toContain('Медична');
   });
 
-  it('clearanceLabels має 3 рівні', () => {
+  it('clearanceLabels has 3 levels', () => {
     expect(Object.keys(clearanceLabels)).toHaveLength(3);
   });
 
-  it('roleLabels має 4 ролі', () => {
+  it('roleLabels has 4 roles', () => {
     expect(Object.keys(roleLabels)).toHaveLength(4);
   });
 });
-
-import { OfflineLogger } from '../src/utils/offlineLogger';
 
 describe('OfflineLogger', () => {
   afterEach(() => {
@@ -58,34 +57,34 @@ describe('OfflineLogger', () => {
     jest.clearAllMocks();
   });
 
-  it('log зберігає запис', () => {
+  it('log stores a record', () => {
     OfflineLogger.log('AUTH', 'login', { user: 'test' });
     expect(OfflineLogger.getLogs()).toHaveLength(1);
     expect(OfflineLogger.getLogs()[0].category).toBe('AUTH');
   });
 
-  it('швидкі методи auth, network, sync працюють', () => {
+  it('auth, network, sync shortcuts work', () => {
     OfflineLogger.auth('auth-msg');
     OfflineLogger.network('net-msg');
     OfflineLogger.sync('sync-msg');
     expect(OfflineLogger.getLogs()).toHaveLength(3);
   });
 
-  it('getLogsSummary форматує вивід', () => {
+  it('getLogsSummary formats output', () => {
     OfflineLogger.log('SYNC', 'synced', {});
     const summary = OfflineLogger.getLogsSummary();
     expect(summary).toContain('[SYNC]');
     expect(summary).toContain('synced');
   });
 
-  it('clear очищає логи', () => {
+  it('clear flushes logs', () => {
     OfflineLogger.log('DB', 'query');
     expect(OfflineLogger.getLogs()).toHaveLength(1);
     OfflineLogger.clear();
     expect(OfflineLogger.getLogs()).toHaveLength(0);
   });
 
-  it('cache, nav, db швидкі методи працюють', () => {
+  it('cache, nav, db shortcuts work', () => {
     OfflineLogger.cache('cached');
     OfflineLogger.nav('navigated');
     OfflineLogger.db('query');
