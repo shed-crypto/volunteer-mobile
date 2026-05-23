@@ -84,4 +84,14 @@ describe('OfflineLogger', () => {
     OfflineLogger.clear();
     expect(OfflineLogger.getLogs()).toHaveLength(0);
   });
+
+  it('cache, nav, db швидкі методи працюють', () => {
+    OfflineLogger.cache('cached');
+    OfflineLogger.nav('navigated');
+    OfflineLogger.db('query');
+    expect(OfflineLogger.getLogs()).toHaveLength(3);
+    expect(OfflineLogger.getLogs()[0].category).toBe('CACHE');
+    expect(OfflineLogger.getLogs()[1].category).toBe('NAV');
+    expect(OfflineLogger.getLogs()[2].category).toBe('DB');
+  });
 });

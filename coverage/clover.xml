@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1779536036405" clover="3.2.0">
-  <project timestamp="1779536036405" name="All files">
-    <metrics statements="171" coveredstatements="40" conditionals="73" coveredconditionals="11" methods="28" coveredmethods="9" elements="272" coveredelements="60" complexity="0" loc="171" ncloc="171" packages="2" files="4" classes="4"/>
+<coverage generated="1779541433916" clover="3.2.0">
+  <project timestamp="1779541433917" name="All files">
+    <metrics statements="171" coveredstatements="43" conditionals="73" coveredconditionals="11" methods="28" coveredmethods="12" elements="272" coveredelements="66" complexity="0" loc="171" ncloc="171" packages="2" files="4" classes="4"/>
     <package name="api">
       <metrics statements="85" coveredstatements="12" conditionals="28" coveredconditionals="2" methods="12" coveredmethods="0"/>
       <file name="axios.ts" path="D:\Stud\Curse\volunteer_frontend\src\api\axios.ts">
@@ -94,7 +94,7 @@
       </file>
     </package>
     <package name="utils">
-      <metrics statements="86" coveredstatements="28" conditionals="45" coveredconditionals="9" methods="16" coveredmethods="9"/>
+      <metrics statements="86" coveredstatements="31" conditionals="45" coveredconditionals="9" methods="16" coveredmethods="12"/>
       <file name="fileUtils.ts" path="D:\Stud\Curse\volunteer_frontend\src\utils\fileUtils.ts">
         <metrics statements="61" coveredstatements="6" conditionals="39" coveredconditionals="5" methods="5" coveredmethods="1"/>
         <line num="9" count="5" type="cond" truecount="2" falsecount="0"/>
@@ -160,26 +160,26 @@
         <line num="147" count="0" type="stmt"/>
       </file>
       <file name="offlineLogger.ts" path="D:\Stud\Curse\volunteer_frontend\src\utils\offlineLogger.ts">
-        <metrics statements="19" coveredstatements="16" conditionals="6" coveredconditionals="4" methods="11" coveredmethods="8"/>
+        <metrics statements="19" coveredstatements="19" conditionals="6" coveredconditionals="4" methods="11" coveredmethods="11"/>
         <line num="4" count="1" type="stmt"/>
         <line num="15" count="1" type="stmt"/>
         <line num="16" count="1" type="stmt"/>
         <line num="18" count="1" type="stmt"/>
-        <line num="20" count="6" type="cond" truecount="1" falsecount="1"/>
-        <line num="21" count="6" type="stmt"/>
-        <line num="27" count="6" type="stmt"/>
-        <line num="28" count="6" type="cond" truecount="1" falsecount="1"/>
-        <line num="30" count="6" type="cond" truecount="2" falsecount="0"/>
-        <line num="31" count="6" type="stmt"/>
-        <line num="35" count="5" type="stmt"/>
+        <line num="20" count="9" type="cond" truecount="1" falsecount="1"/>
+        <line num="21" count="9" type="stmt"/>
+        <line num="27" count="9" type="stmt"/>
+        <line num="28" count="9" type="cond" truecount="1" falsecount="1"/>
+        <line num="30" count="9" type="cond" truecount="2" falsecount="0"/>
+        <line num="31" count="9" type="stmt"/>
+        <line num="35" count="9" type="stmt"/>
         <line num="39" count="1" type="stmt"/>
-        <line num="43" count="5" type="stmt"/>
+        <line num="43" count="6" type="stmt"/>
         <line num="47" count="1" type="stmt"/>
         <line num="48" count="1" type="stmt"/>
         <line num="49" count="1" type="stmt"/>
-        <line num="50" count="0" type="stmt"/>
-        <line num="51" count="0" type="stmt"/>
-        <line num="52" count="0" type="stmt"/>
+        <line num="50" count="1" type="stmt"/>
+        <line num="51" count="1" type="stmt"/>
+        <line num="52" count="1" type="stmt"/>
       </file>
       <file name="theme.ts" path="D:\Stud\Curse\volunteer_frontend\src\utils\theme.ts">
         <metrics statements="6" coveredstatements="6" conditionals="0" coveredconditionals="0" methods="0" coveredmethods="0"/>
