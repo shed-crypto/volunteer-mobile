@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
   TouchableOpacity, Alert, ActivityIndicator, RefreshControl,
@@ -63,7 +63,7 @@ interface OrgDetail {
 }
 
 type RouteParams = { orgId: string; parentPath?: OrgNode[] };
-type OrgTab = 'members' | 'hubs' | 'groups' | 'requests';
+type OrgTab = 'members' | 'hubs' | 'groups' | 'requests' | 'delegations';
 
 const ORG_ROLE_LABELS: Record<string, string> = {
   leader: 'Лідер',
@@ -76,6 +76,7 @@ const TAB_CONFIG: Record<OrgTab, { label: string; icon: keyof typeof Ionicons.gl
   hubs: { label: 'Хаби', icon: 'cube-outline' },
   groups: { label: 'Підгрупи', icon: 'git-branch-outline' },
   requests: { label: 'Заявки', icon: 'document-text-outline' },
+  delegations: { label: 'Вхідні', icon: 'git-network-outline' },
 };
 
 function compactPath(nodes: OrgNode[], current: OrgNode): OrgNode[] {
@@ -117,12 +118,27 @@ export default function OrgDetailScreen() {
   const [privileges, setPrivileges] = useState<any>(null);
   const [orgRequests, setOrgRequests] = useState<any[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
+  const [delegations, setDelegations] = useState<any[]>([]);
+  const [delegationsLoading, setDelegationsLoading] = useState(false);
   const hasLoadedRef = useRef(false);
   const [deleteModal, setDeleteModal] = useState<{ visible: boolean; targetName: string; onConfirm: () => void; title?: string }>({
     visible: false,
     targetName: '',
     onConfirm: () => {},
   });
+
+  const fetchDelegations = useCallback(async () => {
+    if (!orgId) return;
+    setDelegationsLoading(true);
+    try {
+      const data = await orgsApi.getDelegations(orgId);
+      setDelegations(data);
+    } catch {
+      // delegations tab is optional
+    } finally {
+      setDelegationsLoading(false);
+    }
+  }, [orgId]);
 
   const fetchOrg = useCallback(async (options?: { showLoader?: boolean }) => {
     if (!orgId) {
@@ -144,6 +160,8 @@ export default function OrgDetailScreen() {
       const priv = await orgsApi.getMemberPrivileges(orgId);
       setPrivileges(priv);
       hasLoadedRef.current = true;
+      // Одразу завантажуємо делегування після організації
+      fetchDelegations();
     } catch (e: any) {
       Alert.alert('Помилка', e?.response?.data?.message || 'Не вдалося завантажити організацію');
       if (navigation.canGoBack()) navigation.goBack();
@@ -151,7 +169,7 @@ export default function OrgDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [navigation, orgId, parentPath.length]);
+  }, [navigation, orgId, parentPath.length, fetchDelegations]);
 
   const fetchRequests = useCallback(async () => {
     if (!orgId) return;
@@ -166,20 +184,34 @@ export default function OrgDetailScreen() {
     }
   }, [orgId]);
 
+  const isAdmin = user?.systemRole === 'admin';
+  const isLeader = privileges?.isLeader ?? false;
+  const canManage = isAdmin || (privileges?.canEdit ?? false);
+
   useFocusEffect(
     useCallback(() => {
       fetchOrg({ showLoader: !hasLoadedRef.current });
     }, [fetchOrg]),
   );
 
+  // Завантажуємо делегування як тільки orgId відомий
+  useEffect(() => {
+    if (orgId && hasLoadedRef.current) {
+      fetchDelegations();
+    }
+  }, [orgId, fetchDelegations]);
+
+  // Завантажуємо заявки організації при виборі вкладки 'requests'
+  useEffect(() => {
+    if (tab === 'requests') {
+      fetchRequests();
+    }
+  }, [tab, fetchRequests]);
+
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     fetchOrg({ showLoader: false });
   }, [fetchOrg]);
-
-  const isAdmin = user?.systemRole === 'admin';
-  const canManage = isAdmin || (privileges?.canEdit ?? false);
-  const isLeader = privileges?.isLeader ?? false;
   const activeMembers = useMemo(() => org?.members?.filter((m) => m.isActive !== false) ?? [], [org?.members]);
   const lineage = useMemo(() => {
     if (!org) return [];
@@ -467,6 +499,101 @@ export default function OrgDetailScreen() {
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {tab === 'delegations' && (
+          <View>
+            {delegationsLoading ? (
+              <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 20 }} />
+            ) : delegations.length === 0 ? (
+              <EmptyState icon="🔀" title="Немає вхідних делегувань" subtitle="Коли інші організації делегують вам задачі, вони з'являться тут" />
+            ) : (
+              <TouchableOpacity onPress={() => { fetchDelegations(); }} style={{ alignSelf: 'flex-end', marginBottom: 8 }}>
+                <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: '600' }}>Оновити</Text>
+              </TouchableOpacity>
+            )}
+            {delegations.map((del) => (
+              <View key={del.id} style={styles.listCard}>
+                <TouchableOpacity
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (del.task?.requestId) {
+                      navigation.navigate('RequestsList', {
+                        screen: 'RequestDetail',
+                        params: { requestId: del.task.requestId },
+                      });
+                    } else if (del.task?.id) {
+                      navigation.navigate('TaskDetail', { taskId: del.task.id });
+                    }
+                  }}
+                >
+                  <View style={styles.listIcon}>
+                    <Ionicons name="git-network-outline" size={19} color={Colors.warning} />
+                  </View>
+                  <View style={styles.cardText}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>
+                      {del.task?.title || 'Задача'}
+                    </Text>
+                    <Text style={styles.cardSubtitle}>
+                      {del.delegatedBy?.fullName || 'Невідомо'} • {new Date(del.delegatedAt).toLocaleDateString('uk-UA')}
+                    </Text>
+                    {del.isAccepted === null && (
+                      <Text style={[styles.cardSubtitle, { color: Colors.warning, fontWeight: '700', marginTop: 4 }]}>⏳ Очікує підтвердження</Text>
+                    )}
+                    {del.isAccepted === true && (
+                      <Text style={[styles.cardSubtitle, { color: Colors.success, fontWeight: '700', marginTop: 4 }]}>✓ Прийнято</Text>
+                    )}
+                    {del.isAccepted === false && (
+                      <Text style={[styles.cardSubtitle, { color: Colors.danger, fontWeight: '700', marginTop: 4 }]}>✗ Відхилено</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+                <View style={{ gap: 4 }}>
+                  {del.isAccepted === null && (
+                    <>
+                      <Button
+                        title="✓"
+                        size="sm"
+                        onPress={() => {
+                          orgsApi.acceptDelegation(del.taskId, orgId)
+                            .then(() => { Alert.alert('✓', 'Делегування прийнято'); fetchDelegations(); })
+                            .catch((e: any) => Alert.alert('Помилка', e?.response?.data?.message || ''));
+                        }}
+                      />
+                      <Button
+                        title="✗"
+                        variant="danger"
+                        size="sm"
+                        onPress={() => {
+                          orgsApi.declineDelegation(del.taskId, orgId)
+                            .then(() => { Alert.alert('✗', 'Делегування відхилено'); fetchDelegations(); })
+                            .catch((e: any) => Alert.alert('Помилка', e?.response?.data?.message || ''));
+                        }}
+                      />
+                    </>
+                  )}
+                  {del.isAccepted === true && (
+                    <Button
+                      title="↩ Скасувати"
+                      variant="outline"
+                      size="sm"
+                      onPress={() => {
+                        Alert.alert('Скасувати?', 'Повернути делегування в статус очікування?', [
+                          { text: 'Ні', style: 'cancel' },
+                          { text: 'Так', onPress: () => {
+                            orgsApi.unacceptDelegation(del.taskId, orgId)
+                              .then(() => { Alert.alert('↩', 'Прийняття скасовано'); fetchDelegations(); })
+                              .catch((e: any) => Alert.alert('Помилка', e?.response?.data?.message || ''));
+                          }},
+                        ]);
+                      }}
+                    />
+                  )}
+                </View>
+              </View>
             ))}
           </View>
         )}

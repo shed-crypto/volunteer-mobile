@@ -79,6 +79,13 @@ export default function CreateRequestScreen() {
   const [additionalInfo, setAdditionalInfo] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
+  const [showTags, setShowTags] = useState(false);
+
+  const AVAILABLE_TAGS = [
+    '#Медицина', '#Евакуація', '#Логістика', '#Військо',
+    '#Гуманітарна', '#Житло', '#Психологічна', '#Термінова',
+    '#Продовольство',
+  ];
   // Для ручного введення
   const [manualLat, setManualLat] = useState('');
   const [manualLng, setManualLng] = useState('');
@@ -427,6 +434,37 @@ export default function CreateRequestScreen() {
               multiline
               style={{ minHeight: 120, textAlignVertical: 'top' }}
             />
+            {/* ─── Теги ──────────────────────────────────────────────────────────────── */}
+            <TouchableOpacity style={styles.tagToggle} onPress={() => setShowTags(!showTags)}>
+              <Text style={styles.label}>Теги ↕</Text>
+              {tags.length > 0 && (
+                <Text style={styles.tagToggleCount}>{tags.length} вибрано</Text>
+              )}
+            </TouchableOpacity>
+
+            {showTags && (
+              <View style={styles.tagGrid}>
+                {AVAILABLE_TAGS.map((tag) => {
+                  const isSelected = tags.includes(tag);
+                  return (
+                    <TouchableOpacity
+                      key={tag}
+                      onPress={() => {
+                        setTags((prev) =>
+                          isSelected ? prev.filter((t) => t !== tag) : [...prev, tag],
+                        );
+                      }}
+                      style={[styles.tagChip, isSelected && styles.tagChipSelected]}
+                    >
+                      <Text style={[styles.tagChipText, isSelected && styles.tagChipTextSelected]}>
+                        {tag}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
             <View style={{ marginTop: 16 }}>
               <Text style={styles.label}>Вкладення (необов'язково)</Text>
               <TouchableOpacity onPress={async () => {
@@ -784,6 +822,34 @@ const styles = StyleSheet.create({
   locationHint: { fontSize: 11, color: '#4CAF50', marginTop: 2 },
   clearLocBtn: { padding: 8 },
   clearLocText: { fontSize: 16, color: '#888' },
+
+  // Теги
+  tagToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 12, paddingVertical: 8, paddingHorizontal: 4,
+    backgroundColor: Colors.surface, borderRadius: 10,
+    borderWidth: 1.5, borderColor: Colors.border,
+  },
+  tagToggleCount: {
+    fontSize: 12, fontWeight: '600', color: Colors.primary,
+  },
+  tagGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16,
+  },
+  tagChip: {
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1.5, borderColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  tagChipSelected: {
+    borderColor: Colors.primary, backgroundColor: Colors.primaryLight,
+  },
+  tagChipText: {
+    fontSize: 13, fontWeight: '600', color: Colors.textSecondary,
+  },
+  tagChipTextSelected: {
+    color: Colors.primary,
+  },
 
   // Toggle
   toggleRow: {

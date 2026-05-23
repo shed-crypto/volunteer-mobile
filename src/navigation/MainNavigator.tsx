@@ -105,6 +105,8 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="SelectLocation" component={SelectLocationScreen} />
       <ProfileStack.Screen name="HubDetail"     component={HubDetailScreen} />
       <ProfileStack.Screen name="UserProfile"   component={UserProfileScreen} />
+      <ProfileStack.Screen name="RequestDetail" component={RequestDetailScreen} />
+      <ProfileStack.Screen name="TaskDetail"    component={TaskDetailScreen} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
       <ProfileStack.Screen name="NotificationHistory" component={NotificationHistoryScreen} />
     </ProfileStack.Navigator>

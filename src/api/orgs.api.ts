@@ -128,6 +128,18 @@ export const orgsApi = {
     }).then((r) => r.data);
   },
 
+  getDelegations: (id: string): Promise<any[]> =>
+    api.get(`/organizations/${id}/delegations`).then((r) => r.data),
+
+  acceptDelegation: (taskId: string, orgId: string): Promise<any> =>
+    api.post(`/tasks/${taskId}/delegation/accept`, { organizationId: orgId }).then((r) => r.data),
+
+  unacceptDelegation: (taskId: string, orgId: string): Promise<any> =>
+    api.post(`/tasks/${taskId}/delegation/unaccept`, { organizationId: orgId }).then((r) => r.data),
+
+  declineDelegation: (taskId: string, orgId: string): Promise<any> =>
+    api.post(`/tasks/${taskId}/delegation/decline`, { organizationId: orgId }).then((r) => r.data),
+
   getMemberPrivileges: (id: string): Promise<{ 
     canEdit: boolean; 
     canDelete: boolean; 

@@ -746,7 +746,7 @@ const MessageBubble = React.memo(({
           <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
         )}
         <Text style={[styles.bubbleTime, isMine && { color: 'rgba(255,255,255,0.65)' }]}>{time}</Text>
-        {(message.messageStatus || message.readBy || message.deliveredTo) && (
+        {isMine && (message.messageStatus || message.readBy || message.deliveredTo) && (
           <MessageStatusIcon
             status={(message.messageStatus || 'sent') as any}
             readBy={message.readBy || []}

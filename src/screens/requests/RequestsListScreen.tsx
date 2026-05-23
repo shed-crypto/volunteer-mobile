@@ -23,7 +23,9 @@ import { collections, database, safeWrite } from '../../db/index';
 
 const STATUS_FILTERS = [
   { value: 'all',                      label: 'Всі' },
+  { value: 'active',                   label: 'Активні' },
   { value: 'my',                       label: 'Мої' },
+  { value: 'my_tasks',                 label: 'Я виконую' },
   { value: RequestStatus.OPEN,         label: 'Відкриті' },
   { value: RequestStatus.IN_PROGRESS,  label: 'Виконуються' },
   { value: RequestStatus.PENDING_REVIEW, label: 'На перевірці' },
@@ -63,6 +65,7 @@ export default function RequestsListScreen() {
   const [regionSearch, setRegionSearch] = useState('');
   const [filteredRequests, setFilteredRequests] = useState<Request[]>([]);
   const [serverUnreachable, setServerUnreachable] = useState(false);
+  const [hideDoneCancelled, setHideDoneCancelled] = useState(true);
   const { isOffline } = useNetwork();
   const isLoadingRef = useRef(false);
   
@@ -394,8 +397,22 @@ export default function RequestsListScreen() {
     // Apply status filter
     if (statusFilter === 'my') {
       filtered = filtered.filter(r => r.creatorId === user?.id);
-    } else if (statusFilter && statusFilter !== 'all') {
+    } else if (statusFilter === 'my_tasks') {
+      // "Я виконую" — filter requests where user has at least one active task assignment
+      filtered = filtered.filter(r => {
+        const tasksWithAssignments = (r as any).tasks || [];
+        return tasksWithAssignments.some((task: any) => {
+          const assignments = task.assignments || [];
+          return assignments.some((a: any) => a.userId === user?.id && a.status !== 'withdrawn' && a.status !== 'completed');
+        });
+      });
+    } else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'active') {
       filtered = filtered.filter(r => r.status === statusFilter);
+    }
+
+    // "Активні" — hide completed and cancelled
+    if (statusFilter === 'active' || (!statusFilter && hideDoneCancelled)) {
+      filtered = filtered.filter(r => r.status !== RequestStatus.COMPLETED && r.status !== RequestStatus.CANCELLED);
     }
 
     // Apply urgency filter
@@ -462,7 +479,7 @@ export default function RequestsListScreen() {
     } else {
       setFilteredRequests(filtered);
     }
-  }, [requests, statusFilter, urgencyFilter, categoryFilter, search, regionSearch, user?.id]);
+  }, [requests, statusFilter, urgencyFilter, categoryFilter, search, regionSearch, hideDoneCancelled, user?.id]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -706,6 +723,29 @@ export default function RequestsListScreen() {
                   returnKeyType="search"
                   onSubmitEditing={() => setShowFilterModal(false)}
                 />
+              </View>
+
+              {/* Hide completed/cancelled toggle */}
+              <Text style={styles.filterGroupLabel}>Відображення</Text>
+              <View style={[styles.filterChips, { alignItems: 'center' }]}>
+                <TouchableOpacity
+                  onPress={() => setHideDoneCancelled(prev => !prev)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                >
+                  <View style={[
+                    { width: 44, height: 24, borderRadius: 12, backgroundColor: hideDoneCancelled ? Colors.primary : Colors.border },
+                    { justifyContent: 'center', paddingHorizontal: 2 }
+                  ]}>
+                    <View style={{
+                      width: 20, height: 20, borderRadius: 10,
+                      backgroundColor: '#fff',
+                      transform: [{ translateX: hideDoneCancelled ? 20 : 0 }],
+                    }} />
+                  </View>
+                  <Text style={{ fontSize: 13, color: Colors.textSecondary, fontWeight: '600' }}>
+                    Приховати завершені та скасовані
+                  </Text>
+                </TouchableOpacity>
               </View>
             </ScrollView>
             <View style={styles.modalActions}>

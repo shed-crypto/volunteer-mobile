@@ -17,8 +17,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet, Modal, FlatList, ActivityIndicator,
+  View, Text, TextInput, ScrollView, TouchableOpacity, Alert, StyleSheet, Modal, FlatList, ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { tasksApi } from '../../api/tasks.api';
 import { orgsApi } from '../../api/orgs.api';
@@ -62,6 +63,15 @@ export default function TaskDetailScreen() {
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [delegating, setDelegating] = useState(false);
+  const [delegateSearch, setDelegateSearch] = useState('');
+  const [delegateTags, setDelegateTags] = useState<string[]>([]);
+  const [myOrgs, setMyOrgs] = useState<Organization[]>([]);
+  const [showMyOrgs, setShowMyOrgs] = useState(false);
+
+  const DELEGATE_FILTER_TAGS = [
+    '#Медицина', '#Евакуація', '#Логістика', '#Військо',
+    '#Гуманітарна', '#Житло', '#Психологічна', '#Термінова',
+  ];
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newPeople, setNewPeople] = useState('1');
@@ -500,13 +510,73 @@ export default function TaskDetailScreen() {
     ]);
   };
 
+  // Рекурсивно збирає всі організації з дерева (включно з підгрупами)
+  const collectAllOrgs = (orgs: Organization[]): Organization[] => {
+    const result: Organization[] = [];
+    for (const org of orgs) {
+      result.push(org);
+      if (org.children && org.children.length > 0) {
+        result.push(...collectAllOrgs(org.children as Organization[]));
+      }
+    }
+    return result;
+  };
+
+  // Повертає масив організацій замість зберігання в state (щоб уникнути race condition)
+  const loadMyOrgsDirect = useCallback(async (): Promise<Organization[]> => {
+    try {
+      const allOrgs = await orgsApi.getAll();
+      const flatOrgs = collectAllOrgs(allOrgs);
+      const userOrgs: Organization[] = [];
+      for (const org of flatOrgs) {
+        try {
+          const priv = await orgsApi.getMemberPrivileges(org.id);
+          if (priv.isLeader || priv.isCoordinator || priv.canEdit) {
+            userOrgs.push(org);
+          }
+        } catch {}
+      }
+      return userOrgs;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const handleTakeToOrg = async (orgId: string, orgName: string) => {
+    if (!task) return;
+    handleDelegate(orgId, orgName);
+  };
+
   const handleDelegateOpen = async () => { try { const data = await orgsApi.getAll(); setOrgs(data); setShowDelegateModal(true); } catch { Alert.alert('Помилка', 'Не вдалося завантажити список організацій'); } };
 
   const handleDelegate = async (orgId: string, orgName: string) => {
     if (!task) return;
+    if (isOffline) {
+      await enqueueOfflineAction('TASK_DELEGATE', { taskId: task.id, organizationId: orgId });
+      setShowDelegateModal(false);
+      Alert.alert('📴 Офлайн', `Делегування задачі організації "${orgName}" поставлено в чергу`);
+      return;
+    }
     setDelegating(true);
     try { await tasksApi.delegate(task.id, orgId); setShowDelegateModal(false); Alert.alert('✓', `Задачу делеговано організації "${orgName}"`); await load(); }
-    catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? ''); } finally { setDelegating(false); }
+    catch (e: any) {
+      const isNetworkError = !e.response || e.code === 'ERR_NETWORK' || e.message === 'Network Error';
+      if (isNetworkError) {
+        await enqueueOfflineAction('TASK_DELEGATE', { taskId: task.id, organizationId: orgId });
+        setShowDelegateModal(false);
+        Alert.alert('📴 Офлайн', 'Мережа зникла. Делегування поставлено в чергу синхронізації');
+      } else {
+        const serverMsg = e?.response?.data?.message;
+        const status = e?.response?.status;
+        if (status === 409 && serverMsg?.includes('прийнята')) {
+          Alert.alert('⚠️ Вже прийнято', 'Задача вже прийнята цією організацією.\n\nПерейдіть до організації → вкладка "Вхідні" → натисніть "↩ Скасувати"');
+        } else if (status === 409) {
+          Alert.alert('⚠️ Вже делеговано', serverMsg || 'Ця задача вже делегована цій організації');
+        } else {
+          Alert.alert('Помилка', serverMsg || 'Спробуйте пізніше');
+        }
+      }
+    } finally { setDelegating(false); }
   };
 
   const handleDeleteTask = () => {
@@ -701,9 +771,34 @@ export default function TaskDetailScreen() {
             </>
           )}
 
-          {/* Delegate */}
+          {/* Мої організації — швидке делегування */}
           {isCoordOrAdmin && (task.status === TaskStatus.TODO || task.status === TaskStatus.IN_PROGRESS) && (
-            <Button title="🏢 Делегувати організації" variant="outline" onPress={handleDelegateOpen} style={{ marginBottom: 8 }} />
+            <>
+              <Button title="🏢 Делегувати організації" variant="outline" onPress={handleDelegateOpen} style={{ marginBottom: 8 }} />
+              <Button
+                title="📥 Взяти в мою організацію"
+                variant="outline"
+                onPress={async () => {
+                  const orgs = await loadMyOrgsDirect();
+                  if (orgs.length === 0) {
+                    Alert.alert('', 'Ви не є лідером/координатором жодної організації');
+                    return;
+                  }
+                  if (orgs.length === 1) {
+                    handleTakeToOrg(orgs[0].id, orgs[0].name);
+                  } else {
+                    Alert.alert('Оберіть організацію', '', [
+                      ...orgs.map((org) => ({
+                        text: org.name,
+                        onPress: () => handleTakeToOrg(org.id, org.name),
+                      })),
+                      { text: 'Скасувати', style: 'cancel' },
+                    ]);
+                  }
+                }}
+                style={{ marginBottom: 8 }}
+              />
+            </>
           )}
 
           {/* Chat */}
@@ -787,14 +882,88 @@ export default function TaskDetailScreen() {
       <Modal visible={showDelegateModal} animationType="slide" onRequestClose={() => setShowDelegateModal(false)}>
         <View style={{ flex: 1, backgroundColor: Colors.background }}>
           <ScreenHeader title="Делегувати задачу" onBack={() => setShowDelegateModal(false)} />
-          <FlatList data={orgs} keyExtractor={o => o.id} contentContainerStyle={{ padding: 16 }} renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => handleDelegate(item.id, item.name)} activeOpacity={0.8}>
-              <Card style={{ padding: 12, marginBottom: 8 }}>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text }}>{item.name}</Text>
-                {item.description && <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 3 }}>{item.description}</Text>}
-              </Card>
-            </TouchableOpacity>
-          )} />
+          
+          {/* Пошук */}
+          <View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: Colors.borderLight }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.background, borderRadius: 12, paddingHorizontal: 12, height: 44, gap: 8 }}>
+              <Ionicons name="search" size={20} color={Colors.textMuted} />
+              <TextInput
+                style={{ flex: 1, fontSize: 15, color: Colors.text }}
+                placeholder="Пошук організацій..."
+                placeholderTextColor={Colors.textMuted}
+                value={delegateSearch}
+                onChangeText={setDelegateSearch}
+              />
+            </View>
+          </View>
+
+          {/* Фільтр по тегах */}
+          <View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.borderLight }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.textMuted, marginBottom: 6, textTransform: 'uppercase' }}>
+              {delegateTags.length > 0 ? `Фільтр (${delegateTags.length})` : 'Фільтр по тегах'}
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+              {DELEGATE_FILTER_TAGS.map((tag) => {
+                const isSelected = delegateTags.includes(tag);
+                return (
+                  <TouchableOpacity
+                    key={tag}
+                    onPress={() => setDelegateTags((prev) => isSelected ? prev.filter((t) => t !== tag) : [...prev, tag])}
+                    style={{
+                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, borderWidth: 1.5,
+                      borderColor: isSelected ? Colors.primary : Colors.border,
+                      backgroundColor: isSelected ? Colors.primaryLight : Colors.background,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: isSelected ? Colors.primary : Colors.textSecondary }}>{tag}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {delegateTags.length > 0 && (
+                <TouchableOpacity onPress={() => setDelegateTags([])} style={{ paddingHorizontal: 8, paddingVertical: 5 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.danger }}>✕ Скинути</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
+          <FlatList
+            data={orgs.filter((o) => {
+              // Фільтр по тексту
+              if (delegateSearch.trim()) {
+                const q = delegateSearch.trim().toLowerCase();
+                if (!o.name.toLowerCase().includes(q) && !(o.description || '').toLowerCase().includes(q)) return false;
+              }
+              // Фільтр по тегах
+              if (delegateTags.length > 0) {
+                const orgTags = o.tags || [];
+                if (!delegateTags.some((tag) => orgTags.includes(tag))) return false;
+              }
+              return true;
+            })}
+            keyExtractor={o => o.id}
+            contentContainerStyle={{ padding: 16 }}
+            ListEmptyComponent={
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <Text style={{ fontSize: 16, color: Colors.textMuted }}>Нічого не знайдено</Text>
+              </View>
+            }
+            renderItem={({ item }) => (
+              <TouchableOpacity onPress={() => handleDelegate(item.id, item.name)} activeOpacity={0.8}>
+                <Card style={{ padding: 12, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.text }}>{item.name}</Text>
+                  {item.description && <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 3 }}>{item.description}</Text>}
+                  {item.tags && item.tags.length > 0 && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                      {item.tags.slice(0, 4).map((tag, i) => (
+                        <Text key={i} style={{ fontSize: 11, color: Colors.primary, fontWeight: '600', backgroundColor: Colors.primaryLight, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>{tag}</Text>
+                      ))}
+                    </View>
+                  )}
+                </Card>
+              </TouchableOpacity>
+            )}
+          />
         </View>
       </Modal>
 
