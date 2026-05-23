@@ -14,6 +14,8 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.useFakeTimers();
 
+global.__DEV__ = true;
+
 jest.mock('axios', () => {
   const mockInstance = {
     get: jest.fn(() => Promise.resolve({ data: {} })),

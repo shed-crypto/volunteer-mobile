@@ -49,3 +49,39 @@ describe('theme — кольори та маппінги', () => {
     expect(Object.keys(roleLabels)).toHaveLength(4);
   });
 });
+
+import { OfflineLogger } from '../src/utils/offlineLogger';
+
+describe('OfflineLogger', () => {
+  afterEach(() => {
+    OfflineLogger.clear();
+    jest.clearAllMocks();
+  });
+
+  it('log зберігає запис', () => {
+    OfflineLogger.log('AUTH', 'login', { user: 'test' });
+    expect(OfflineLogger.getLogs()).toHaveLength(1);
+    expect(OfflineLogger.getLogs()[0].category).toBe('AUTH');
+  });
+
+  it('швидкі методи auth, network, sync працюють', () => {
+    OfflineLogger.auth('auth-msg');
+    OfflineLogger.network('net-msg');
+    OfflineLogger.sync('sync-msg');
+    expect(OfflineLogger.getLogs()).toHaveLength(3);
+  });
+
+  it('getLogsSummary форматує вивід', () => {
+    OfflineLogger.log('SYNC', 'synced', {});
+    const summary = OfflineLogger.getLogsSummary();
+    expect(summary).toContain('[SYNC]');
+    expect(summary).toContain('synced');
+  });
+
+  it('clear очищає логи', () => {
+    OfflineLogger.log('DB', 'query');
+    expect(OfflineLogger.getLogs()).toHaveLength(1);
+    OfflineLogger.clear();
+    expect(OfflineLogger.getLogs()).toHaveLength(0);
+  });
+});

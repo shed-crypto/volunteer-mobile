@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">18.18% </span>
+                <span class="strong">77.27% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>4/22</span>
+                <span class='fraction'>17/22</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">66.66% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/6</span>
+                <span class='fraction'>4/6</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">72.72% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/11</span>
+                <span class='fraction'>8/11</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">21.05% </span>
+                <span class="strong">84.21% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>4/19</span>
+                <span class='fraction'>16/19</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -135,36 +135,36 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -187,37 +187,37 @@ const logs: LogEntry[] = [];
 const MAX_LOGS = 200;
 &nbsp;
 export const OfflineLogger = {
-<span class="fstat-no" title="function not covered" >  lo</span>g(category: LogCategory, message: string, data?: any) {
-<span class="cstat-no" title="statement not covered" >    if (!ENABLED) <span class="cstat-no" title="statement not covered" >return;</span></span>
-    const entry: LogEntry = <span class="cstat-no" title="statement not covered" >{</span>
+  log(category: LogCategory, message: string, data?: any) {
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (!ENABLED) <span class="cstat-no" title="statement not covered" >return;</span>
+    const entry: LogEntry = {
       time: new Date().toISOString().substring(11, 23),
       category,
       message,
       data,
     };
-<span class="cstat-no" title="statement not covered" >    logs.push(entry);</span>
-<span class="cstat-no" title="statement not covered" >    if (logs.length &gt; MAX_LOGS) <span class="cstat-no" title="statement not covered" >logs.shift();</span></span>
+    logs.push(entry);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (logs.length &gt; MAX_LOGS) <span class="cstat-no" title="statement not covered" >logs.shift();</span>
     
-    const dataStr = <span class="cstat-no" title="statement not covered" >data !== undefined ? ` | ${JSON.stringify(data)}` : '';</span>
-<span class="cstat-no" title="statement not covered" >    console.log(`[${entry.time}][${category}] ${message}${dataStr}`);</span>
+    const dataStr = data !== undefined ? ` | ${JSON.stringify(data)}` : '';
+    console.log(`[${entry.time}][${category}] ${message}${dataStr}`);
   },
 &nbsp;
-<span class="fstat-no" title="function not covered" >  ge</span>tLogs(): LogEntry[] {
-<span class="cstat-no" title="statement not covered" >    return [...logs];</span>
+  getLogs(): LogEntry[] {
+    return [...logs];
   },
 &nbsp;
-<span class="fstat-no" title="function not covered" >  ge</span>tLogsSummary(): string {
-<span class="cstat-no" title="statement not covered" >    return logs.map(<span class="fstat-no" title="function not covered" >l </span>=&gt; <span class="cstat-no" title="statement not covered" >`[${l.time}][${l.category}] ${l.message}`)</span>.join('\n');</span>
+  getLogsSummary(): string {
+    return logs.map(l =&gt; `[${l.time}][${l.category}] ${l.message}`).join('\n');
   },
 &nbsp;
-<span class="fstat-no" title="function not covered" >  cl</span>ear() {
-<span class="cstat-no" title="statement not covered" >    logs.length = 0;</span>
+  clear() {
+    logs.length = 0;
   },
 &nbsp;
   // Зручні методи
-<span class="fstat-no" title="function not covered" >  au</span>th(msg: string, data?: any) { <span class="cstat-no" title="statement not covered" >this.log('AUTH', msg, data); </span>},
-<span class="fstat-no" title="function not covered" >  ne</span>twork(msg: string, data?: any) { <span class="cstat-no" title="statement not covered" >this.log('NETWORK', msg, data); </span>},
-<span class="fstat-no" title="function not covered" >  sy</span>nc(msg: string, data?: any) { <span class="cstat-no" title="statement not covered" >this.log('SYNC', msg, data); </span>},
+  auth(msg: string, data?: any) { this.log('AUTH', msg, data); },
+  network(msg: string, data?: any) { this.log('NETWORK', msg, data); },
+  sync(msg: string, data?: any) { this.log('SYNC', msg, data); },
 <span class="fstat-no" title="function not covered" >  ca</span>che(msg: string, data?: any) { <span class="cstat-no" title="statement not covered" >this.log('CACHE', msg, data); </span>},
 <span class="fstat-no" title="function not covered" >  na</span>v(msg: string, data?: any) { <span class="cstat-no" title="statement not covered" >this.log('NAV', msg, data); </span>},
 <span class="fstat-no" title="function not covered" >  db</span>(msg: string, data?: any) { <span class="cstat-no" title="statement not covered" >this.log('DB', msg, data); </span>},
@@ -229,7 +229,7 @@ export const OfflineLogger = {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-05-23T11:03:09.200Z
+                at 2026-05-23T11:33:56.375Z
             </div>
         <script src="../prettify.js"></script>
         <script>
