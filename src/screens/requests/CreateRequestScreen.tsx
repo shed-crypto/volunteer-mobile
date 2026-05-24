@@ -1,11 +1,5 @@
 /**
  * CreateRequestScreen.tsx
- *
- * БАГ-ФІКс: РЕБ / GPS не доступний.
- * Додано три способи вказати локацію:
- *   1. GPS автоматично (expo-location) — якщо доступний
- *   2. Ручне введення координат (два TextInput) — fallback при РЕБ
- *   3. Без локації — якщо не потрібна або небезпечно вказувати
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -19,6 +13,7 @@ import * as Location from 'expo-location';
 import { requestsApi } from '../../api/requests.api';
 import { API_BASE_URL, getServerReachable } from '../../api/axios';
 import { RequestCategory, RequestUrgency, ClearanceLevel } from '../../types';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Colors, categoryLabels, urgencyColors, clearanceLabels } from '../../utils/theme';
 import { Button, Input, ScreenHeader } from '../../components/ui';
 import { collections } from '../../db/index';
@@ -78,6 +73,8 @@ export default function CreateRequestScreen() {
   // Доповнення (для режиму редагування/доповнення)
   const [additionalInfo, setAdditionalInfo] = useState('');
   const [tags, setTags] = useState<string[]>([]);
+  const [deadline, setDeadline]           = useState<Date | undefined>(undefined);
+  const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Array<{ uri: string; name: string; type: string }>>([]);
   const [showTags, setShowTags] = useState(false);
 
@@ -190,6 +187,7 @@ export default function CreateRequestScreen() {
       urgency,
       requiredClearance: clearance,
       isLocationHidden: isHidden,
+      deadline: deadline?.toISOString() || undefined,
       fundraisingUrl: fundraisingUrl.trim() || undefined,
       address: address.trim() || undefined,
       latitude,
@@ -361,6 +359,7 @@ export default function CreateRequestScreen() {
             setClearance(req.requiredClearance);
             setIsHidden(req.isLocationHidden);
             setFundraisingUrl(req.fundraisingUrl || '');
+            if (req.deadline) setDeadline(new Date(req.deadline));
             if (req.latitude != null && req.longitude != null) {
               setLatitude(Number(req.latitude));
               setLongitude(Number(req.longitude));
@@ -691,6 +690,43 @@ export default function CreateRequestScreen() {
               placeholder="Вулиця, місто, область..."
             />
 
+            {/* ─── Дедлайн ────────────────────────────────────────────────────── */}
+            <View style={styles.deadlineSection}>
+              <Text style={styles.label}>Срок виконання (необов'язково)</Text>
+              <View style={styles.deadlineRow}>
+                <TouchableOpacity
+                  style={styles.deadlineBtn}
+                  onPress={() => setShowDeadlinePicker(true)}
+                >
+                  <Text style={styles.deadlineBtnText}>
+                    {deadline
+                      ? `📅 ${deadline.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                      : '📅 Обрати дату'}
+                  </Text>
+                </TouchableOpacity>
+                {deadline && (
+                  <TouchableOpacity
+                    style={styles.deadlineClearBtn}
+                    onPress={() => setDeadline(undefined)}
+                  >
+                    <Text style={styles.deadlineClearText}>✕ Скинути</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {showDeadlinePicker && (
+                <DateTimePicker
+                  value={deadline || new Date()}
+                  mode="date"
+                  display="default"
+                  minimumDate={new Date()}
+                  onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                    setShowDeadlinePicker(false);
+                    if (selectedDate) setDeadline(selectedDate);
+                  }}
+                />
+              )}
+            </View>
+
             <Input
               label="Посилання на збір коштів (необов'язково)"
               value={fundraisingUrl}
@@ -866,4 +902,28 @@ const styles = StyleSheet.create({
   toggleThumbOn: { transform: [{ translateX: 18 }] },
   toggleLabel: { fontSize: 14, fontWeight: '600', color: Colors.text },
   toggleDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+
+  // Дедлайн
+  deadlineSection: { marginBottom: 16 },
+  deadlineRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  deadlineBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+  },
+  deadlineBtnText: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  deadlineClearBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.danger,
+    backgroundColor: Colors.surface,
+  },
+  deadlineClearText: { fontSize: 13, fontWeight: '600', color: Colors.danger },
 });

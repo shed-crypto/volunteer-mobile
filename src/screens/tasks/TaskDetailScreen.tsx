@@ -25,6 +25,7 @@ import { tasksApi } from '../../api/tasks.api';
 import { orgsApi } from '../../api/orgs.api';
 import { API_BASE_URL } from '../../api/axios';
 import { Task, TaskStatus, AssignmentStatus, SystemRole, Organization, TaskOrigin } from '../../types';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Colors, statusColors } from '../../utils/theme';
 import { Badge, Card, Button, LoadingScreen, ScreenHeader, Input, ProgressBar } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
@@ -76,6 +77,8 @@ export default function TaskDetailScreen() {
   const [newDesc, setNewDesc] = useState('');
   const [newPeople, setNewPeople] = useState('1');
   const [newRoles, setNewRoles] = useState('');
+  const [newDeadline, setNewDeadline] = useState<Date | undefined>(undefined);
+  const [showNewDeadlinePicker, setShowNewDeadlinePicker] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportEditData, setReportEditData] = useState<{ id: string; comment: string } | null>(null);
@@ -248,7 +251,7 @@ export default function TaskDetailScreen() {
     try {
       const timeout = isOffline ? 2000 : 300;
       const localTask = await Promise.race([loadTaskLocal(), new Promise<null>((resolve) => setTimeout(() => resolve(null), timeout))]);
-      if (localTask) { setTask(localTask); if (route.params?.editMode) { setNewTitle(localTask.title); setNewDesc(localTask.description || ''); setNewPeople(String(localTask.neededPeopleCount || 1)); setNewRoles(localTask.requiredRoles?.join(', ') || ''); } setLoading(false); }
+      if (localTask) { setTask(localTask); if (route.params?.editMode) { setNewTitle(localTask.title); setNewDesc(localTask.description || ''); setNewPeople(String(localTask.neededPeopleCount || 1)); setNewRoles(localTask.requiredRoles?.join(', ') || ''); if (localTask.deadline) setNewDeadline(new Date(localTask.deadline)); } setLoading(false); }
       const localReports = await loadReportsLocal(taskId);
       if (localReports.length > 0) setReports(localReports);
       if (!isOffline) {
@@ -256,7 +259,7 @@ export default function TaskDetailScreen() {
           const t = await tasksApi.getOne(taskId);
           if (t.assignments && !t.assignedCount) { t.assignedCount = t.assignments.filter((a: any) => a.status !== 'withdrawn').length; }
           setTask(t);
-          if (route.params?.editMode) { setNewTitle(t.title); setNewDesc(t.description || ''); setNewPeople(String(t.neededPeopleCount || 1)); setNewRoles(t.requiredRoles?.join(', ') || ''); }
+          if (route.params?.editMode) { setNewTitle(t.title); setNewDesc(t.description || ''); setNewPeople(String(t.neededPeopleCount || 1)); setNewRoles(t.requiredRoles?.join(', ') || ''); if (t.deadline) setNewDeadline(new Date(t.deadline)); }
           await saveTaskToDB(t);
           try { const { taskReportsApi } = await import('../../api/task-reports.api'); const reps = await taskReportsApi.getAll(taskId); setReports(reps); await saveReportsToDB(taskId, reps); } catch {}
         } catch (e) { OfflineLogger.network('TaskDetail: server load failed'); if (!localTask) { Alert.alert('Помилка', 'Не вдалося завантажити підзадачу'); if (navigation.canGoBack()) navigation.goBack(); } }
@@ -442,7 +445,7 @@ export default function TaskDetailScreen() {
     if (!requestId) return;
     setCreating(true);
     try {
-      await tasksApi.create(requestId, { title: newTitle.trim(), description: newDesc.trim() || undefined, neededPeopleCount: parseInt(newPeople) || 1, requiredRoles: newRoles.split(',').map(r => r.trim()).filter(Boolean) });
+      await tasksApi.create(requestId, { title: newTitle.trim(), description: newDesc.trim() || undefined, neededPeopleCount: parseInt(newPeople) || 1, requiredRoles: newRoles.split(',').map(r => r.trim()).filter(Boolean), deadline: newDeadline?.toISOString() || undefined });
       if (navigation.canGoBack()) navigation.goBack(); else navigation.navigate('RequestsList' as never);
     } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Щось пішло не так'); } finally { setCreating(false); }
   };
@@ -450,7 +453,7 @@ export default function TaskDetailScreen() {
   const handleUpdate = async () => {
     if (!newTitle.trim() || newTitle.trim().length < 3) { Alert.alert('', 'Назва — мін. 3 символи'); return; }
     setCreating(true);
-    try { await tasksApi.update(taskId, { title: newTitle.trim(), description: newDesc.trim() || undefined, neededPeopleCount: parseInt(newPeople) || 1, requiredRoles: newRoles.split(',').map(r => r.trim()).filter(Boolean) }); setIsEditing(false); load(); }
+    try { await tasksApi.update(taskId, { title: newTitle.trim(), description: newDesc.trim() || undefined, neededPeopleCount: parseInt(newPeople) || 1, requiredRoles: newRoles.split(',').map(r => r.trim()).filter(Boolean), deadline: newDeadline?.toISOString() || undefined }); setIsEditing(false); load(); }
     catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? 'Щось пішло не так'); } finally { setCreating(false); }
   };
 
@@ -626,6 +629,44 @@ export default function TaskDetailScreen() {
           <Input label="Опис" value={newDesc} onChangeText={setNewDesc} multiline />
           <Input label="Потрібно людей" value={newPeople} onChangeText={setNewPeople} keyboardType="numeric" />
           <Input label="Потрібні ролі (через кому)" value={newRoles} onChangeText={setNewRoles} multiline />
+
+          {/* ─── Дедлайн ────────────────────────────────────────────────────── */}
+          <View style={{ marginBottom: 16 }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 8 }}>Срок виконання (необов'язково)</Text>
+            <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.surface, alignItems: 'center' }}
+                onPress={() => setShowNewDeadlinePicker(true)}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.text }}>
+                  {newDeadline
+                    ? `📅 ${newDeadline.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                    : '📅 Обрати дату'}
+                </Text>
+              </TouchableOpacity>
+              {newDeadline && (
+                <TouchableOpacity
+                  style={{ paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1.5, borderColor: Colors.danger, backgroundColor: Colors.surface }}
+                  onPress={() => setNewDeadline(undefined)}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.danger }}>✕ Скинути</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {showNewDeadlinePicker && (
+              <DateTimePicker
+                value={newDeadline || new Date()}
+                mode="date"
+                display="default"
+                minimumDate={new Date()}
+                onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                  setShowNewDeadlinePicker(false);
+                  if (selectedDate) setNewDeadline(selectedDate);
+                }}
+              />
+            )}
+          </View>
+
           <Button title={isEditing ? "Зберегти" : "Створити"} onPress={isEditing ? handleUpdate : handleCreate} loading={creating} style={{ marginTop: 12 }} />
           <Button title="Скасувати" variant="ghost" onPress={() => isEditing ? setIsEditing(false) : navigation.goBack()} style={{ marginTop: 8 }} />
         </ScrollView>

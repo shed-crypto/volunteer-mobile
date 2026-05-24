@@ -4,13 +4,15 @@
 import React, { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Alert, KeyboardAvoidingView, Platform,
+  StyleSheet, Alert, KeyboardAvoidingView, Platform, Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../context/AuthContext';
 import { Button, Input } from '../../components/ui';
 import { Colors } from '../../utils/theme';
-import { axiosInstance } from '../../api/axios';
+import api from '../../api/axios';
+import { getMediaUrl, fileUtils } from '../../utils/fileUtils';
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();
@@ -19,6 +21,7 @@ export default function EditProfileScreen() {
   const [fullName, setFullName]       = useState(user?.fullName ?? '');
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber ?? '');
   const [telegramId, setTelegramId]   = useState(user?.telegramId ?? '');
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const [loading, setLoading]         = useState(false);
   const [errors, setErrors]           = useState<Record<string, string>>({});
 
@@ -31,11 +34,51 @@ export default function EditProfileScreen() {
     return Object.keys(e).length === 0;
   };
 
+  const handlePickAvatar = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Помилка', 'Потрібен дозвіл на доступ до галереї');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'] as any,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+      const fileUri = result.assets[0].uri;
+      setAvatarUploading(true);
+
+      // Завантаження як у orgs.api — appendImage + formData
+      const rawName = fileUri.split('/').pop() || 'avatar.jpg';
+      const ext = rawName.split('.').pop()?.toLowerCase();
+      const fallbackType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+      const normalized = await fileUtils.normalizeImagePickerAsset(fileUri, rawName, fallbackType);
+
+      const formData = new FormData();
+      formData.append('file', { uri: normalized.uri, name: normalized.name, type: normalized.mimeType } as any);
+
+      const { url } = await api.post('/users/me/avatar', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }).then(r => r.data);
+
+      console.log('[Avatar] upload success, url:', url);
+      await refreshUser();
+      Alert.alert('✓', 'Аватарку оновлено');
+    } catch (e) {
+      console.error('[Avatar] error:', e);
+      Alert.alert('Помилка', 'Не вдалося завантажити аватарку');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
     setLoading(true);
     try {
-      await axiosInstance.patch('/users/me', {
+      await api.patch('/users/me', {
         fullName: fullName.trim(),
         phoneNumber: phoneNumber.trim() || null,
         telegramId: telegramId.trim() || null,
@@ -62,6 +105,22 @@ export default function EditProfileScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>Редагування профілю</Text>
+
+        {/* ─── Аватарка ────────────────────────────────────────────────────── */}
+        <TouchableOpacity onPress={handlePickAvatar} style={styles.avatarSection} disabled={avatarUploading}>
+          {user?.avatarUrl ? (
+            <Image source={{ uri: getMediaUrl(user.avatarUrl) }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <Text style={styles.avatarPlaceholderText}>
+                {user?.fullName?.charAt(0)?.toUpperCase() ?? '?'}
+              </Text>
+            </View>
+          )}
+          <Text style={styles.avatarChangeText}>
+            {avatarUploading ? 'Завантаження...' : 'Змінити аватарку'}
+          </Text>
+        </TouchableOpacity>
 
         <Input
           label="Повне ім'я *"
@@ -114,6 +173,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   content: { padding: 20, gap: 4 },
   title: { fontSize: 22, fontWeight: '700', color: '#222', marginBottom: 20 },
+
+  // Аватарка
+  avatarSection: { alignItems: 'center', marginBottom: 20 },
+  avatar: { width: 100, height: 100, borderRadius: 50, marginBottom: 8 },
+  avatarPlaceholder: { backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  avatarPlaceholderText: { fontSize: 36, fontWeight: '700', color: Colors.primary },
+  avatarChangeText: { fontSize: 14, fontWeight: '600', color: Colors.primary },
   hint: {
     backgroundColor: '#E8F4FD', borderRadius: 10, padding: 12, marginVertical: 8,
   },

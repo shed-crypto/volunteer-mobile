@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity,
-  Alert, StyleSheet, RefreshControl, Switch,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  RefreshControl, Alert, Switch, Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
@@ -9,9 +9,9 @@ import { usersApi } from '../../api/users.api';
 import { TrustVouch, SystemRole } from '../../types';
 import { Colors, clearanceLabels, roleLabels } from '../../utils/theme';
 import { Button, Card, LoadingScreen, ScreenHeader } from '../../components/ui';
+import { getMediaUrl } from '../../utils/fileUtils';
 import { useBiometrics, BiometricState } from '../../hooks/useBiometrics';
 import { SyncEventLogger } from '../../services/SyncEventLogger';
-import { ViewStyle } from 'react-native';
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
@@ -109,7 +109,7 @@ export default function ProfileScreen() {
           <TouchableOpacity onPress={() => navigation.navigate('NotificationHistory')} style={{ flexDirection: 'row', alignItems: 'center', padding: 4 }}>
             <Text style={{ fontSize: 22 }}>🔔</Text>
             {eventCount > 0 && (
-              <View style={{ position: 'absolute', top: -2, right: -4, backgroundColor: '#d32f2f', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 } as ViewStyle}>
+              <View style={{ position: 'absolute', top: -2, right: -4, backgroundColor: '#d32f2f', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
                 <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>{eventCount > 99 ? '99+' : eventCount}</Text>
               </View>
             )}
@@ -123,9 +123,13 @@ export default function ProfileScreen() {
       >
         {/* Avatar & name */}
         <View style={styles.profileHero}>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>{user?.fullName?.[0]?.toUpperCase() ?? '?'}</Text>
-          </View>
+          {user?.avatarUrl ? (
+            <Image source={{ uri: getMediaUrl(user.avatarUrl) }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarText}>{user?.fullName?.[0]?.toUpperCase() ?? '?'}</Text>
+            </View>
+          )}
           <Text style={styles.name}>{user?.fullName}</Text>
           <Text style={styles.email}>{user?.email}</Text>
           <View style={styles.roleRow}>
@@ -272,6 +276,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 12,
   },
+  avatarImage: { width: 80, height: 80, borderRadius: 40, marginBottom: 10 },
   avatarText: { fontSize: 36, fontWeight: '800', color: '#fff' },
   name:  { fontSize: 22, fontWeight: '800', color: '#fff' },
   email: { fontSize: 14, color: 'rgba(255,255,255,0.75)', marginTop: 4 },

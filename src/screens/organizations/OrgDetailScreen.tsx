@@ -459,7 +459,7 @@ export default function OrgDetailScreen() {
               <TouchableOpacity
                 key={req.id}
                 style={styles.listCard}
-                onPress={() => navigation.navigate('RequestsList', { screen: 'RequestDetail', params: { requestId: req.id } })}
+                onPress={() => navigation.navigate('RequestDetail', { requestId: req.id })}
               >
                 <View style={styles.listIcon}>
                   <Ionicons name="document-text-outline" size={19} color={Colors.primary} />
@@ -521,10 +521,7 @@ export default function OrgDetailScreen() {
                   activeOpacity={0.7}
                   onPress={() => {
                     if (del.task?.requestId) {
-                      navigation.navigate('RequestsList', {
-                        screen: 'RequestDetail',
-                        params: { requestId: del.task.requestId },
-                      });
+                      navigation.navigate('RequestDetail', { requestId: del.task.requestId });
                     } else if (del.task?.id) {
                       navigation.navigate('TaskDetail', { taskId: del.task.id });
                     }
@@ -559,7 +556,12 @@ export default function OrgDetailScreen() {
                         size="sm"
                         onPress={() => {
                           orgsApi.acceptDelegation(del.taskId, orgId)
-                            .then(() => { Alert.alert('✓', 'Делегування прийнято'); fetchDelegations(); })
+                            .then(() => {
+                              Alert.alert('✓', 'Делегування прийнято');
+                              fetchDelegations();
+                              setTab('requests');
+                              fetchRequests();
+                            })
                             .catch((e: any) => Alert.alert('Помилка', e?.response?.data?.message || ''));
                         }}
                       />
