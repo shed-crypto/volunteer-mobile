@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../context/AuthContext';
 import { Button, Input, ScreenHeader } from '../../components/ui';
 import { Colors } from '../../utils/theme';
@@ -87,63 +86,72 @@ export default function EditProfileScreen() {
     }
   };
 
+  /** Зберігає дані профілю в action_queue для SyncService */
+  const enqueueProfileUpdate = async () => {
+    if (!user) return;
+    await safeWrite(async () => {
+      await collections.actionQueue.create((item: any) => {
+        item.actionType = 'PROFILE_UPDATE';
+        item.payloadRaw = JSON.stringify({
+          userId: user.id,
+          data: {
+            fullName: fullName.trim(),
+            phoneNumber: phoneNumber.trim() || null,
+            telegramId: telegramId.trim() || null,
+          },
+          localAvatarUri,
+        });
+        item.createdAt = Date.now();
+        item.retryCount = 0;
+        item.error = null;
+        item.lastErrorCode = null;
+        item.nextRetryAt = null;
+      });
+    });
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
     setLoading(true);
 
     try {
-      // Якщо сервер недоступний — зберігаємо в чергу
+      // Якщо сервер доступний — завантажуємо одразу
       const serverOk = await checkServerReachable();
-      if (!serverOk) {
-        // Зберігаємо дані профілю для пізнішої синхронізації
-        const pending = {
-          fullName: fullName.trim(),
-          phoneNumber: phoneNumber.trim() || null,
-          telegramId: telegramId.trim() || null,
-          localAvatarUri,
-          timestamp: Date.now(),
-        };
-        await AsyncStorage.setItem(PENDING_AVATAR_KEY, JSON.stringify(pending));
-        Alert.alert(
-          'Збережено локально',
-          "Зміни будуть відправлені, коли з'явиться з'єднання з сервером.",
-        );
+      if (serverOk) {
+        // Завантажуємо аватарку (якщо вибрана)
+        const avatarOk = await uploadAvatarIfNeeded();
+        if (!avatarOk) {
+          Alert.alert('Помилка', 'Не вдалося завантажити аватарку. Спробуйте ще раз.');
+          return;
+        }
+        // Оновлюємо профіль
+        if (user) {
+          await api.patch(`/users/${user.id}`, {
+            fullName: fullName.trim(),
+            phoneNumber: phoneNumber.trim() || null,
+            telegramId: telegramId.trim() || null,
+          });
+        }
+        await refreshUser();
+        Alert.alert('Збережено', 'Профіль успішно оновлено');
         navigation.goBack();
         return;
       }
 
-      // Завантажуємо аватарку (якщо вибрана)
-      const avatarOk = await uploadAvatarIfNeeded();
-      if (!avatarOk) {
-        Alert.alert('Помилка', 'Не вдалося завантажити аватарку. Спробуйте ще раз.');
-        return;
-      }
-
-      // Оновлюємо профіль
-      if (user) {
-        await api.patch(`/users/${user.id}`, {
-          fullName: fullName.trim(),
-          phoneNumber: phoneNumber.trim() || null,
-          telegramId: telegramId.trim() || null,
-        });
-      }
-      await refreshUser();
-      Alert.alert('Збережено', 'Профіль успішно оновлено');
+      // Сервер недоступний — зберігаємо в action_queue
+      await enqueueProfileUpdate();
+      Alert.alert(
+        'Збережено локально',
+        "Зміни будуть відправлені SyncService, коли з'явиться з'єднання з сервером.",
+      );
       navigation.goBack();
     } catch (err: any) {
-      // Якщо помилка — зберігаємо в чергу для офлайн-синхронізації
+      // Помилка при онлайн-збереженні — теж в чергу
       try {
-        const pending = {
-          fullName: fullName.trim(),
-          phoneNumber: phoneNumber.trim() || null,
-          telegramId: telegramId.trim() || null,
-          localAvatarUri,
-          timestamp: Date.now(),
-        };
-        await AsyncStorage.setItem(PENDING_AVATAR_KEY, JSON.stringify(pending));
+        await enqueueProfileUpdate();
         Alert.alert(
           'Збережено локально',
-          "Зміни будуть відправлені, коли з'явиться з'єднання з сервером.",
+          "Зміни будуть відправлені SyncService, коли з'явиться з'єднання з сервером.",
         );
         navigation.goBack();
       } catch {
