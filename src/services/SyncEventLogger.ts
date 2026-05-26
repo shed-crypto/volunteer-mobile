@@ -2,13 +2,15 @@
  * SyncEventLogger.ts
  * ------------------
  * Слухає події від SyncService та записує їх в sync_events таблицю WatermelonDB.
- * Універсальний логер — може використовуватись не тільки для sync,
- * але й для будь-яких системних подій у майбутньому.
+ *
+ * Для успішної синхронізації використовується один запис (last_sync),
+ * який оновлюється при кожній синхронізації, а не створюється новий.
+ * Помилки записуються окремими записами.
  *
  * Використання (з будь-якого місця):
  *   import { SyncEventLogger } from '../services/SyncEventLogger';
- *   SyncEventLogger.log('sync_success', 'Синхронізація', 'Дані оновлено');
- *   SyncEventLogger.log('offline_enqueue', 'Дію збережено', 'Ви призначили себе на задачу', { taskId: '...' });
+ *   SyncEventLogger.log('last_sync', 'Синхронізація', 'Успішно оновлено. ...');
+ *   SyncEventLogger.log('sync_error', 'Помилка синхронізації', '...');
  */
 import { database, collections, safeWrite } from '../db/index';
 
@@ -17,7 +19,8 @@ export type SyncEventType =
   | 'sync_conflict'
   | 'offline_enqueue'
   | 'sync_retry'
-  | 'queue_failed';
+  | 'queue_failed'
+  | 'last_sync';
 
 export class SyncEventLogger {
   private static initialized = false;
@@ -42,23 +45,97 @@ export class SyncEventLogger {
     metadata?: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await safeWrite(async () => {
-        await collections.syncEvents.create((event: any) => {
-          event.eventType = eventType;
-          event.title = title;
-          event.description = description ?? null;
-          event.isError = eventType === 'sync_error' || eventType === 'sync_conflict' || eventType === 'queue_failed';
-          event.isRead = false;
-          event.createdAt = Date.now();
-          event.metadataRaw = metadata ? JSON.stringify(metadata) : null;
+      if (eventType === 'last_sync') {
+        // Оновлюємо один запис last_sync замість створення нового
+        await this.updateLastSync(eventType, title, description, metadata);
+      } else {
+        // Помилки та інші події — створюємо новий запис як завжди
+        await safeWrite(async () => {
+          await collections.syncEvents.create((event: any) => {
+            event.eventType = eventType;
+            event.title = title;
+            event.description = description ?? null;
+            event.isError = eventType === 'sync_error' || eventType === 'sync_conflict' || eventType === 'queue_failed';
+            event.isRead = false;
+            event.createdAt = Date.now();
+            event.metadataRaw = metadata ? JSON.stringify(metadata) : null;
+          });
         });
-      });
+      }
 
-      // Log only errors and important events, not sync_success
-      // Обмежити історію до 100 записів
+      // Обмежити історію до 100 записів (крім last_sync)
       await this.cleanup();
     } catch (e) {
       console.warn('[SyncEventLogger] Failed to log event:', e);
+    }
+  }
+
+  /**
+   * Оновлює існуючий запис last_sync або створює новий, якщо його ще немає.
+   */
+  private static async updateLastSync(
+    eventType: string,
+    title: string,
+    description?: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    await safeWrite(async () => {
+      const all = await collections.syncEvents.query().fetch();
+      const lastSyncRecords = all.filter((e: any) => e.eventType === 'last_sync');
+
+      if (lastSyncRecords.length > 0) {
+        // Сортуємо за createdAt, беремо останній
+        const sorted = lastSyncRecords.sort((a: any, b: any) => b.createdAt - a.createdAt);
+        const latest = sorted[0];
+
+        // Видаляємо дублікати (зайві записи last_sync)
+        const duplicates = sorted.slice(1);
+        for (const dup of duplicates) {
+          try {
+            await dup.destroyPermanently();
+          } catch {
+            // silent
+          }
+        }
+
+        // Оновлюємо останній запис
+        await latest.update((event: any) => {
+          event.title = title;
+          event.description = description ?? null;
+          event.isError = false;
+          event.isRead = true;
+          event.createdAt = Date.now();
+          event.metadataRaw = metadata ? JSON.stringify(metadata) : null;
+        });
+      } else {
+        // Створюємо новий запис last_sync
+        await collections.syncEvents.create((event: any) => {
+          event.eventType = 'last_sync';
+          event.title = title;
+          event.description = description ?? null;
+          event.isError = false;
+          event.isRead = true;
+          event.createdAt = Date.now();
+          event.metadataRaw = metadata ? JSON.stringify(metadata) : null;
+        });
+      }
+    });
+  }
+
+  /** Отримати інформацію про останню синхронізацію */
+  static async getLastSyncInfo(): Promise<{ timestamp: number | null; description: string | null } | null> {
+    try {
+      const all = await collections.syncEvents.query().fetch();
+      const lastSync = (all as any[])
+        .filter((e: any) => e.eventType === 'last_sync')
+        .sort((a: any, b: any) => b.createdAt - a.createdAt)[0];
+      if (!lastSync) return null;
+      return {
+        timestamp: (lastSync as any).createdAt,
+        description: (lastSync as any).description,
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -76,11 +153,11 @@ export class SyncEventLogger {
     }
   }
 
-  /** Отримати кількість непрочитаних подій */
+  /** Отримати кількість непрочитаних подій (тільки помилки, не last_sync) */
   static async getUnreadCount(): Promise<number> {
     try {
       const all = await collections.syncEvents.query().fetch();
-      return all.filter((e: any) => !e.isRead).length;
+      return all.filter((e: any) => !e.isRead && e.isError).length;
     } catch {
       return 0;
     }
@@ -101,12 +178,16 @@ export class SyncEventLogger {
     }
   }
 
-  /** Залишити тільки останні 100 записів */
+  /** Залишити тільки останні 100 записів (крім last_sync — зберігаємо його завжди) */
   private static async cleanup(): Promise<void> {
     try {
       const all = await collections.syncEvents.query().fetch();
-      if (all.length > 100) {
-        const toDelete = all
+      // Відокремлюємо last_sync від інших
+      const lastSyncRecords = all.filter((e: any) => e.eventType === 'last_sync');
+      const otherRecords = all.filter((e: any) => e.eventType !== 'last_sync');
+
+      if (otherRecords.length > 100) {
+        const toDelete = otherRecords
           .sort((a: any, b: any) => b.createdAt - a.createdAt)
           .slice(100);
         await safeWrite(async () => {

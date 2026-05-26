@@ -74,7 +74,21 @@ export class SyncService {
 
       const elapsed = Date.now() - startedAt;
       OfflineLogger.sync(`=== SYNC DONE in ${elapsed}ms: pushed=${pushed}, pulled=${pulled} ===`);
-      // sync_success removed — only errors are logged to avoid noise
+
+      // Один запис last_sync, який оновлюється при кожній успішній синхронізації
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('uk-UA', {
+        day: 'numeric', month: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+      const itemStr = pushed > 0 || pulled > 0
+        ? ` (${pushed > 0 ? `надіслано ${pushed}` : ''}${pushed > 0 && pulled > 0 ? ', ' : ''}${pulled > 0 ? `отримано ${pulled}` : ''})`
+        : '';
+      this.emit('sync-event', {
+        type: 'last_sync' as any,
+        title: 'Синхронізація',
+        description: `Успішно оновлено. ${dateStr}${itemStr}`,
+      });
     } catch (err) {
       OfflineLogger.sync('Sync error:', err);
       syncFailed = true;

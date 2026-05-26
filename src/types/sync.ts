@@ -81,7 +81,7 @@ export interface ServerRequest {
 
 /** Sync event types for listeners */
 export interface SyncEvent {
-  type: 'sync_success' | 'sync_error';
+  type: 'sync_success' | 'sync_error' | 'last_sync' | 'sync_conflict' | 'queue_failed';
   title: string;
   description: string;
   metadata?: Record<string, unknown>;
