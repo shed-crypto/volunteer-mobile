@@ -268,10 +268,11 @@ export default function OrgDetailScreen() {
       }
       const data = await requestsApi.getAll({
         managingOrganizationId: orgId,
-        status: (['open', 'assigned', 'in_progress', 'pending_info', 'pending_review'] as any),
         limit: 50,
       });
-      setActiveRequests(data);
+      setActiveRequests(data.filter((r: any) =>
+        !['completed', 'cancelled'].includes(r.status)
+      ));
     } catch {
       // Offline fallback: читаємо з локальної БД
       try {
@@ -304,10 +305,11 @@ export default function OrgDetailScreen() {
       }
       const data = await requestsApi.getAll({
         managingOrganizationId: orgId,
-        status: (['completed', 'cancelled'] as any),
         limit: 50,
       });
-      setCompletedRequests(data);
+      setCompletedRequests(data.filter((r: any) =>
+        ['completed', 'cancelled'].includes(r.status)
+      ));
     } catch {
       // Offline fallback: читаємо з локальної БД
       try {
