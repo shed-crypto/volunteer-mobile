@@ -13,7 +13,6 @@
 import { database, collections, safeWrite } from '../db/index';
 
 export type SyncEventType =
-  | 'sync_success'
   | 'sync_error'
   | 'sync_conflict'
   | 'offline_enqueue'
@@ -55,6 +54,7 @@ export class SyncEventLogger {
         });
       });
 
+      // Log only errors and important events, not sync_success
       // Обмежити історію до 100 записів
       await this.cleanup();
     } catch (e) {

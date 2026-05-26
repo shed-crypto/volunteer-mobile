@@ -74,14 +74,7 @@ export class SyncService {
 
       const elapsed = Date.now() - startedAt;
       OfflineLogger.sync(`=== SYNC DONE in ${elapsed}ms: pushed=${pushed}, pulled=${pulled} ===`);
-      if (pushed > 0 || pulled > 0) {
-        this.emit('sync-event', {
-          type: 'sync_success',
-          title: 'Синхронізація',
-          description: `Оновлено: ${pushed} дій відправлено, ${pulled} записів отримано`,
-          metadata: { pushed, pulled, elapsed },
-        });
-      }
+      // sync_success removed — only errors are logged to avoid noise
     } catch (err) {
       OfflineLogger.sync('Sync error:', err);
       syncFailed = true;
