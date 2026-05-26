@@ -782,26 +782,29 @@ export class SyncService {
       }
     }
 
-    // Sync organizations (my orgs + members + hubs + join requests)
+    // Sync organizations (my orgs + members + hubs + join requests) — PARALLEL
     try {
       const myOrgs = await orgsApi.getAll({ parentOrgId: undefined });
+      const allResults = await Promise.allSettled(
+        myOrgs.map(async (org) => {
+          const [members, hubs, joinReqs] = await Promise.all([
+            orgsApi.getMembers(org.id).catch(() => [] as any[]),
+            orgsApi.getHubs(org.id).catch(() => [] as any[]),
+            orgsApi.getJoinRequests(org.id).catch(() => [] as any[]),
+          ]);
+          return { members, hubs, joinReqs };
+        })
+      );
+
       const allMembers: any[] = [];
       const allHubs: any[] = [];
       const allJoinRequests: any[] = [];
-
-      for (const org of myOrgs) {
-        try {
-          const members = await orgsApi.getMembers(org.id);
-          allMembers.push(...members);
-        } catch {}
-        try {
-          const hubs = await orgsApi.getHubs(org.id);
-          allHubs.push(...hubs);
-        } catch {}
-        try {
-          const joinReqs = await orgsApi.getJoinRequests(org.id);
-          allJoinRequests.push(...joinReqs);
-        } catch {}
+      for (const result of allResults) {
+        if (result.status === 'fulfilled') {
+          allMembers.push(...result.value.members);
+          allHubs.push(...result.value.hubs);
+          allJoinRequests.push(...result.value.joinReqs);
+        }
       }
 
       await OrganizationService.saveAll(myOrgs, allMembers, allHubs, allJoinRequests);

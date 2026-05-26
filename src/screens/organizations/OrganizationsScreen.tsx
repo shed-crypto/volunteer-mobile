@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   Alert, StyleSheet, RefreshControl, TextInput, ScrollView,
@@ -6,6 +6,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { orgsApi } from '../../api/orgs.api';
+import { getServerReachable } from '../../api/axios';
+import { OrganizationService } from '../../db/OrganizationService';
 import { Organization } from '../../types';
 import { Colors } from '../../utils/theme';
 import { Button, Card, EmptyState, LoadingScreen, ScreenHeader } from '../../components/ui';
@@ -30,17 +32,39 @@ export default function OrganizationsScreen() {
   const [creating, setCreating]   = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
+      if (!getServerReachable()) {
+        throw new Error('offline');
+      }
       const data = await orgsApi.getAll();
       setOrgs(data);
     } catch {
-      setOrgs([]);
+      // Offline fallback: читаємо з локальної БД
+      try {
+        const localOrgs = await OrganizationService.getMyLocal();
+        const localData = localOrgs.map((o: any) => ({
+          id: o.serverId || o.id,
+          name: o.name,
+          description: o.description,
+          logoUrl: o.logoUrl,
+          tags: o.tags || [],
+          parentOrgId: o.parentOrgId,
+          isPublic: false,
+          members: [],
+          children: [],
+          hubs: [],
+          createdAt: undefined,
+        }));
+        setOrgs(localData as unknown as Organization[]);
+      } catch {
+        setOrgs([]);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => { load(); }, []);
 

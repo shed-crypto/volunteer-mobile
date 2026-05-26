@@ -9,7 +9,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { Colors } from '../../utils/theme';
 import api from '../../api/axios';
+import { getServerReachable } from '../../api/axios';
 import { orgsApi } from '../../api/orgs.api';
+import { OrganizationService } from '../../db/OrganizationService';
 import { Button, ConfirmDeleteModal, EmptyState, ScreenHeader } from '../../components/ui';
 import { getMediaUrl } from '../../utils/fileUtils';
 
@@ -150,6 +152,9 @@ export default function OrgDetailScreen() {
     if (options?.showLoader) setLoading(true);
 
     try {
+      if (!getServerReachable()) {
+        throw new Error('offline');
+      }
       const { data } = await api.get<OrgDetail>(`/organizations/${orgId}`);
       console.log('Org members data:', data.members?.map(m => ({ userId: m.userId, isDeputy: m.isDeputy })));
       const hasParentContext = data.ancestors?.length || data.parentOrg || data.parent || parentPath.length;
@@ -163,6 +168,47 @@ export default function OrgDetailScreen() {
       // Одразу завантажуємо делегування після організації
       fetchDelegations();
     } catch (e: any) {
+      // Offline fallback: читаємо з локальної БД
+      if (orgId) {
+        try {
+          const localOrgs = await OrganizationService.getMyLocal();
+          const localOrg = localOrgs.find((o: any) => o.serverId === orgId);
+          if (localOrg) {
+            const localMembers = await OrganizationService.getMembersForOrg(orgId);
+            const localHubs = await OrganizationService.getHubsForOrg(orgId);
+            setOrg({
+              id: (localOrg as any).serverId,
+              name: (localOrg as any).name,
+              description: (localOrg as any).description,
+              logoUrl: (localOrg as any).logoUrl,
+              members: localMembers.map((m: any) => ({
+                id: (m as any).serverId,
+                userId: (m as any).userId,
+                orgRole: (m as any).orgRole,
+                isActive: (m as any).isActive,
+                isDeputy: (m as any).isDeputy,
+                user: { id: (m as any).userId, fullName: (m as any).userName || 'Користувач', systemRole: '', email: '' },
+              })),
+              hubs: localHubs.map((h: any) => ({
+                id: (h as any).serverId,
+                name: (h as any).name,
+                address: (h as any).address,
+                latitude: (h as any).latitude,
+                longitude: (h as any).longitude,
+                description: (h as any).description,
+                mediaUrl: (h as any).mediaUrl,
+              })),
+              children: [],
+              parentOrgId: (localOrg as any).parentOrgId,
+              tags: (localOrg as any).tags,
+            } as OrgDetail);
+            hasLoadedRef.current = true;
+            return;
+          }
+        } catch (localErr) {
+          console.warn('[OrgDetail] Local DB fallback failed', localErr);
+        }
+      }
       Alert.alert('Помилка', e?.response?.data?.message || 'Не вдалося завантажити організацію');
       if (navigation.canGoBack()) navigation.goBack();
     } finally {
