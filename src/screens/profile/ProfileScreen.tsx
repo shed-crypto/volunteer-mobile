@@ -48,8 +48,15 @@ export default function ProfileScreen() {
     // Перевіряємо чи є pending зміни профілю
     try {
       const pendingRaw = await AsyncStorage.getItem(PENDING_AVATAR_KEY);
-      if (pendingRaw) setPendingProfile(JSON.parse(pendingRaw));
-      else setPendingProfile(null);
+      if (pendingRaw) {
+        setPendingProfile(JSON.parse(pendingRaw));
+        // Якщо сервер доступний — автоматично синхронізуємо
+        if (serverOk) {
+          syncPendingProfile();
+        }
+      } else {
+        setPendingProfile(null);
+      }
     } catch {
       setPendingProfile(null);
     }
@@ -112,7 +119,9 @@ export default function ProfileScreen() {
       if (pendingProfile.fullName) patchData.fullName = pendingProfile.fullName;
       if (pendingProfile.phoneNumber) patchData.phoneNumber = pendingProfile.phoneNumber;
       if (pendingProfile.telegramId) patchData.telegramId = pendingProfile.telegramId;
-      await api.patch('/users/me', patchData);
+      if (user) {
+        await api.patch(`/users/${user.id}`, patchData);
+      }
 
       // Чистимо чергу
       await AsyncStorage.removeItem(PENDING_AVATAR_KEY);

@@ -121,17 +121,36 @@ export default function EditProfileScreen() {
       }
 
       // Оновлюємо профіль
-      await api.patch('/users/me', {
-        fullName: fullName.trim(),
-        phoneNumber: phoneNumber.trim() || null,
-        telegramId: telegramId.trim() || null,
-      });
+      if (user) {
+        await api.patch(`/users/${user.id}`, {
+          fullName: fullName.trim(),
+          phoneNumber: phoneNumber.trim() || null,
+          telegramId: telegramId.trim() || null,
+        });
+      }
       await refreshUser();
       Alert.alert('Збережено', 'Профіль успішно оновлено');
       navigation.goBack();
     } catch (err: any) {
-      const msg = err?.response?.data?.message || 'Помилка при збереженні';
-      Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : msg);
+      // Якщо помилка — зберігаємо в чергу для офлайн-синхронізації
+      try {
+        const pending = {
+          fullName: fullName.trim(),
+          phoneNumber: phoneNumber.trim() || null,
+          telegramId: telegramId.trim() || null,
+          localAvatarUri,
+          timestamp: Date.now(),
+        };
+        await AsyncStorage.setItem(PENDING_AVATAR_KEY, JSON.stringify(pending));
+        Alert.alert(
+          'Збережено локально',
+          "Зміни будуть відправлені, коли з'явиться з'єднання з сервером.",
+        );
+        navigation.goBack();
+      } catch {
+        const msg = err?.response?.data?.message || 'Помилка при збереженні';
+        Alert.alert('Помилка', Array.isArray(msg) ? msg.join('\n') : msg);
+      }
     } finally {
       setLoading(false);
     }
