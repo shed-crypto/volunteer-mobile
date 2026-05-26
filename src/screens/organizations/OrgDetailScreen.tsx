@@ -13,6 +13,8 @@ import { getServerReachable } from '../../api/axios';
 import { orgsApi } from '../../api/orgs.api';
 import { requestsApi } from '../../api/requests.api';
 import { OrganizationService } from '../../db/OrganizationService';
+import { collections } from '../../db';
+import { Q } from '@nozbe/watermelondb';
 import { Button, ConfirmDeleteModal, EmptyState, ScreenHeader } from '../../components/ui';
 import { getMediaUrl } from '../../utils/fileUtils';
 
@@ -236,9 +238,13 @@ export default function OrgDetailScreen() {
     }
   }, [orgId]);
 
+  const myMembership = org?.members?.find((m) => m.userId === user?.id);
+  const myMembershipOrgRole = myMembership?.orgRole;
   const isAdmin = user?.systemRole === 'admin';
   const isLeader = privileges?.isLeader ?? false;
-  const canManage = isAdmin || (privileges?.canEdit ?? false);
+  // В offline-режимі визначаємо права з локальної ролі
+  const canManage = isAdmin || (privileges?.canEdit ?? false) ||
+    (myMembershipOrgRole === 'leader' || myMembershipOrgRole === 'coordinator');
 
   useFocusEffect(
     useCallback(() => {
@@ -257,10 +263,33 @@ export default function OrgDetailScreen() {
     if (!orgId) return;
     setActiveRequestsLoading(true);
     try {
-      const data = await requestsApi.getAll({ managingOrganizationId: orgId, limit: 50 });
+      if (!getServerReachable()) {
+        throw new Error('offline');
+      }
+      const data = await requestsApi.getAll({
+        managingOrganizationId: orgId,
+        status: (['open', 'assigned', 'in_progress', 'pending_info', 'pending_review'] as any),
+        limit: 50,
+      });
       setActiveRequests(data);
     } catch {
-      // active requests tab is optional
+      // Offline fallback: читаємо з локальної БД
+      try {
+        const allLocal = await collections.requests.query().fetch();
+        const localActive = (allLocal as any[]).filter(
+          (r: any) => r.managingOrganizationId === orgId && r.isSynced &&
+            !['completed', 'cancelled'].includes(r.status)
+        );
+        setActiveRequests(localActive.map((r: any) => ({
+          id: r.serverId,
+          title: r.title,
+          status: r.status,
+          category: r.category,
+          urgency: r.urgency,
+        })));
+      } catch (localErr) {
+        // silent
+      }
     } finally {
       setActiveRequestsLoading(false);
     }
@@ -270,6 +299,9 @@ export default function OrgDetailScreen() {
     if (!orgId) return;
     setCompletedRequestsLoading(true);
     try {
+      if (!getServerReachable()) {
+        throw new Error('offline');
+      }
       const data = await requestsApi.getAll({
         managingOrganizationId: orgId,
         status: (['completed', 'cancelled'] as any),
@@ -277,7 +309,23 @@ export default function OrgDetailScreen() {
       });
       setCompletedRequests(data);
     } catch {
-      // completed requests tab is optional
+      // Offline fallback: читаємо з локальної БД
+      try {
+        const allLocal = await collections.requests.query().fetch();
+        const localCompleted = (allLocal as any[]).filter(
+          (r: any) => r.managingOrganizationId === orgId && r.isSynced &&
+            ['completed', 'cancelled'].includes(r.status)
+        );
+        setCompletedRequests(localCompleted.map((r: any) => ({
+          id: r.serverId,
+          title: r.title,
+          status: r.status,
+          category: r.category,
+          urgency: r.urgency,
+        })));
+      } catch (localErr) {
+        // silent
+      }
     } finally {
       setCompletedRequestsLoading(false);
     }
@@ -331,7 +379,6 @@ export default function OrgDetailScreen() {
   if (loading) return <ActivityIndicator size="large" color={Colors.primary} style={{ flex: 1 }} />;
   if (!org) return null;
 
-  const myMembership = org?.members?.find((m) => m.userId === user?.id);
   const roleLabel = myMembership ? ORG_ROLE_LABELS[myMembership.orgRole] ?? 'Учасник' : undefined;
   const isSubgroup = lineage.length > 1;
 
