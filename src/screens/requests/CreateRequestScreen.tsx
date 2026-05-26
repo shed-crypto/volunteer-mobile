@@ -241,6 +241,20 @@ export default function CreateRequestScreen() {
         await requestsApi.update(route.params.requestId, updateData);
         navigation.goBack();
       } else {
+        // Check if offline
+        if (await getServerReachable() === false) {
+          try {
+            const { SyncService } = await import('../../db/SyncService');
+            await SyncService.saveRequestOffline(updateData);
+            Alert.alert('📴 Офлайн', 'Заявку збережено локально. Вона буде відправлена при появі мережі.');
+            navigation.goBack();
+          } catch (err) {
+            Alert.alert('Помилка', 'Не вдалося зберегти заявку в офлайн');
+          } finally {
+            setLoading(false);
+          }
+          return;
+        }
         const req = await requestsApi.create(updateData);
         navigation.replace('RequestDetail', { requestId: req.id });
       }
