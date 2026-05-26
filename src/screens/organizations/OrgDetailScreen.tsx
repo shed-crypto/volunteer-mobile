@@ -11,6 +11,7 @@ import { Colors } from '../../utils/theme';
 import api from '../../api/axios';
 import { getServerReachable } from '../../api/axios';
 import { orgsApi } from '../../api/orgs.api';
+import { requestsApi } from '../../api/requests.api';
 import { OrganizationService } from '../../db/OrganizationService';
 import { Button, ConfirmDeleteModal, EmptyState, ScreenHeader } from '../../components/ui';
 import { getMediaUrl } from '../../utils/fileUtils';
@@ -65,7 +66,7 @@ interface OrgDetail {
 }
 
 type RouteParams = { orgId: string; parentPath?: OrgNode[] };
-type OrgTab = 'members' | 'hubs' | 'groups' | 'requests' | 'delegations';
+type OrgTab = 'members' | 'hubs' | 'groups' | 'requests' | 'active_requests' | 'delegations';
 
 const ORG_ROLE_LABELS: Record<string, string> = {
   leader: 'Лідер',
@@ -77,7 +78,8 @@ const TAB_CONFIG: Record<OrgTab, { label: string; icon: keyof typeof Ionicons.gl
   members: { label: 'Учасники', icon: 'people-outline' },
   hubs: { label: 'Хаби', icon: 'cube-outline' },
   groups: { label: 'Підгрупи', icon: 'git-branch-outline' },
-  requests: { label: 'Заявки', icon: 'document-text-outline' },
+  requests: { label: 'Вступ', icon: 'document-text-outline' },
+  active_requests: { label: 'Активні', icon: 'flame-outline' },
   delegations: { label: 'Вхідні', icon: 'git-network-outline' },
 };
 
@@ -120,6 +122,8 @@ export default function OrgDetailScreen() {
   const [privileges, setPrivileges] = useState<any>(null);
   const [orgRequests, setOrgRequests] = useState<any[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
+  const [activeRequests, setActiveRequests] = useState<any[]>([]);
+  const [activeRequestsLoading, setActiveRequestsLoading] = useState(false);
   const [delegations, setDelegations] = useState<any[]>([]);
   const [delegationsLoading, setDelegationsLoading] = useState(false);
   const hasLoadedRef = useRef(false);
@@ -247,12 +251,28 @@ export default function OrgDetailScreen() {
     }
   }, [orgId, fetchDelegations]);
 
+  const fetchActiveRequests = useCallback(async () => {
+    if (!orgId) return;
+    setActiveRequestsLoading(true);
+    try {
+      const data = await requestsApi.getAll({ managingOrganizationId: orgId, limit: 50 });
+      setActiveRequests(data);
+    } catch {
+      // active requests tab is optional
+    } finally {
+      setActiveRequestsLoading(false);
+    }
+  }, [orgId]);
+
   // Завантажуємо заявки організації при виборі вкладки 'requests'
   useEffect(() => {
     if (tab === 'requests') {
       fetchRequests();
     }
-  }, [tab, fetchRequests]);
+    if (tab === 'active_requests') {
+      fetchActiveRequests();
+    }
+  }, [tab, fetchRequests, fetchActiveRequests]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);

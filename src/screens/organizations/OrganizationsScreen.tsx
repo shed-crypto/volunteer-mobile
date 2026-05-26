@@ -43,18 +43,25 @@ export default function OrganizationsScreen() {
       // Offline fallback: читаємо з локальної БД
       try {
         const localOrgs = await OrganizationService.getMyLocal();
-        const localData = localOrgs.map((o: any) => ({
-          id: o.serverId || o.id,
-          name: o.name,
-          description: o.description,
-          logoUrl: o.logoUrl,
-          tags: o.tags || [],
-          parentOrgId: o.parentOrgId,
-          isPublic: false,
-          members: [],
-          children: [],
-          hubs: [],
-          createdAt: undefined,
+        const localData = await Promise.all(localOrgs.map(async (o: any) => {
+          let isMember = false;
+          try {
+            const localMembers = await OrganizationService.getMembersForOrg(o.serverId || o.id);
+            isMember = localMembers.some((m: any) => m.userId === user?.id);
+          } catch {}
+          return {
+            id: o.serverId || o.id,
+            name: o.name,
+            description: o.description,
+            logoUrl: o.logoUrl,
+            tags: o.tags || [],
+            parentOrgId: o.parentOrgId,
+            isPublic: false,
+            members: isMember ? [{ userId: user?.id || '' }] : [],
+            children: [],
+            hubs: [],
+            createdAt: undefined,
+          };
         }));
         setOrgs(localData as unknown as Organization[]);
       } catch {

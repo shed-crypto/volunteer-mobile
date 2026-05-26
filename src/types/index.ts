@@ -361,6 +361,7 @@ export interface FindRequestsDto {
   radiusKm?: number;
   limit?: number;
   offset?: number;
+  managingOrganizationId?: string;
 }
 
 export interface CreateTaskDto {
