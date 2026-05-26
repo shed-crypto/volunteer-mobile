@@ -9,6 +9,8 @@ import { TaskAssignmentModel } from './models/TaskAssignmentModel';
 import { TaskReportModel } from './models/TaskReportModel';
 import { ActionQueueItem } from './models/ActionQueueItem';
 import { requestsApi } from '../api/requests.api';
+import { orgsApi } from '../api/orgs.api';
+import { OrganizationService } from './OrganizationService';
 import { tasksApi } from '../api/tasks.api';
 import { chatApi } from '../api/chat.api';
 import api from '../api/axios';
@@ -778,6 +780,34 @@ export class SyncService {
       } catch (err) {
         OfflineLogger.sync('[PULL] Sync saved requests error', err);
       }
+    }
+
+    // Sync organizations (my orgs + members + hubs + join requests)
+    try {
+      const myOrgs = await orgsApi.getAll({ parentOrgId: undefined });
+      const allMembers: any[] = [];
+      const allHubs: any[] = [];
+      const allJoinRequests: any[] = [];
+
+      for (const org of myOrgs) {
+        try {
+          const members = await orgsApi.getMembers(org.id);
+          allMembers.push(...members);
+        } catch {}
+        try {
+          const hubs = await orgsApi.getHubs(org.id);
+          allHubs.push(...hubs);
+        } catch {}
+        try {
+          const joinReqs = await orgsApi.getJoinRequests(org.id);
+          allJoinRequests.push(...joinReqs);
+        } catch {}
+      }
+
+      await OrganizationService.saveAll(myOrgs, allMembers, allHubs, allJoinRequests);
+      OfflineLogger.sync(`[PULL] Synced ${myOrgs.length} organizations with members/hubs/join-requests`);
+    } catch (err) {
+      OfflineLogger.sync('[PULL] Sync organizations error (non-fatal)', err);
     }
 
     const serverRequests: any[] = [];

@@ -6,7 +6,7 @@ import { appSchema, tableSchema } from '@nozbe/watermelondb';
 export const dbSchema = appSchema({
   // NOTE: migrations were reset in development. Version was lowered to 1
   // so WatermelonDB recreates the database from the current schema.
-  version: 8,
+  version: 9,
   tables: [
     // ─── Заявки ─────────────────────────────────────────────────────────────
     tableSchema({
@@ -199,6 +199,75 @@ export const dbSchema = appSchema({
         { name: 'is_read', type: 'boolean' },
         { name: 'created_at', type: 'number', isIndexed: true },
         { name: 'metadata_raw', type: 'string', isOptional: true },
+      ],
+    }),
+
+    // ─── Організації (офлайн-кеш) ──────────────────────────────────────────
+    tableSchema({
+      name: 'organizations',
+      columns: [
+        { name: 'server_id', type: 'string', isIndexed: true },
+        { name: 'name', type: 'string' },
+        { name: 'description', type: 'string', isOptional: true },
+        { name: 'logo_url', type: 'string', isOptional: true },
+        { name: 'parent_org_id', type: 'string', isOptional: true },
+        { name: 'is_public', type: 'boolean' },
+        { name: 'tags_raw', type: 'string', isOptional: true }, // JSON array of strings
+        { name: 'is_synced', type: 'boolean' },
+        { name: 'last_synced_at', type: 'number', isOptional: true },
+      ],
+    }),
+
+    // ─── Учасники організацій (офлайн-кеш) ─────────────────────────────────
+    tableSchema({
+      name: 'organization_members',
+      columns: [
+        { name: 'server_id', type: 'string', isIndexed: true },
+        { name: 'organization_id', type: 'string', isIndexed: true },
+        { name: 'user_id', type: 'string', isIndexed: true },
+        { name: 'user_name', type: 'string', isOptional: true },
+        { name: 'org_role', type: 'string' },
+        { name: 'is_deputy', type: 'boolean' },
+        { name: 'is_active', type: 'boolean' },
+        { name: 'joined_at', type: 'number' },
+        { name: 'is_synced', type: 'boolean' },
+        { name: 'last_synced_at', type: 'number', isOptional: true },
+      ],
+    }),
+
+    // ─── Хаби організацій (офлайн-кеш) ─────────────────────────────────────
+    tableSchema({
+      name: 'organization_hubs',
+      columns: [
+        { name: 'server_id', type: 'string', isIndexed: true },
+        { name: 'organization_id', type: 'string', isIndexed: true },
+        { name: 'name', type: 'string' },
+        { name: 'description', type: 'string', isOptional: true },
+        { name: 'address', type: 'string', isOptional: true },
+        { name: 'latitude', type: 'number', isOptional: true },
+        { name: 'longitude', type: 'number', isOptional: true },
+        { name: 'media_url', type: 'string', isOptional: true },
+        { name: 'is_public', type: 'boolean' },
+        { name: 'is_synced', type: 'boolean' },
+        { name: 'last_synced_at', type: 'number', isOptional: true },
+      ],
+    }),
+
+    // ─── Заявки на вступ в організацію (офлайн-кеш) ────────────────────────
+    tableSchema({
+      name: 'organization_join_requests',
+      columns: [
+        { name: 'server_id', type: 'string', isIndexed: true },
+        { name: 'organization_id', type: 'string', isIndexed: true },
+        { name: 'user_id', type: 'string' },
+        { name: 'user_name', type: 'string', isOptional: true },
+        { name: 'message', type: 'string', isOptional: true },
+        { name: 'status', type: 'string' }, // pending | approved | rejected
+        { name: 'reviewed_by', type: 'string', isOptional: true },
+        { name: 'review_comment', type: 'string', isOptional: true },
+        { name: 'reviewed_at', type: 'number', isOptional: true },
+        { name: 'is_synced', type: 'boolean' },
+        { name: 'last_synced_at', type: 'number', isOptional: true },
       ],
     }),
   ],

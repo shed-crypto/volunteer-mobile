@@ -17,6 +17,10 @@ import { ActionQueueItem } from './models/ActionQueueItem';
 import { SyncEventModel } from './models/SyncEventModel';
 import { TaskReportModel } from './models/TaskReportModel';
 import { SavedRequestModel } from './models/SavedRequestModel';
+import { OrganizationModel } from './models/OrganizationModel';
+import { OrganizationMemberModel } from './models/OrganizationMemberModel';
+import { OrganizationHubModel } from './models/OrganizationHubModel';
+import { OrganizationJoinRequestModel } from './models/OrganizationJoinRequestModel';
 
 const adapter = new SQLiteAdapter({
   schema: dbSchema,
@@ -42,6 +46,10 @@ export const database = new Database({
     TaskReportModel,
     SavedRequestModel,
     SyncEventModel,
+    OrganizationModel,
+    OrganizationMemberModel,
+    OrganizationHubModel,
+    OrganizationJoinRequestModel,
   ],
 });
 
@@ -58,6 +66,10 @@ export const collections = {
   savedRequests: database.collections.get('saved_requests'),
   actionQueue: database.collections.get('action_queue'),
   syncEvents: database.collections.get('sync_events'),
+  organizations: database.collections.get('organizations'),
+  organizationMembers: database.collections.get('organization_members'),
+  organizationHubs: database.collections.get('organization_hubs'),
+  organizationJoinRequests: database.collections.get('organization_join_requests'),
 };
 
 /**
