@@ -1,4 +1,6 @@
-import api from './axios';
+import api, { API_BASE_URL } from './axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { uploadFormData } from './upload';
 import {
   Organization,
   OrganizationMember,
@@ -10,6 +12,34 @@ import {
   Task,
 } from '../types';
 import { fileUtils, getMediaUrl } from '../utils/fileUtils';
+
+const ORGS_CACHE_PREFIX = 'orgs_cache:';
+
+async function cacheGet<T>(key: string): Promise<T | null> {
+  const raw = await AsyncStorage.getItem(`${ORGS_CACHE_PREFIX}${key}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheSet(key: string, value: unknown): Promise<void> {
+  await AsyncStorage.setItem(`${ORGS_CACHE_PREFIX}${key}`, JSON.stringify(value));
+}
+
+async function getWithCache<T>(key: string, request: () => Promise<T>): Promise<T> {
+  try {
+    const data = await request();
+    await cacheSet(key, data).catch(() => undefined);
+    return data;
+  } catch (err) {
+    const cached = await cacheGet<T>(key);
+    if (cached) return cached;
+    throw err;
+  }
+}
 
 type HubPayload = {
   name: string;
@@ -35,10 +65,16 @@ async function appendImage(formData: FormData, fileUri: string, fallbackName: st
 
 export const orgsApi = {
   getAll: (params?: { parentOrgId?: string }): Promise<Organization[]> =>
-    api.get('/organizations', { params }).then((r) => r.data),
+    getWithCache(
+      `all:${params?.parentOrgId ?? 'root'}`,
+      () => api.get('/organizations', { params }).then((r) => r.data),
+    ),
 
   getOne: (id: string): Promise<Organization> =>
-    api.get(`/organizations/${id}`).then((r) => r.data),
+    getWithCache(
+      `one:${id}`,
+      () => api.get(`/organizations/${id}`).then((r) => r.data),
+    ),
 
   create: (data: { name: string; description?: string; parentOrgId?: string; tags?: string[] }): Promise<Organization> =>
     api.post('/organizations', data).then((r) => r.data),
@@ -112,9 +148,7 @@ export const orgsApi = {
   uploadLogo: async (id: string, fileUri: string): Promise<{ url: string }> => {
     const formData = new FormData();
     await appendImage(formData, fileUri, 'logo.jpg');
-    return api.post(`/organizations/${id}/upload-logo`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then((r) => r.data);
+    return uploadFormData<{ url: string }>(`${API_BASE_URL}/organizations/${id}/upload-logo`, formData);
   },
 
   createChat: (id: string): Promise<Organization> =>
@@ -123,9 +157,7 @@ export const orgsApi = {
   uploadBanner: async (id: string, fileUri: string): Promise<{ url: string }> => {
     const formData = new FormData();
     await appendImage(formData, fileUri, 'banner.jpg');
-    return api.post(`/organizations/${id}/upload-banner`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then((r) => r.data);
+    return uploadFormData<{ url: string }>(`${API_BASE_URL}/organizations/${id}/upload-banner`, formData);
   },
 
   getDelegations: (id: string): Promise<any[]> =>
@@ -153,9 +185,7 @@ export const orgsApi = {
   uploadHubMedia: async (orgId: string, hubId: string, fileUri: string): Promise<{ url: string }> => {
     const formData = new FormData();
     await appendImage(formData, fileUri, 'hub.jpg');
-    return api.post(`/organizations/${orgId}/hubs/${hubId}/upload-media`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then((r) => r.data);
+    return uploadFormData<{ url: string }>(`${API_BASE_URL}/organizations/${orgId}/hubs/${hubId}/upload-media`, formData);
   },
 
   resolveMediaUrl: getMediaUrl,

@@ -97,17 +97,25 @@ export default function ChatRoomScreen() {
         sentAt: typeof msg.sentAt === 'string' ? msg.sentAt : new Date(msg.sentAt).toISOString(),
       } as Message;
 
+      let replacedTemp = false;
+
       setMessages((prev) => {
+        // Try to match temp message: first by content+senderId, then by attachmentUrl+senderId
         const tempIndex = prev.findIndex(m => 
-          m.id.startsWith('temp-') && 
-          m.content === newMsg.content && 
-          m.senderId === newMsg.senderId
+          m?.id?.startsWith('temp-') && 
+          m.senderId === newMsg.senderId &&
+          (
+            (m.content === newMsg.content) ||
+            (newMsg.attachmentUrl && m.attachmentUrl && m.attachmentUrl === newMsg.attachmentUrl) ||
+            (newMsg.attachmentUrl && !m.attachmentUrl && m.content === (newMsg as any).attachmentUrl)
+          )
         );
 
         if (tempIndex !== -1) {
           const updated = [...prev];
           const oldTemp = updated[tempIndex];
           updated[tempIndex] = { ...newMsg, replyTo: oldTemp.replyTo };
+          replacedTemp = true;
           return updated;
         }
 
@@ -119,6 +127,39 @@ export default function ChatRoomScreen() {
 
         return [newMsg, ...prev];
       });
+
+      // Зберігаємо повідомлення в локальну БД, щоб воно не зникло після перезаходу
+      saveMessagesToDB([newMsg]).catch((err) =>
+        console.warn('[ChatRoom] saveMessagesToDB on WS new_message failed:', err)
+      );
+
+      // Якщо було замінено temp-повідомлення — оновити pending запис в БД (serverId)
+      if (replacedTemp) {
+        (async () => {
+          try {
+            const { Q } = await import('@nozbe/watermelondb');
+            const existing = await collections.chatMessages
+              .query(Q.where('chat_id', chatId), Q.where('pending_action', 'send'))
+              .fetch();
+            const tempMatch = (existing as any[]).find(
+              (m: any) => !(m as any).serverId && m.content === newMsg.content && m.senderId === newMsg.senderId
+            );
+            if (tempMatch) {
+              await safeWrite(async () => {
+                await tempMatch.update((m: any) => {
+                  (m as any).serverId = msg.id;
+                  (m as any).isSynced = true;
+                  (m as any).pendingAction = null;
+                  (m as any).messageStatus = msg.messageStatus || 'sent';
+                  (m as any).lastSyncedAt = Date.now();
+                });
+              });
+            }
+          } catch (err) {
+            console.warn('[ChatRoom] update pending message failed:', err);
+          }
+        })();
+      }
     },
     onMessagesRead: (data) => {
       if (data.chatId !== chatId) return;
@@ -177,7 +218,7 @@ export default function ChatRoomScreen() {
         }
         
         const tempMatch = existing.find((m: any) => {
-          if (!m.id.startsWith('temp-')) return false;
+          if (!m?.id?.startsWith('temp-')) return false;
           if (m.content !== msg.content) return false;
           if (m.senderId !== msg.senderId) return false;
           const tempTime = m.sentAt;
@@ -471,12 +512,55 @@ export default function ChatRoomScreen() {
     sendTyping(chatId, val.length > 0);
   };
 
+  const savePendingAttachment = async (uri: string, name: string, type: string) => {
+    const now = new Date().toISOString();
+    const tempMsg: Message = {
+      id: `temp-${Date.now()}`,
+      chatId,
+      senderId: user?.id || '',
+      content: name,
+      sentAt: now,
+      readBy: [],
+      messageType: 'attachment' as any,
+      attachmentUrl: uri,
+      messageStatus: 'pending',
+      sender: user as any,
+      replyToId: replyToMessage?.id,
+      replyTo: replyToMessage || undefined,
+    };
+
+    setMessages(prev => [tempMsg, ...prev]);
+    setReplyToMessage(null);
+
+    const { SyncService } = await import('../../db/SyncService');
+    await SyncService.saveMessageOffline({
+      chatId,
+      senderId: user?.id || '',
+      senderName: user?.fullName,
+      content: name,
+      messageType: 'attachment',
+      attachmentUrl: uri,
+      mimeType: type,
+      replyToId: tempMsg.replyToId,
+    });
+  };
+
   const uploadAndSend = async (uri: string, name: string, type: string) => {
     setUploading(true);
     try {
+      if (!getServerReachable()) {
+        await savePendingAttachment(uri, name, type);
+        return;
+      }
+
       const result = await chatApi.sendFile(chatId, { uri, name, type });
       await emitWhenReady('send_message', { chatId, content: result.name, attachmentUrl: result.url });
     } catch (e: any) {
+      if (!getServerReachable() || String(e?.message || e).includes('Network request failed')) {
+        await savePendingAttachment(uri, name, type);
+        Alert.alert('Офлайн', 'Файл додано в чергу і буде відправлено після відновлення звʼязку');
+        return;
+      }
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
       setUploading(false);
@@ -531,7 +615,7 @@ export default function ChatRoomScreen() {
       <FlatList
         ref={flatRef}
         data={messages}
-        keyExtractor={(m) => m.id}
+        keyExtractor={(m) => m.id || `msg_${m.sentAt}_${m.senderId}`}
         inverted={true}
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
@@ -678,8 +762,8 @@ const MessageBubble = React.memo(({
   const time = new Date(message.sentAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
   const hasAttachment = !!message.attachmentUrl && typeof message.attachmentUrl === 'string' && message.attachmentUrl.length > 5;
   const attachUrl = hasAttachment
-    ? message.attachmentUrl!.startsWith('http')
-      ? message.attachmentUrl!
+    ? /^(https?:|file:|content:|data:)/i.test(message.attachmentUrl as string)
+      ? message.attachmentUrl
       : `${staticBase}${message.attachmentUrl}`
     : null;
   const isImage = attachUrl ? /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i.test(attachUrl) : false;

@@ -207,13 +207,32 @@ export class SyncService {
       OfflineLogger.sync(`[PUSH] Found ${unsyncedMessages.length} unsynced messages`);
       for (const msg of unsyncedMessages) {
         try {
-          const response = await api.post(`/chats/${msg.chatId}/messages`, { content: msg.content });
+          let attachmentUrl = msg.attachmentUrl;
+          const hasLocalAttachment = !!attachmentUrl && /^(file:|content:)/i.test(attachmentUrl);
+
+          if (hasLocalAttachment) {
+            const uploaded = await chatApi.sendFile(msg.chatId, {
+              uri: attachmentUrl as string,
+              name: msg.content || `attachment_${Date.now()}`,
+              type: this.inferMimeType(msg.content, attachmentUrl as string),
+            });
+            attachmentUrl = uploaded.url;
+          }
+
+          const response = await api.post(`/chats/${msg.chatId}/messages`, {
+            content: msg.content,
+            attachmentUrl: attachmentUrl ?? undefined,
+            messageType: attachmentUrl ? 'attachment' : (msg.messageType ?? 'text'),
+            replyToId: msg.replyToId ?? undefined,
+          });
           const createdMsgId = response.data?.id || response.data?._id;
           preparedOps.push(
             msg.prepareUpdate((m: any) => {
               if (createdMsgId) m.serverId = createdMsgId;
               m.isSynced = true;
               m.pendingAction = null;
+              m.attachmentUrl = attachmentUrl ?? null;
+              m.messageType = attachmentUrl ? 'attachment' : (msg.messageType ?? 'text');
               m.messageStatus = 'sent';
               m.lastSyncedAt = Date.now();
             })
@@ -1030,6 +1049,20 @@ export class SyncService {
     OfflineLogger.sync(`[PULL] Finished in ${pullElapsed}ms: ${count} items updated/created`);
 
     return count;
+  }
+
+  private static inferMimeType(fileName?: string | null, uri?: string | null): string {
+    const source = (fileName || uri || '').split(/[?#]/)[0].toLowerCase();
+    const ext = source.split('.').pop();
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'heic' || ext === 'heif') return 'image/heic';
+    if (ext === 'mp4') return 'video/mp4';
+    if (ext === 'mov') return 'video/quicktime';
+    if (ext === 'pdf') return 'application/pdf';
+    return 'application/octet-stream';
   }
 
   static async saveRequestOffline(data: any): Promise<RequestModel> {

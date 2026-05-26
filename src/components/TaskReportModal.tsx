@@ -164,8 +164,8 @@ export const TaskReportModal = ({ visible, onClose, onSubmit, loading, mode = 'c
               style={{ height: 104 }}
             >
               {attachments.map((a, i) => {
-                const isImage = a.type.startsWith('image/');
-                const isVideo = a.type.startsWith('video/');
+                const isImage = a.type?.startsWith('image/') ?? false;
+                const isVideo = a.type?.startsWith('video/') ?? false;
                 return (
                   <View key={i} style={styles.attachmentWrapper}>
                     {isImage ? (
