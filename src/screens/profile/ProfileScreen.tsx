@@ -10,16 +10,20 @@ import { usersApi } from '../../api/users.api';
 import { TrustVouch, SystemRole } from '../../types';
 import { Colors, clearanceLabels, roleLabels } from '../../utils/theme';
 import { Button, Card, LoadingScreen, ScreenHeader } from '../../components/ui';
-import { getMediaUrl } from '../../utils/fileUtils';
+import { getMediaUrl, fileUtils } from '../../utils/fileUtils';
 import { useBiometrics, BiometricState } from '../../hooks/useBiometrics';
 import { SyncEventLogger } from '../../services/SyncEventLogger';
 import { getServerReachable } from '../../api/axios';
+import { uploadFormData } from '../../api/upload';
+import { API_BASE_URL } from '../../api/axios';
+import api from '../../api/axios';
 
 const CACHED_VOUCHES_KEY = 'cached_vouches';
+const PENDING_AVATAR_KEY = 'pending_avatar';
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const biometrics = useBiometrics();
 
   const [vouches, setVouches]         = useState<TrustVouch[]>([]);
@@ -29,6 +33,8 @@ export default function ProfileScreen() {
   const [bioToggling, setBioToggling] = useState(false);
   const [eventCount, setEventCount] = useState(0);
   const [isOffline, setIsOffline]     = useState(false);
+  const [pendingProfile, setPendingProfile] = useState<any>(null);
+  const [syncingProfile, setSyncingProfile] = useState(false);
   const mountedRef = useRef(true);
 
   const load = async (silent = false) => {
@@ -39,6 +45,15 @@ export default function ProfileScreen() {
     const serverOk = getServerReachable();
     setIsOffline(!serverOk);
 
+    // Перевіряємо чи є pending зміни профілю
+    try {
+      const pendingRaw = await AsyncStorage.getItem(PENDING_AVATAR_KEY);
+      if (pendingRaw) setPendingProfile(JSON.parse(pendingRaw));
+      else setPendingProfile(null);
+    } catch {
+      setPendingProfile(null);
+    }
+
     try {
       if (!serverOk) {
         // Офлайн — завантажуємо кешовані дані
@@ -46,22 +61,18 @@ export default function ProfileScreen() {
         if (cached) {
           setVouches(JSON.parse(cached));
         }
-        // Біометрія все одно локальна
         const bio = await biometrics.getBiometricState();
         setBioState(bio);
       } else {
-        // Онлайн — завантажуємо з сервера і кешуємо
         const [v, bio] = await Promise.all([
           usersApi.getVouches(user.id),
           biometrics.getBiometricState(),
         ]);
         setVouches(v);
         setBioState(bio);
-        // Зберігаємо в кеш
         await AsyncStorage.setItem(CACHED_VOUCHES_KEY, JSON.stringify(v));
       }
     } catch {
-      // Якщо помилка — спробувати взяти з кешу
       try {
         const cached = await AsyncStorage.getItem(CACHED_VOUCHES_KEY);
         if (cached) setVouches(JSON.parse(cached));
@@ -73,6 +84,52 @@ export default function ProfileScreen() {
         setRefreshing(false);
       }
     }
+  };
+
+  const syncPendingProfile = async () => {
+    if (!pendingProfile || syncingProfile) return;
+    setSyncingProfile(true);
+    try {
+      const serverOk = getServerReachable() || await AsyncStorage.getItem('serverReachable');
+      if (!serverOk) {
+        Alert.alert('⚠️ Офлайн', 'Сервер недоступний. Спробуйте пізніше.');
+        return;
+      }
+
+      // Завантажуємо аватарку
+      if (pendingProfile.localAvatarUri) {
+        const rawName = pendingProfile.localAvatarUri.split('/').pop() || 'avatar.jpg';
+        const ext = rawName.split('.').pop()?.toLowerCase();
+        const fallbackType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        const normalized = await fileUtils.normalizeImagePickerAsset(pendingProfile.localAvatarUri, rawName, fallbackType);
+        const formData = new FormData();
+        formData.append('file', { uri: normalized.uri, name: normalized.name, type: normalized.mimeType } as any);
+        await uploadFormData<{ url: string }>(`${API_BASE_URL}/chats/avatar`, formData);
+      }
+
+      // Оновлюємо профіль
+      const patchData: any = {};
+      if (pendingProfile.fullName) patchData.fullName = pendingProfile.fullName;
+      if (pendingProfile.phoneNumber) patchData.phoneNumber = pendingProfile.phoneNumber;
+      if (pendingProfile.telegramId) patchData.telegramId = pendingProfile.telegramId;
+      await api.patch('/users/me', patchData);
+
+      // Чистимо чергу
+      await AsyncStorage.removeItem(PENDING_AVATAR_KEY);
+      setPendingProfile(null);
+      await refreshUser();
+      Alert.alert('✅', 'Зміни профілю синхронізовано');
+    } catch (e) {
+      Alert.alert('Помилка', 'Не вдалося синхронізувати зміни. Спробуйте пізніше.');
+    } finally {
+      setSyncingProfile(false);
+    }
+  };
+
+  const cancelPendingProfile = async () => {
+    await AsyncStorage.removeItem(PENDING_AVATAR_KEY);
+    setPendingProfile(null);
+    Alert.alert('Скасовано', 'Незбережені зміни профілю видалено з черги.');
   };
 
   useEffect(() => {
@@ -97,7 +154,6 @@ export default function ProfileScreen() {
     ]);
   };
 
-  // ─── Перемикач біометрії ──────────────────────────────────────────────────
   const handleBioToggle = async (value: boolean) => {
     setBioToggling(true);
     try {
@@ -155,6 +211,37 @@ export default function ProfileScreen() {
       {isOffline && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineBannerText}>📡 Ви в офлайні — показано кешовані дані</Text>
+        </View>
+      )}
+
+      {/* ─── Банер черги редагування профілю ──────────────────────────────── */}
+      {pendingProfile && (
+        <View style={styles.pendingBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pendingTitle}>⏳ Є невідправлені зміни профілю</Text>
+            <Text style={styles.pendingDesc}>
+              {pendingProfile.fullName && `Ім'я: ${pendingProfile.fullName}`}
+              {pendingProfile.localAvatarUri && ' + аватарка'}
+            </Text>
+          </View>
+          <View style={styles.pendingActions}>
+            <TouchableOpacity
+              style={styles.pendingRetryBtn}
+              onPress={syncPendingProfile}
+              disabled={syncingProfile}
+            >
+              <Text style={styles.pendingRetryText}>
+                {syncingProfile ? '...' : 'Синхр.'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pendingCancelBtn}
+              onPress={cancelPendingProfile}
+              disabled={syncingProfile}
+            >
+              <Text style={styles.pendingCancelText}>✕</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -371,5 +458,53 @@ const styles = StyleSheet.create({
     color: '#856404',
     textAlign: 'center',
     fontWeight: '600',
+  },
+  pendingBanner: {
+    backgroundColor: '#E3F2FD',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#BBDEFB',
+  },
+  pendingTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1565C0',
+  },
+  pendingDesc: {
+    fontSize: 11,
+    color: '#64B5F6',
+    marginTop: 2,
+  },
+  pendingActions: {
+    flexDirection: 'row',
+    gap: 6,
+    marginLeft: 8,
+  },
+  pendingRetryBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#1565C0',
+  },
+  pendingRetryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  pendingCancelBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#EF9A9A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingCancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#C62828',
   },
 });
