@@ -403,6 +403,32 @@ export class SyncService {
               await requestsApi.update(updateReqId, updateData);
               break;
             }
+            case 'PROFILE_UPDATE': {
+              const profileData = (payload as any).data;
+              const avatarUri = (payload as any).localAvatarUri;
+              if (!profileData) {
+                OfflineLogger.sync(`[PUSH] ActionQueue: PROFILE_UPDATE missing data, payload:`, JSON.stringify(payload));
+                preparedOps.push(item.prepareMarkAsDeleted());
+                continue;
+              }
+              OfflineLogger.sync(`[PUSH] Sending PROFILE_UPDATE`);
+              // Upload avatar first if needed
+              if (avatarUri) {
+                const { fileUtils } = await import('../utils/fileUtils');
+                const rawName = avatarUri.split('/').pop() || 'avatar.jpg';
+                const ext = rawName.split('.').pop()?.toLowerCase();
+                const fallbackType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+                const normalized = await fileUtils.normalizeImagePickerAsset(avatarUri, rawName, fallbackType);
+                const formData = new FormData();
+                formData.append('file', { uri: normalized.uri, name: normalized.name, type: normalized.mimeType } as any);
+                await api.post('/chats/avatar', formData, {
+                  headers: { 'Content-Type': 'multipart/form-data' },
+                });
+              }
+              // Update profile
+              await api.patch(`/users/${(payload as any).userId}`, profileData);
+              break;
+            }
             default:
               // Handle dynamic TASK_REPORT_CREATE_* action types (e.g. TASK_REPORT_CREATE_1719132834170)
               if (item.actionType.startsWith('TASK_REPORT_CREATE')) {

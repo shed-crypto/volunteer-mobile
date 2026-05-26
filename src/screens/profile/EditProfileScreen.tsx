@@ -17,8 +17,7 @@ import { API_BASE_URL, checkServerReachable } from '../../api/axios';
 import api from '../../api/axios';
 import { uploadFormData } from '../../api/upload';
 import { getMediaUrl, fileUtils } from '../../utils/fileUtils';
-
-const PENDING_AVATAR_KEY = 'pending_avatar';
+import { collections, safeWrite } from '../../db/index';
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();
