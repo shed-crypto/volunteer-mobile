@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Q } from '@nozbe/watermelondb';
 import { useAuth } from '../../context/AuthContext';
 import { usersApi } from '../../api/users.api';
 import { TrustVouch, SystemRole } from '../../types';
@@ -17,9 +18,9 @@ import { getServerReachable } from '../../api/axios';
 import { uploadFormData } from '../../api/upload';
 import { API_BASE_URL } from '../../api/axios';
 import api from '../../api/axios';
+import { collections, safeWrite } from '../../db/index';
 
 const CACHED_VOUCHES_KEY = 'cached_vouches';
-const PENDING_AVATAR_KEY = 'pending_avatar';
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
@@ -45,14 +46,25 @@ export default function ProfileScreen() {
     const serverOk = getServerReachable();
     setIsOffline(!serverOk);
 
-    // Перевіряємо чи є pending зміни профілю
+    // Перевіряємо чи є pending PROFILE_UPDATE в action_queue
     try {
-      const pendingRaw = await AsyncStorage.getItem(PENDING_AVATAR_KEY);
-      if (pendingRaw) {
-        setPendingProfile(JSON.parse(pendingRaw));
-        // Якщо сервер доступний — автоматично синхронізуємо
-        if (serverOk) {
-          syncPendingProfile();
+      const allQueue = await collections.actionQueue.query().fetch();
+      const profileItem: any = allQueue.find((item: any) => item.actionType === 'PROFILE_UPDATE');
+      if (profileItem) {
+        try {
+          const payload = JSON.parse(profileItem.payloadRaw || '{}');
+          setPendingProfile({
+            fullName: payload?.data?.fullName,
+            phoneNumber: payload?.data?.phoneNumber,
+            localAvatarUri: payload?.localAvatarUri,
+            queueItemId: profileItem.id,
+          });
+          // Якщо сервер доступний — автоматично синхронізуємо
+          if (serverOk) {
+            syncPendingProfile();
+          }
+        } catch {
+          setPendingProfile(null);
         }
       } else {
         setPendingProfile(null);
@@ -93,11 +105,25 @@ export default function ProfileScreen() {
     }
   };
 
+  /** Видалити PROFILE_UPDATE з action_queue */
+  const removeFromActionQueue = async () => {
+    if (!pendingProfile?.queueItemId) return;
+    try {
+      await safeWrite(async () => {
+        const allQueue = await collections.actionQueue.query().fetch();
+        const item = allQueue.find((i: any) => i.id === pendingProfile.queueItemId);
+        if (item) await item.destroyPermanently();
+      });
+    } catch (e) {
+      console.warn('[Profile] Failed to remove queue item:', e);
+    }
+  };
+
   const syncPendingProfile = async () => {
     if (!pendingProfile || syncingProfile) return;
     setSyncingProfile(true);
     try {
-      const serverOk = getServerReachable() || await AsyncStorage.getItem('serverReachable');
+      const serverOk = getServerReachable();
       if (!serverOk) {
         Alert.alert('⚠️ Офлайн', 'Сервер недоступний. Спробуйте пізніше.');
         return;
@@ -118,13 +144,12 @@ export default function ProfileScreen() {
       const patchData: any = {};
       if (pendingProfile.fullName) patchData.fullName = pendingProfile.fullName;
       if (pendingProfile.phoneNumber) patchData.phoneNumber = pendingProfile.phoneNumber;
-      if (pendingProfile.telegramId) patchData.telegramId = pendingProfile.telegramId;
       if (user) {
         await api.patch(`/users/${user.id}`, patchData);
       }
 
       // Чистимо чергу
-      await AsyncStorage.removeItem(PENDING_AVATAR_KEY);
+      await removeFromActionQueue();
       setPendingProfile(null);
       await refreshUser();
       Alert.alert('✅', 'Зміни профілю синхронізовано');
@@ -136,7 +161,7 @@ export default function ProfileScreen() {
   };
 
   const cancelPendingProfile = async () => {
-    await AsyncStorage.removeItem(PENDING_AVATAR_KEY);
+    await removeFromActionQueue();
     setPendingProfile(null);
     Alert.alert('Скасовано', 'Незбережені зміни профілю видалено з черги.');
   };
