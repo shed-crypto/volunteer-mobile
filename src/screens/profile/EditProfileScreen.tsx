@@ -107,7 +107,7 @@ export default function EditProfileScreen() {
         await AsyncStorage.setItem(PENDING_AVATAR_KEY, JSON.stringify(pending));
         Alert.alert(
           'Збережено локально',
-          'Зміни будуть відправлені, коли з'явиться з'єднання з сервером.',
+          "Зміни будуть відправлені, коли з'явиться з'єднання з сервером.",
         );
         navigation.goBack();
         return;
