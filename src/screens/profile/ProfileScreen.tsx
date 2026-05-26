@@ -19,6 +19,7 @@ import { uploadFormData } from '../../api/upload';
 import { API_BASE_URL } from '../../api/axios';
 import api from '../../api/axios';
 import { collections, safeWrite } from '../../db/index';
+import { SyncService } from '../../db/SyncService';
 
 const CACHED_VOUCHES_KEY = 'cached_vouches';
 
@@ -168,7 +169,25 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     load();
-    return () => { mountedRef.current = false; };
+    // Підписка на події SyncService — оновлюємо профіль після синхронізації
+    const unsubSync = SyncService.on('sync-event', async (data: any) => {
+      if (data?.type === 'sync_success' || data?.type === 'sync_error') {
+        // Перевіряємо чи змінилась черга (SyncService міг видалити PROFILE_UPDATE)
+        try {
+          const allQueue = await collections.actionQueue.query().fetch();
+          const hasProfileUpdate = allQueue.some((item: any) => item.actionType === 'PROFILE_UPDATE');
+          if (!hasProfileUpdate && pendingProfile) {
+            setPendingProfile(null);
+          }
+        } catch {}
+        // Оновлюємо дані юзера з сервера
+        await refreshUser();
+      }
+    });
+    return () => {
+      mountedRef.current = false;
+      unsubSync();
+    };
   }, []);
 
   useEffect(() => {
