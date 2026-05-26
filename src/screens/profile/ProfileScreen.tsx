@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   RefreshControl, Alert, Switch, Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../context/AuthContext';
 import { usersApi } from '../../api/users.api';
 import { TrustVouch, SystemRole } from '../../types';
@@ -12,6 +13,9 @@ import { Button, Card, LoadingScreen, ScreenHeader } from '../../components/ui';
 import { getMediaUrl } from '../../utils/fileUtils';
 import { useBiometrics, BiometricState } from '../../hooks/useBiometrics';
 import { SyncEventLogger } from '../../services/SyncEventLogger';
+import { getServerReachable } from '../../api/axios';
+
+const CACHED_VOUCHES_KEY = 'cached_vouches';
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
@@ -24,30 +28,62 @@ export default function ProfileScreen() {
   const [bioState, setBioState]       = useState<BiometricState>({ isSupported: false, isEnabled: false });
   const [bioToggling, setBioToggling] = useState(false);
   const [eventCount, setEventCount] = useState(0);
+  const [isOffline, setIsOffline]     = useState(false);
+  const mountedRef = useRef(true);
 
-  const load = async () => {
+  const load = async (silent = false) => {
     if (!user) return;
+    if (!silent) setLoading(true);
+
+    // Перевіряємо чи є мережа
+    const serverOk = getServerReachable();
+    setIsOffline(!serverOk);
+
     try {
-      const [v, bio] = await Promise.all([
-        usersApi.getVouches(user.id),
-        biometrics.getBiometricState(),
-      ]);
-      setVouches(v);
-      setBioState(bio);
+      if (!serverOk) {
+        // Офлайн — завантажуємо кешовані дані
+        const cached = await AsyncStorage.getItem(CACHED_VOUCHES_KEY);
+        if (cached) {
+          setVouches(JSON.parse(cached));
+        }
+        // Біометрія все одно локальна
+        const bio = await biometrics.getBiometricState();
+        setBioState(bio);
+      } else {
+        // Онлайн — завантажуємо з сервера і кешуємо
+        const [v, bio] = await Promise.all([
+          usersApi.getVouches(user.id),
+          biometrics.getBiometricState(),
+        ]);
+        setVouches(v);
+        setBioState(bio);
+        // Зберігаємо в кеш
+        await AsyncStorage.setItem(CACHED_VOUCHES_KEY, JSON.stringify(v));
+      }
     } catch {
-      setVouches([]);
+      // Якщо помилка — спробувати взяти з кешу
+      try {
+        const cached = await AsyncStorage.getItem(CACHED_VOUCHES_KEY);
+        if (cached) setVouches(JSON.parse(cached));
+      } catch {}
+      setBioState({ isSupported: false, isEnabled: false });
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     const update = async () => {
       const c = await SyncEventLogger.getUnreadCount();
-      setEventCount(c);
+      if (mountedRef.current) setEventCount(c);
     };
     update();
     const id = setInterval(update, 5000);
@@ -66,7 +102,6 @@ export default function ProfileScreen() {
     setBioToggling(true);
     try {
       if (value) {
-        // Ввімкнути: просимо ввести пароль щоб зберегти credentials
         Alert.prompt(
           '🔒 Ввімкнути біометрію',
           'Введіть ваш пароль для збереження (зашифровано на пристрої)',
@@ -83,7 +118,6 @@ export default function ProfileScreen() {
           'secure-text',
         );
       } else {
-        // Вимкнути
         await biometrics.disableBiometric();
         setBioState((s) => ({ ...s, isEnabled: false }));
         Alert.alert('ℹ️', 'Біометричний вхід вимкнено');
@@ -117,8 +151,15 @@ export default function ProfileScreen() {
         }
       />
 
+      {/* ─── Офлайн-банер ─────────────────────────────────────────────────── */}
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>📡 Ви в офлайні — показано кешовані дані</Text>
+        </View>
+      )}
+
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={Colors.primary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); }} tintColor={Colors.primary} />}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
         {/* Avatar & name */}
@@ -195,15 +236,13 @@ export default function ProfileScreen() {
           <Text style={styles.cardTitle}>Акаунт</Text>
           <InfoRow label="Email" value={user?.email ?? ''} />
           {user?.phoneNumber && <InfoRow label="Телефон" value={user.phoneNumber} />}
-          <InfoRow label="ID" value={user?.id?.slice(0, 8) + '...' ?? ''} />
+          <InfoRow label="ID" value={user?.id ? user.id.slice(0, 8) + '...' : ''} />
           <InfoRow label="Зареєстровано" value={user?.createdAt ? new Date(user.createdAt).toLocaleDateString('uk-UA') : '—'} />
         </Card>
 
         {/* Security settings */}
         <Card>
           <Text style={styles.cardTitle}>Безпека</Text>
-
-          {/* Biometric toggle */}
           {bioState.isSupported && (
             <View style={styles.settingRow}>
               <View style={styles.settingInfo}>
@@ -221,7 +260,6 @@ export default function ProfileScreen() {
               />
             </View>
           )}
-
           {!bioState.isSupported && (
             <Text style={styles.bioUnsupported}>
               ⓘ Біометрія не налаштована або не підтримується цим пристроєм
@@ -259,7 +297,6 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Needed to fix Alert.prompt type issue on Android (it's iOS only)
 const Platform = require('react-native').Platform;
 
 const styles = StyleSheet.create({
@@ -324,4 +361,15 @@ const styles = StyleSheet.create({
   settingLabel: { fontSize: 14, fontWeight: '600', color: Colors.text },
   settingDesc:  { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
   bioUnsupported: { fontSize: 13, color: Colors.textMuted, fontStyle: 'italic' },
+  offlineBanner: {
+    backgroundColor: '#FFF3CD',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  offlineBannerText: {
+    fontSize: 12,
+    color: '#856404',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
 });
