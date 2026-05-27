@@ -874,8 +874,16 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-      <Card style={(request as any).managingOrganizationId ? { borderLeftWidth: 4, borderLeftColor: Colors.secondary } : undefined}>
+      <Card style={((request as any).isUserAssigned || (request as any).isMyOrgDelegating) ? { borderLeftWidth: 4, borderLeftColor: Colors.secondary } : undefined}>
         <View style={[styles.urgencyStrip, { backgroundColor: urgency?.bg ?? Colors.borderLight }]} />
+        {(request as any).delegatedOrgNames?.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6, marginHorizontal: 12 }}>
+            {(request as any).delegatedOrgNames.slice(0, 3).map((name: string, i: number) => (
+              <Text key={i} style={{ fontSize: 11, color: Colors.textMuted }}>{name}</Text>
+            ))}
+            {(request as any).delegatedOrgNames.length > 3 && <Text style={{ fontSize: 11, color: Colors.textMuted }}>...</Text>}
+          </View>
+        )}
         <View style={styles.cardHeader}>
           <View style={{ flex: 1, gap: 6 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
