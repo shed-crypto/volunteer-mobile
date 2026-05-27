@@ -876,8 +876,6 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
     <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
       <Card style={(request as any).managingOrganizationId ? { borderLeftWidth: 4, borderLeftColor: Colors.secondary } : undefined}>
         <View style={[styles.urgencyStrip, { backgroundColor: urgency?.bg ?? Colors.borderLight }]} />
->>>>>>>
->>>>>>>
         <View style={styles.cardHeader}>
           <View style={{ flex: 1, gap: 6 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
