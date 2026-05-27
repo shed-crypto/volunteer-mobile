@@ -88,25 +88,57 @@ export default function RequestsListScreen() {
     try {
       const localReqs = await collections.requests.query().fetch();
       if (localReqs.length === 0) return [];
-      
+
       // Load saved request IDs to add isSaved flag
       const savedRequests = await collections.savedRequests.query().fetch();
       const savedIds = new Set(savedRequests.map((s: any) => s.requestId));
-      
+
       // Завантажуємо всі локальні задачі для підрахунку taskCount
       const allLocalTasks = await collections.tasks.query().fetch();
       const taskCountByRequest = new Map<string, number>();
+      // Завантажуємо призначення для offline isUserAssigned
+      const allLocalAssignments = await collections.taskAssignments.query().fetch();
+      // Завантажуємо членства в організаціях для offline isMyOrgDelegating
+      const allLocalMembers = await collections.organizationMembers.query().fetch();
+      const userOrgIds = new Set(
+        allLocalMembers
+          .filter((m: any) => m.userId === user?.id && m.isActive !== false)
+          .map((m: any) => m.organizationId)
+      );
+
+      // Build a map: taskId -> requestId
+      const taskToRequestMap = new Map<string, string>();
       for (const t of allLocalTasks) {
         const reqId = (t as any).requestServerId || (t as any).requestId;
+        const taskId = (t as any).serverId || t.id;
+        if (reqId && taskId) taskToRequestMap.set(taskId, reqId);
         if (reqId) taskCountByRequest.set(reqId, (taskCountByRequest.get(reqId) || 0) + 1);
       }
-      
+
+      // Build a set of requestIds where user has active assignments
+      const assignedRequestIds = new Set<string>();
+      for (const a of allLocalAssignments) {
+        const taskId = (a as any).taskId;
+        const reqId = taskToRequestMap.get(taskId);
+        const status = (a as any).status;
+        if (reqId && (a as any).userId === user?.id && status !== 'withdrawn' && status !== 'completed') {
+          assignedRequestIds.add(reqId);
+        }
+      }
+
       const mapped = localReqs.map((r: any) => {
         const serverId = r.serverId || '';
         // Якщо taskCount збережено в БД — використовуємо його, інакше рахуємо локально
         const savedCount = r.taskCount ?? 0;
         const localCount = taskCountByRequest.get(serverId) || 0;
         const effectiveCount = savedCount > 0 ? savedCount : localCount;
+
+        // Compute isUserAssigned from local data
+        const isUserAssigned = assignedRequestIds.has(serverId);
+        // Compute isMyOrgDelegating: check if managing org is one of user's orgs
+        const managingOrgId = (r as any).managingOrganizationId;
+        const isMyOrgDelegating = managingOrgId ? userOrgIds.has(managingOrgId) : false;
+
         return {
           id: serverId,
           localId: r.id,
@@ -135,15 +167,18 @@ export default function RequestsListScreen() {
             : new Date().toISOString(),
           updatedAt: r.lastSyncedAt ? new Date(r.lastSyncedAt).toISOString() : new Date().toISOString(),
           isSaved: savedIds.has(r.serverId || r.id),
+          isUserAssigned,
+          isMyOrgDelegating,
+          delegatedOrgNames: isMyOrgDelegating ? (userOrgIds.size > 0 ? ['Ваша організація'] : []) : [],
         };
       });
-      
+
       return mapped as Request[];
     } catch (e) {
       OfflineLogger.cache('RequestsList: local DB load failed', e);
       return [];
     }
-  }, []);
+  }, [user?.id]);
 
   // ─── Helper: save server data to local DB ───────────────────────────────
   const saveRequestsToLocalDB = useCallback(async (requestsData: Request[]) => {
@@ -872,9 +907,25 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
     }
   }, [request.latitude, request.longitude, request.isLocationHidden]);
 
+  const assignedStyle = (request as any).isUserAssigned
+    ? { borderLeftWidth: 4, borderLeftColor: Colors.primary }
+    : (request as any).isMyOrgDelegating
+    ? { borderLeftWidth: 4, borderLeftColor: Colors.secondary }
+    : undefined;
+
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-      <Card style={((request as any).isUserAssigned || (request as any).isMyOrgDelegating) ? { borderLeftWidth: 4, borderLeftColor: Colors.secondary } : undefined}>
+      <Card style={assignedStyle}>
+        {(request as any).isUserAssigned && (
+          <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: Colors.primaryLight, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, zIndex: 1 }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primary }}>👤 Я ВИКОНУЮ</Text>
+          </View>
+        )}
+        {(request as any).isMyOrgDelegating && (
+          <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: '#E8F5E9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, zIndex: 1 }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.secondary }}>🏢 МОЯ ОРГАНІЗАЦІЯ</Text>
+          </View>
+        )}
         <View style={[styles.urgencyStrip, { backgroundColor: urgency?.bg ?? Colors.borderLight }]} />
         {(request as any).delegatedOrgNames?.length > 0 && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6, marginHorizontal: 12 }}>

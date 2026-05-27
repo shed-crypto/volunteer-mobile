@@ -643,14 +643,40 @@ export default function OrgDetailScreen() {
                     </TouchableOpacity>
                     {activeReqTasks[req.id]?.length > 0 && (
                       <View style={{ paddingLeft: 52, paddingVertical: 4 }}>
-                        {activeReqTasks[req.id].map((task: any) => (
-                          <TouchableOpacity
-                            key={task.id}
-                            onPress={() => navigation.navigate('TaskDetail', { taskId: task.id })}
-                          >
-                            <Text style={{ color: Colors.primary, fontSize: 13, marginVertical: 2 }}>• {task.title ?? 'Таск'}</Text>
-                          </TouchableOpacity>
-                        ))}
+                        {/* Створюємо Set делегованих task ID для цієї організації */}
+                        {(() => {
+                          const delegatedTaskIds = new Set(
+                            delegations
+                              .filter((d: any) => d.task?.requestId === req.id)
+                              .map((d: any) => d.task?.id || d.taskId)
+                          );
+                          const delegatedTasks = activeReqTasks[req.id].filter((t: any) => delegatedTaskIds.has(t.id));
+                          const nonDelegatedCount = activeReqTasks[req.id].length - delegatedTasks.length;
+
+                          return (
+                            <>
+                              {delegatedTasks.length > 0 ? (
+                                delegatedTasks.map((task: any) => (
+                                  <TouchableOpacity
+                                    key={task.id}
+                                    onPress={() => navigation.navigate('TaskDetail', { taskId: task.id })}
+                                  >
+                                    <Text style={{ color: Colors.primary, fontSize: 13, marginVertical: 2 }}>• {task.title ?? 'Таск'}</Text>
+                                  </TouchableOpacity>
+                                ))
+                              ) : (
+                                <Text style={{ color: Colors.textMuted, fontSize: 12, fontStyle: 'italic', marginVertical: 4 }}>
+                                  У цій заявці немає делегованих тасків
+                                </Text>
+                              )}
+                              {nonDelegatedCount > 0 && (
+                                <Text style={{ color: Colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                                  Ще {nonDelegatedCount} таск{nonDelegatedCount === 1 ? '' : (nonDelegatedCount >= 2 && nonDelegatedCount <= 4 ? 'и' : 'ів')} не делеговано
+                                </Text>
+                              )}
+                            </>
+                          );
+                        })()}
                       </View>
                     )}
                   </View>
