@@ -356,9 +356,9 @@ export default function RequestsListScreen() {
         limit: PAGE_SIZE,
         offset: 0,
       };
-              if (search) params.search = search;
-              if (statusFilter === 'my') params.creatorId = user?.id;
-              else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
+               if (search) params.search = search;
+               if (statusFilter === 'my') params.creatorId = user?.id;
+               else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my_tasks') params.status = statusFilter;
               if (urgencyFilter) params.urgency = urgencyFilter;
               if (categoryFilter) params.category = categoryFilter;
 
@@ -405,7 +405,7 @@ export default function RequestsListScreen() {
       };
       if (search) params.search = search;
       if (statusFilter === 'my') params.creatorId = user?.id;
-      else if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
+      else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my_tasks') params.status = statusFilter;
       if (urgencyFilter) params.urgency = urgencyFilter;
       if (categoryFilter) params.category = categoryFilter;
 
@@ -433,14 +433,8 @@ export default function RequestsListScreen() {
     if (statusFilter === 'my') {
       filtered = filtered.filter(r => r.creatorId === user?.id);
     } else if (statusFilter === 'my_tasks') {
-      // "Я виконую" — filter requests where user has at least one active task assignment
-      filtered = filtered.filter(r => {
-        const tasksWithAssignments = (r as any).tasks || [];
-        return tasksWithAssignments.some((task: any) => {
-          const assignments = task.assignments || [];
-          return assignments.some((a: any) => a.userId === user?.id && a.status !== 'withdrawn' && a.status !== 'completed');
-        });
-      });
+      // "Я виконую" — filter by isUserAssigned flag (already computed from server or local DB)
+      filtered = filtered.filter(r => (r as any).isUserAssigned === true);
     } else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'active') {
       filtered = filtered.filter(r => r.status === statusFilter);
     }
