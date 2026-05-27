@@ -124,6 +124,7 @@ export default function OrgDetailScreen() {
   const [orgRequests, setOrgRequests] = useState<any[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [activeRequests, setActiveRequests] = useState<any[]>([]);
+  const [activeReqTasks, setActiveReqTasks] = useState<Record<string, any[]>>({});
   const [activeRequestsLoading, setActiveRequestsLoading] = useState(false);
   const [completedRequests, setCompletedRequests] = useState<any[]>([]);
   const [completedRequestsLoading, setCompletedRequestsLoading] = useState(false);
@@ -270,9 +271,21 @@ export default function OrgDetailScreen() {
         managingOrganizationId: orgId,
         limit: 50,
       });
-      setActiveRequests(data.filter((r: any) =>
+      const filtered = data.filter((r: any) =>
         !['completed', 'cancelled'].includes(r.status)
-      ));
+      );
+      setActiveRequests(filtered);
+      // Fetch tasks for each active request
+      const tasksMap: Record<string, any[]> = {};
+      await Promise.all(
+        filtered.map(async (req: any) => {
+          try {
+            const full = await requestsApi.getOne(req.id);
+            tasksMap[req.id] = (full as any).tasks || [];
+          } catch { tasksMap[req.id] = []; }
+        })
+      );
+      setActiveReqTasks(tasksMap);
     } catch {
       // Offline fallback: читаємо з локальної БД
       try {
@@ -612,22 +625,35 @@ export default function OrgDetailScreen() {
                 ) : activeRequests.length === 0 ? (
                   <EmptyState icon="📄" title="Немає активних заявок" subtitle="Заявки, якими керує організація, з'являться тут" />
                 ) : activeRequests.map((req) => (
-                  <TouchableOpacity
-                    key={req.id}
-                    style={styles.listCard}
-                    onPress={() => navigation.navigate('RequestDetail', { requestId: req.id })}
-                  >
-                    <View style={styles.listIcon}>
-                      <Ionicons name="flame-outline" size={19} color={Colors.primary} />
-                    </View>
-                    <View style={styles.cardText}>
-                      <Text style={styles.cardTitle} numberOfLines={1}>{req.title ?? 'Без назви'}</Text>
-                      <Text style={styles.cardSubtitle} numberOfLines={1}>
-                        {req.status ?? 'open'} {req.category ? `· ${req.category}` : ''}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                  </TouchableOpacity>
+                  <View key={req.id}>
+                    <TouchableOpacity
+                      style={styles.listCard}
+                      onPress={() => navigation.navigate('RequestDetail', { requestId: req.id })}
+                    >
+                      <View style={styles.listIcon}>
+                        <Ionicons name="flame-outline" size={19} color={Colors.primary} />
+                      </View>
+                      <View style={styles.cardText}>
+                        <Text style={styles.cardTitle} numberOfLines={1}>{req.title ?? 'Без назви'}</Text>
+                        <Text style={styles.cardSubtitle} numberOfLines={1}>
+                          {req.status ?? 'open'} {req.category ? `· ${req.category}` : ''}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                    {activeReqTasks[req.id]?.length > 0 && (
+                      <View style={{ paddingLeft: 52, paddingVertical: 4 }}>
+                        {activeReqTasks[req.id].map((task: any) => (
+                          <TouchableOpacity
+                            key={task.id}
+                            onPress={() => navigation.navigate('TaskDetail', { taskId: task.id })}
+                          >
+                            <Text style={{ color: Colors.primary, fontSize: 13, marginVertical: 2 }}>• {task.title ?? 'Таск'}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
                 ))}
               </View>
             )}
