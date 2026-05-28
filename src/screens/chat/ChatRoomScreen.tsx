@@ -33,6 +33,19 @@ const isImageMime = (mimeType?: string | null) => !!mimeType?.startsWith('image/
 const isVideoMime = (mimeType?: string | null) => !!mimeType?.startsWith('video/');
 const shouldUseCaption = (mimeType?: string | null) => isImageMime(mimeType) || isVideoMime(mimeType);
 
+/** Дедуплікує масив повідомлень за id, зберігаючи перше входження */
+const dedupMessagesById = (msgs: Message[]): Message[] => {
+  const seen = new Set<string>();
+  return msgs.filter(m => {
+    if (seen.has(m.id)) {
+      console.warn('[ChatRoom] dedup removed duplicate msg id:', m.id);
+      return false;
+    }
+    seen.add(m.id);
+    return true;
+  });
+};
+
 function AdaptiveImage({ uri }: { uri: string }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -341,7 +354,7 @@ export default function ChatRoomScreen() {
         .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
         .fetch();
       
-      const mapped = localMessages.map(mapLocalToMessage);
+      const mapped = dedupMessagesById(localMessages.map(mapLocalToMessage));
 
       mapped.forEach(m => {
         if (m.replyToId) {
@@ -361,7 +374,7 @@ export default function ChatRoomScreen() {
             const updatedLocal = await collections.chatMessages
               .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
               .fetch();
-            const remapped = updatedLocal.map(mapLocalToMessage);
+            const remapped = dedupMessagesById(updatedLocal.map(mapLocalToMessage));
             remapped.forEach(m => {
               if (m.replyToId) m.replyTo = remapped.find(prev => remapped.find(x => x.id === m.replyToId));
             });
