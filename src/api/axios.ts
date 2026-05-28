@@ -175,11 +175,24 @@ api.interceptors.response.use(
         processQueue(null, accessToken);
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
         return api(originalRequest);
-      } catch (refreshError) {
+      } catch (refreshError: unknown) {
         processQueue(refreshError, null);
+
+        // 🔄 ОФЛАЙН-РЕЖИМ: Якщо сервер недоступний — не видаляємо токени,
+        // щоб клієнт міг продовжити роботу з локальною БД.
+        // Повне очищення токенів відбувається тільки якщо сервер ДОСТУПНИЙ
+        // і підтвердив що токени недійсні (юзер заблокований / пароль змінено).
+        const err = refreshError as { response?: unknown };
+        if (!err?.response) {
+          // Сервер недоступний — залишаємо токени для офлайн-режиму
+          OfflineLogger.auth('Refresh failed — server unreachable, keeping tokens for offline mode');
+          return Promise.reject(Object.assign(new Error('Offline'), { _isOffline: true }));
+        }
+
+        // Сервер доступний, але відхилив refresh — токени дійсно невалідні
         await SecureStore.deleteItemAsync('accessToken');
         await SecureStore.deleteItemAsync('refreshToken');
-        return Promise.reject(refreshError);
+        return Promise.reject(refreshError as Error);
       } finally {
         isRefreshing = false;
       }
