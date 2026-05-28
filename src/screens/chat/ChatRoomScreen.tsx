@@ -746,7 +746,7 @@ const MessageBubble = React.memo(({
   isMine: boolean;
   staticBase: string;
   onAvatarPress?: (userId: string) => void;
-  onMediaPress?: (url: string, type?: 'image' | 'video') => void;
+  onMediaPress?: (url: string, type?: 'image' | 'video' | 'document') => void;
   onLongPress?: (message: Message) => void;
   onReplyPress?: (replyToId: string) => void;
 }) => {
@@ -821,10 +821,13 @@ const MessageBubble = React.memo(({
           }} />
         )}
         {!isImage && !isVideo && hasAttachment && attachUrl && (
-          <View style={styles.attachFile}>
+          <TouchableOpacity style={styles.attachFile} onPress={(e) => {
+            e.stopPropagation();
+            onMediaPress?.(attachUrl, 'document');
+          }}>
             <Text style={styles.attachFileIcon}>📄</Text>
             <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
-          </View>
+          </TouchableOpacity>
         )}
         {(message.content && (!hasAttachment || isImage || isVideo)) && (
           <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
