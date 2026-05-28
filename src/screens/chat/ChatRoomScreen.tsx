@@ -238,25 +238,21 @@ export default function ChatRoomScreen() {
           }
           continue;
         }
-        
-        const tempMatch = existing.find((m: any) => {
-          if (!m?.id?.startsWith('temp-')) return false;
-          if (m.content !== msg.content) return false;
-          if (m.senderId !== msg.senderId) return false;
-          const tempTime = m.sentAt;
-          const serverTime = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
-          return Math.abs(tempTime - serverTime) < 30000;
-        });
-        
+
+        // Check for existing record with same content+senderId+sentAt OR same attachmentUrl+senderId
         const dupByContent = existing.find((m: any) => {
           if ((m as any).serverId === msg.id) return false;
-          if (m.content !== msg.content) return false;
-          if (m.senderId !== msg.senderId) return false;
           const msgTime = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
-          return Math.abs(m.sentAt - msgTime) < 5000;
+          // Same content+senderId within 30s window
+          if (m.content === msg.content && m.senderId === msg.senderId && Math.abs(m.sentAt - msgTime) < 30000) return true;
+          // Same attachmentUrl (for attachment messages)
+          const msgUrl = (msg as any).attachmentUrl;
+          const mUrl = (m as any).attachmentUrl;
+          if (msgUrl && mUrl && mUrl === msgUrl && m.senderId === msg.senderId) return true;
+          return false;
         });
         if (dupByContent) {
-          if (!dupByContent.serverId) {
+          if (!(dupByContent as any).serverId) {
             operations.push(
               dupByContent.prepareUpdate((m: any) => {
                 m.serverId = msg.id;
@@ -268,6 +264,15 @@ export default function ChatRoomScreen() {
           }
           continue;
         }
+
+        const tempMatch = existing.find((m: any) => {
+          if (!m?.id?.startsWith('temp-')) return false;
+          if (m.content !== msg.content) return false;
+          if (m.senderId !== msg.senderId) return false;
+          const tempTime = m.sentAt;
+          const serverTime = typeof msg.sentAt === 'string' ? new Date(msg.sentAt).getTime() : msg.sentAt;
+          return Math.abs(tempTime - serverTime) < 30000;
+        });
 
         if (tempMatch) {
           operations.push(
@@ -675,18 +680,29 @@ export default function ChatRoomScreen() {
         abortSignal,
       );
 
-      // Видаляємо temp-повідомлення
+      // Не блокуємо UI — відправляємо fire-and-forget
       const messageContent = shouldUseCaption(type) ? caption : (caption || result.name);
-      const sent = await chatApi.sendMessage(chatId, messageContent, reply?.id, result.url);
-      const sentMsg = {
-        ...sent,
-        sentAt: typeof sent.sentAt === 'string' ? sent.sentAt : new Date(sent.sentAt).toISOString(),
-        replyTo: reply || (sent as any).replyTo,
-      } as Message;
-      setMessages(prev => prev.map(m => m.id === tempId ? sentMsg : m));
-      abortSignal.settled = true;
-      abortUploadsRef.current.delete(tempId);
-      await saveMessagesToDB([sentMsg]);
+      chatApi.sendMessage(chatId, messageContent, reply?.id, result.url)
+        .then(async (sent) => {
+          const sentMsg = {
+            ...sent,
+            sentAt: typeof sent.sentAt === 'string' ? sent.sentAt : new Date(sent.sentAt).toISOString(),
+            replyTo: reply || (sent as any).replyTo,
+          } as Message;
+          setMessages(prev => prev.map(m => m.id === tempId ? sentMsg : m));
+          abortSignal.settled = true;
+          abortUploadsRef.current.delete(tempId);
+          await saveMessagesToDB([sentMsg]);
+        })
+        .catch((sendErr: any) => {
+          console.warn('[uploadAndSend] sendMessage after upload failed:', sendErr);
+          if (!getServerReachable() || String(sendErr?.message || sendErr).includes('Network request failed')) {
+            syncOfflineAttachment(result.url, result.name, type, tempId + '-retry', caption, reply?.id);
+          }
+          setMessages(prev => prev.filter(m => m.id === tempId));
+          abortUploadsRef.current.delete(tempId);
+          abortSignal.settled = true;
+        });
 
       // Відправляємо повідомлення через API з attachmentUrl
       /*
@@ -715,9 +731,7 @@ export default function ChatRoomScreen() {
       }
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
-      if (!abortSignal.aborted || abortSignal.settled) {
-        setUploadingCount(c => Math.max(0, c - 1));
-      }
+      setUploadingCount(c => Math.max(0, c - 1));
     }
   };
 
