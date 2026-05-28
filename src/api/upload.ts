@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system/legacy';
+import { checkServerReachable } from './axios';
 
 /**
  * Конвертує content:// URI у file:// URI, використовуючи expo-file-system.
@@ -32,6 +33,12 @@ export async function uploadFormData<T>(
   onProgress?: (progress: number) => void,
   abortSignal?: { aborted: boolean; onAbort?: () => void },
 ): Promise<T> {
+  // Перевіряємо доступність сервера перед початком upload
+  const isServerReachable = await checkServerReachable();
+  if (!isServerReachable) {
+    throw new Error('Server is not reachable');
+  }
+
   const token = await SecureStore.getItemAsync('accessToken');
   const parts: [string, any][] = (formData as any)._parts || [];
   const filePart = parts.find(([, value]) => value && typeof value === 'object' && value.uri);
@@ -132,7 +139,7 @@ export async function uploadFormData<T>(
       };
     }
 
-    xhr.timeout = 600000; // 10 хвилин
+    xhr.timeout = 30000; // 30 секунд (було 10 хвилин — занадто довго при offline)
 
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);

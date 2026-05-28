@@ -12,7 +12,7 @@ import { chatApi } from '../../api/chat.api';
 import { Message, SystemRole, ClearanceLevel } from '../../types';
 import { Colors } from '../../utils/theme';
 import { fileUtils } from '../../utils/fileUtils';
-import { getServerReachable } from '../../api/axios';
+import { getServerReachable, checkServerReachable } from '../../api/axios';
 import { ScreenHeader } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket, emitWhenReady } from '../../hooks/useSocket';
@@ -424,7 +424,7 @@ export default function ChatRoomScreen() {
       setMessages(mapped);
       setLoading(false);
 
-      if (isOnlineRef.current && getServerReachable()) {
+      if (isOnlineRef.current && await checkServerReachable()) {
         try {
           const data = await chatApi.getLatestMessages(chatId, 50);
           if (data && data.length > 0) {
@@ -533,7 +533,7 @@ export default function ChatRoomScreen() {
     setMessages(prev => [tempMsg, ...prev]);
 
     try {
-      if (getServerReachable()) {
+      if (await checkServerReachable()) {
         const sent = await chatApi.sendMessage(chatId, content, repId);
         const sentMsg = {
           ...sent,
@@ -706,7 +706,7 @@ export default function ChatRoomScreen() {
     abortUploadsRef.current.set(tempId, abortSignal);
 
     try {
-      if (!getServerReachable()) {
+      if (!await checkServerReachable()) {
         await syncOfflineAttachment(uri, name, type, tempId, caption, reply?.id);
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'pending' } : m));
         return;
