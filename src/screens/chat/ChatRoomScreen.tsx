@@ -553,7 +553,8 @@ export default function ChatRoomScreen() {
         });
       }
     } catch (err: any) {
-      if (!getServerReachable() || String(err?.message || err).includes('Network request failed')) {
+      const isReachable = await checkServerReachable();
+      if (!isReachable || String(err?.message || err).includes('Network request failed')) {
         const { SyncService } = await import('../../db/SyncService');
         await SyncService.saveMessageOffline({
           chatId,
@@ -745,11 +746,15 @@ export default function ChatRoomScreen() {
           abortUploadsRef.current.delete(tempId);
           await saveMessagesToDB([sentMsg]);
         })
-        .catch((sendErr: any) => {
+        .catch(async (sendErr: any) => {
           if (abortSignal.aborted) return;
           console.warn('[uploadAndSend] sendMessage after upload failed:', sendErr);
-          if (!getServerReachable() || String(sendErr?.message || sendErr).includes('Network request failed')) {
+          const isReachable = await checkServerReachable();
+          if (!isReachable || String(sendErr?.message || sendErr).includes('Network request failed')) {
             syncOfflineAttachment(result.url, result.name, type, tempId + '-retry', caption, reply?.id);
+          } else {
+            // Якщо сервер доступний — зберігаємо в локальну БД як pending
+            await savePendingAttachment(result.url, result.name, type, caption);
           }
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'failed' } : m));
           abortUploadsRef.current.delete(tempId);
@@ -775,13 +780,17 @@ export default function ChatRoomScreen() {
         // Користувач скасував — нічого не робимо
         return;
       }
-      if (!getServerReachable() || String(e?.message || e).includes('Network request failed')) {
+      const isReachable = await checkServerReachable();
+      if (!isReachable || String(e?.message || e).includes('Network request failed')) {
         await syncOfflineAttachment(uri, name, type, tempId, caption, reply?.id);
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'pending' } : m));
         Alert.alert('Офлайн', 'Файл додано в чергу і буде відправлено після відновлення звʼязку');
         return;
       }
-      Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
+      // Якщо сервер доступний — зберігаємо в локальну БД як pending
+      await savePendingAttachment(uri, name, type, caption);
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'pending' } : m));
+      Alert.alert('Помилка', 'Файл збережено локально: ' + (e.message || e));
     } finally {
       setUploadingCount(c => Math.max(0, c - 1));
     }

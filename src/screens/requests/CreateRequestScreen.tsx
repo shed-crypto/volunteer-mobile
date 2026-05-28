@@ -11,7 +11,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
 import { requestsApi } from '../../api/requests.api';
-import { API_BASE_URL, getServerReachable } from '../../api/axios';
+import { API_BASE_URL, checkServerReachable } from '../../api/axios';
 import { RequestCategory, RequestUrgency, ClearanceLevel } from '../../types';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Colors, categoryLabels, urgencyColors, clearanceLabels } from '../../utils/theme';
@@ -199,7 +199,7 @@ export default function CreateRequestScreen() {
     try {
       if (isEditMode) {
         // Check if offline — if so, ask user about limited offline edit
-        if (await getServerReachable() === false) {
+        if (await checkServerReachable() === false) {
           Alert.alert(
             '⚠️ Немає підключення до мережі',
             'Якщо мережа не з\'явиться протягом 10 хвилин — зміни буде автоматично скасовано.\n\n💡 Для швидких правок краще використати «Доповнити заявку» — вони збережуться в черзі без часового обмеження.',
@@ -242,7 +242,7 @@ export default function CreateRequestScreen() {
         navigation.goBack();
       } else {
         // Check if offline
-        if (await getServerReachable() === false) {
+        if (await checkServerReachable() === false) {
           try {
             const { SyncService } = await import('../../db/SyncService');
             await SyncService.saveRequestOffline(updateData);
@@ -299,7 +299,7 @@ export default function CreateRequestScreen() {
     if (!additionalInfo.trim()) return;
     setLoading(true);
     try {
-      if (isOffline || !getServerReachable()) {
+      if (isOffline || !(await checkServerReachable())) {
         // Offline: enqueue to action_queue
         const { collections, safeWrite } = await import('../../db/index');
         await safeWrite(async () => {
@@ -364,7 +364,7 @@ export default function CreateRequestScreen() {
     if (isEditMode && !initialDataLoaded && route.params?.requestId) {
       const loadRequest = async () => {
         try {
-          if (getServerReachable()) {
+          if (await checkServerReachable()) {
             const req = await requestsApi.getOne(route.params.requestId);
             setTitle(req.title);
             setDescription(req.description || '');
