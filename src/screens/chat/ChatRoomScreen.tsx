@@ -38,7 +38,6 @@ const dedupMessagesById = (msgs: Message[]): Message[] => {
   const seen = new Set<string>();
   return msgs.filter(m => {
     if (seen.has(m.id)) {
-      console.warn('[ChatRoom] dedup removed duplicate msg id:', m.id);
       return false;
     }
     seen.add(m.id);
@@ -47,31 +46,46 @@ const dedupMessagesById = (msgs: Message[]): Message[] => {
 };
 
 function AdaptiveImage({ uri }: { uri: string }) {
-  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [size, setSize] = useState({ width: 220, height: 160 });
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    Image.getSize(uri, (width, height) => {
-      const maxWidth = 250;
-      const maxHeight = 200;
-      const ratio = width / height;
+    setFailed(false);
+    Image.getSize(
+      uri,
+      (width, height) => {
+        const maxWidth = 250;
+        const maxHeight = 200;
+        const ratio = width / height;
 
-      let finalWidth = width;
-      let finalHeight = height;
+        let finalWidth = width;
+        let finalHeight = height;
 
-      if (width > maxWidth) {
-        finalWidth = maxWidth;
-        finalHeight = maxWidth / ratio;
-      }
-      if (finalHeight > maxHeight) {
-        finalHeight = maxHeight;
-        finalWidth = maxHeight * ratio;
-      }
+        if (width > maxWidth) {
+          finalWidth = maxWidth;
+          finalHeight = maxWidth / ratio;
+        }
+        if (finalHeight > maxHeight) {
+          finalHeight = maxHeight;
+          finalWidth = maxHeight * ratio;
+        }
 
-      setSize({ width: finalWidth, height: finalHeight });
-    });
+        setSize({ width: finalWidth, height: finalHeight });
+      },
+      () => {
+        setFailed(true);
+        setSize({ width: 220, height: 120 });
+      },
+    );
   }, [uri]);
 
-  if (size.width === 0) return <ActivityIndicator style={styles.attachImage} />;
+  if (failed) {
+    return (
+      <View style={[styles.attachImage, styles.attachImageMissing, { width: size.width, height: size.height }]}>
+        <Text style={styles.attachImageMissingText}>Зображення недоступне</Text>
+      </View>
+    );
+  }
 
   return (
     <Image 
@@ -95,7 +109,6 @@ export default function ChatRoomScreen() {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [text, setText] = useState('');
   const [typing, setTyping] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' }>({ url: '', type: 'image' });
@@ -109,6 +122,7 @@ export default function ChatRoomScreen() {
   const TAB_BAR_HEIGHT = 65; 
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
+  const lastTextSendRef = useRef<{ content: string; at: number } | null>(null);
 
   const { sendMessage, sendTyping } = useSocket({
     onNewMessage: (msg) => {
@@ -138,7 +152,7 @@ export default function ChatRoomScreen() {
           const oldTemp = updated[tempIndex];
           updated[tempIndex] = { ...newMsg, replyTo: oldTemp.replyTo };
           replacedTemp = true;
-          return updated;
+          return dedupMessagesById(updated);
         }
 
         if (prev.find((m) => m.id === newMsg.id)) return prev;
@@ -147,7 +161,7 @@ export default function ChatRoomScreen() {
           newMsg.replyTo = prev.find(m => m.id === newMsg.replyToId);
         }
 
-        return [newMsg, ...prev];
+        return dedupMessagesById([newMsg, ...prev]);
       });
 
       // Зберігаємо повідомлення в локальну БД, щоб воно не зникло після перезаходу
@@ -213,6 +227,41 @@ export default function ChatRoomScreen() {
 
   const isLoadingRef = useRef(false);
 
+  const cleanupDuplicateLocalMessages = useCallback(async (localMessages?: any[]) => {
+    try {
+      const rows = localMessages ?? await collections.chatMessages
+        .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
+        .fetch();
+      const seen = new Map<string, any>();
+      const duplicates: any[] = [];
+
+      for (const row of rows as any[]) {
+        const key = row.serverId || row.id;
+        const existing = seen.get(key);
+        if (!existing) {
+          seen.set(key, row);
+          continue;
+        }
+
+        const keepExisting = !!existing.serverId || existing.isSynced || existing.sentAt >= row.sentAt;
+        if (keepExisting) {
+          duplicates.push(row);
+        } else {
+          duplicates.push(existing);
+          seen.set(key, row);
+        }
+      }
+
+      if (!duplicates.length) return;
+      await safeWrite(async () => {
+        await database.batch(...duplicates.map((m) => m.prepareDestroyPermanently()));
+      });
+      console.log(`[ChatRoom] cleaned ${duplicates.length} duplicate local message(s)`);
+    } catch (err) {
+      console.warn('[ChatRoom] duplicate cleanup failed:', err);
+    }
+  }, [chatId]);
+
   const saveMessagesToDB = useCallback(async (msgs: Message[]) => {
     if (!msgs.length) return;
     try {
@@ -223,12 +272,16 @@ export default function ChatRoomScreen() {
       const operations: any[] = [];
       
       for (const msg of msgs) {
-        const existingByServerId = existing.find((m: any) => m.serverId === msg.id);
-        if (existingByServerId) {
+        const existingByServerId = existing.filter((m: any) => m.serverId === msg.id);
+        const primaryByServerId = existingByServerId[0];
+        for (const dup of existingByServerId.slice(1)) {
+          operations.push(dup.prepareDestroyPermanently());
+        }
+        if (primaryByServerId) {
           // Don't overwrite pending (unsynced) messages — keep their local state
-          if (!(existingByServerId as any).pendingAction) {
+          if (!(primaryByServerId as any).pendingAction) {
             operations.push(
-              existingByServerId.prepareUpdate((m: any) => {
+              primaryByServerId.prepareUpdate((m: any) => {
                 m.messageStatus = (msg as any).messageStatus || 'sent';
                 m.readByRaw = JSON.stringify((msg as any).readBy || []);
                 m.deliveredToRaw = JSON.stringify((msg as any).deliveredTo || []);
@@ -358,6 +411,7 @@ export default function ChatRoomScreen() {
       const localMessages = await collections.chatMessages
         .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
         .fetch();
+      cleanupDuplicateLocalMessages(localMessages);
       
       const mapped = dedupMessagesById(localMessages.map(mapLocalToMessage));
 
@@ -379,9 +433,10 @@ export default function ChatRoomScreen() {
             const updatedLocal = await collections.chatMessages
               .query(Q.where('chat_id', chatId), Q.sortBy('sent_at', Q.desc))
               .fetch();
+            cleanupDuplicateLocalMessages(updatedLocal);
             const remapped = dedupMessagesById(updatedLocal.map(mapLocalToMessage));
             remapped.forEach(m => {
-              if (m.replyToId) m.replyTo = remapped.find(prev => remapped.find(x => x.id === m.replyToId));
+              if (m.replyToId) m.replyTo = remapped.find(prev => prev.id === m.replyToId);
             });
             setMessages(remapped);
             setHasMore(remapped.length >= 50);
@@ -403,7 +458,7 @@ export default function ChatRoomScreen() {
       setLoading(false);
       isLoadingRef.current = false;
     }
-  }, [chatId, saveMessagesToDB, navigation]);
+  }, [chatId, saveMessagesToDB, navigation, cleanupDuplicateLocalMessages]);
 
   useEffect(() => {
     load();
@@ -449,18 +504,17 @@ export default function ChatRoomScreen() {
 
   const handleSend = async () => {
     const content = text.trim();
-    if (!content || sending) return;
-    setSending(true);
+    if (!content) return;
+    const nowMs = Date.now();
+    const lastSend = lastTextSendRef.current;
+    if (lastSend?.content === content && nowMs - lastSend.at < 800) return;
+    lastTextSendRef.current = { content, at: nowMs };
     const repId = replyToMessage?.id;
     const now = new Date().toISOString();
     setText('');
     const prevReply = replyToMessage;
     setReplyToMessage(null);
     sendTyping(chatId, false);
-    
-    if (getServerReachable()) {
-      chatApi.sendMessage(chatId, content).catch(console.warn);
-    }
 
     const tempMsg: Message = {
       id: `temp-${Date.now()}`,
@@ -513,8 +567,6 @@ export default function ChatRoomScreen() {
         setMessages(prev => prev.map(m => m.id === tempMsg.id ? { ...m, messageStatus: 'failed' } : m));
         Alert.alert('Помилка', 'Не вдалося відправити повідомлення');
       }
-    } finally {
-      setSending(false);
     }
   };
 
@@ -626,21 +678,15 @@ export default function ChatRoomScreen() {
     setUploadingCount(c => c + 1);
 
     // Логуємо розмір файлу для діагностики швидкості
-    (async () => {
-      try {
-        const info = await (await import('expo-file-system/legacy')).documentDirectory;
-        console.log(`[uploadAndSend] Starting upload: ${name}, type=${type}`);
-      } catch (_) {}
-    })();
-
     // Створюємо temp-повідомлення ОДРАЗУ, щоб показати прев'ю
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     const now = new Date().toISOString();
+    const tempContent = shouldUseCaption(type) ? caption : (caption || name);
     const tempMsg: Message = {
       id: tempId,
       chatId,
       senderId: user?.id || '',
-      content: name,
+      content: tempContent,
       sentAt: now,
       readBy: [],
       messageType: 'attachment' as any,
@@ -680,26 +726,32 @@ export default function ChatRoomScreen() {
         abortSignal,
       );
 
+      if (abortSignal.aborted) {
+        return;
+      }
+
       // Не блокуємо UI — відправляємо fire-and-forget
       const messageContent = shouldUseCaption(type) ? caption : (caption || result.name);
       chatApi.sendMessage(chatId, messageContent, reply?.id, result.url)
         .then(async (sent) => {
+          if (abortSignal.aborted) return;
           const sentMsg = {
             ...sent,
             sentAt: typeof sent.sentAt === 'string' ? sent.sentAt : new Date(sent.sentAt).toISOString(),
             replyTo: reply || (sent as any).replyTo,
           } as Message;
-          setMessages(prev => prev.map(m => m.id === tempId ? sentMsg : m));
+          setMessages(prev => dedupMessagesById(prev.map(m => m.id === tempId ? sentMsg : m)));
           abortSignal.settled = true;
           abortUploadsRef.current.delete(tempId);
           await saveMessagesToDB([sentMsg]);
         })
         .catch((sendErr: any) => {
+          if (abortSignal.aborted) return;
           console.warn('[uploadAndSend] sendMessage after upload failed:', sendErr);
           if (!getServerReachable() || String(sendErr?.message || sendErr).includes('Network request failed')) {
             syncOfflineAttachment(result.url, result.name, type, tempId + '-retry', caption, reply?.id);
           }
-          setMessages(prev => prev.filter(m => m.id === tempId));
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'failed' } : m));
           abortUploadsRef.current.delete(tempId);
           abortSignal.settled = true;
         });
@@ -777,8 +829,10 @@ export default function ChatRoomScreen() {
       if (signal.onAbort) signal.onAbort();
       setMessages(prev => prev.filter(m => m.id !== tempId));
       abortUploadsRef.current.delete(tempId);
-      setUploadingCount(c => Math.max(0, c - 1));
+      return;
     }
+
+    setMessages(prev => prev.filter(m => m.id !== tempId));
   };
 
   /** Показати діалог для введення підпису до медіа */
@@ -827,7 +881,7 @@ export default function ChatRoomScreen() {
       // Нормалізуємо URI документа (Android content:// → file://) перед відправкою
       const normalized = await fileUtils.normalizeFileUri(asset.uri, asset.name, asset.mimeType);
       // Для документів caption не показуємо — відправляємо одразу з reply
-      await uploadAndSend(normalized.uri, normalized.name, normalized.mimeType, '', replyToMessage);
+      uploadAndSend(normalized.uri, normalized.name, normalized.mimeType, '', replyToMessage);
     } catch {
       Alert.alert('Помилка', 'Не вдалося відкрити документ');
     }
@@ -968,19 +1022,13 @@ export default function ChatRoomScreen() {
           returnKeyType="send"
           onSubmitEditing={handleSend}
         />
-        {uploadingCount > 0 ? (
-          <View style={[styles.sendBtn, { backgroundColor: Colors.primary }]}>
-            <ActivityIndicator color="#fff" />
-          </View>
-        ) : (
-          <TouchableOpacity
+        <TouchableOpacity
             style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
             onPress={handleSend}
             disabled={!text.trim()}
           >
             <Text style={{ fontSize: 20 }}>➤</Text>
           </TouchableOpacity>
-        )}
       </View>
 
       {showCaptionInput && pendingMedia && (
@@ -1143,7 +1191,10 @@ const MessageBubble = React.memo(({
             </Text>
             {onCancelUpload && (
               <TouchableOpacity
-                style={{ marginLeft: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(255,0,0,0.6)', alignItems: 'center', justifyContent: 'center' }}
+                style={styles.cancelUploadBtn}
+                hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+                activeOpacity={0.7}
+                onPressIn={(e) => e.stopPropagation()}
                 onPress={(e) => { e.stopPropagation(); onCancelUpload(message.id); }}
               >
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', lineHeight: 14 }}>✕</Text>
@@ -1194,6 +1245,23 @@ const styles = StyleSheet.create({
   uploadProgressTextMine: {
     color: 'rgba(255,255,255,0.7)',
   },
+  cancelUploadBtn: {
+    marginLeft: 4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(220,38,38,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+    elevation: 5,
+  },
+  cancelUploadText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 16,
+  },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 6,
     padding: 10, backgroundColor: Colors.surface,
@@ -1235,6 +1303,16 @@ const styles = StyleSheet.create({
   replySender: { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 2 },
   replyText: { fontSize: 12, color: Colors.textSecondary },
   attachImage: { width: 220, height: 160, borderRadius: 10, marginBottom: 6 },
+  attachImageMissing: {
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachImageMissingText: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   attachFile: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, paddingRight: 36 },
   attachFileRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },

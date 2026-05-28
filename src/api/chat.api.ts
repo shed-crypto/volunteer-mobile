@@ -34,7 +34,6 @@ export const chatApi = {
     onProgress?: (progress: number) => void,
     abortSignal?: { aborted: boolean; onAbort?: () => void },
   ): Promise<{ url: string; name: string; mimeType: string }> => {
-    console.log('[chatApi.sendFile] input file:', file);
     const formData = new FormData();
     formData.append('file', {
       uri: file.uri,
@@ -43,11 +42,9 @@ export const chatApi = {
     } as any);
 
     const url = `${API_BASE_URL}/chats/${chatId}/files`;
-    console.log('[chatApi.sendFile] posting to:', url);
 
     try {
       const json = await uploadFormData<{ url: string; name: string; mimeType: string }>(url, formData, onProgress, abortSignal);
-      console.log('[chatApi.sendFile] response json:', json);
       return json;
     } catch (error: any) {
       console.error('[chatApi.sendFile] fetch error:', error.message, error);

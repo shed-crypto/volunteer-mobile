@@ -33,7 +33,80 @@ export async function uploadFormData<T>(
   abortSignal?: { aborted: boolean; onAbort?: () => void },
 ): Promise<T> {
   const token = await SecureStore.getItemAsync('accessToken');
+  const parts: [string, any][] = (formData as any)._parts || [];
+  const filePart = parts.find(([, value]) => value && typeof value === 'object' && value.uri);
 
+  if (filePart) {
+    const [fieldName, file] = filePart;
+    const fileUri = await ensureFileUri(file.uri);
+    const headers: Record<string, string> = {};
+    const parameters: Record<string, string> = {};
+
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    for (const [key, value] of parts) {
+      if (key === fieldName) continue;
+      if (value !== undefined && value !== null) {
+        parameters[key] = String(value);
+      }
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const task = FileSystem.createUploadTask(
+        url,
+        fileUri,
+        {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+          fieldName,
+          mimeType: file.type || 'application/octet-stream',
+          parameters,
+          headers,
+          sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+        },
+        (data) => {
+          if (!onProgress || data.totalBytesExpectedToSend <= 0) return;
+          const pct = Math.round((data.totalBytesSent / data.totalBytesExpectedToSend) * 100);
+          onProgress(Math.min(pct, 99));
+        },
+      );
+
+      if (abortSignal) {
+        abortSignal.onAbort = () => {
+          if (settled) return;
+          settled = true;
+          task.cancelAsync().catch(() => undefined);
+          reject(new Error('Upload cancelled'));
+        };
+      }
+
+      task.uploadAsync()
+        .then((result) => {
+          if (settled) return;
+          settled = true;
+          if (!result) {
+            reject(new Error('Upload cancelled'));
+            return;
+          }
+          const body = result.body || '';
+          if (result.status < 200 || result.status >= 300) {
+            reject(new Error(`Upload failed: ${result.status} ${body}`));
+            return;
+          }
+          try {
+            resolve(body ? JSON.parse(body) : ({} as T));
+          } catch (err) {
+            reject(err);
+          }
+        })
+        .catch((err) => {
+          if (settled) return;
+          settled = true;
+          reject(abortSignal?.aborted ? new Error('Upload cancelled') : err);
+        });
+    });
+  }
   // Перевіряємо, чи є в FormData файли з content:// URI і конвертуємо їх
   // (звичайний спосіб — через formData.entries/set — не працює в RN,
   // тому покладаємося на те, що викликаючий код вже нормалізував URI)
@@ -67,7 +140,6 @@ export async function uploadFormData<T>(
 
     xhr.onload = () => {
       const body = xhr.responseText || '';
-      console.log('[uploadFormData] response:', { status: xhr.status, bodyLength: body.length });
       if (xhr.status < 200 || xhr.status >= 300) {
         reject(new Error(`Upload failed: ${xhr.status} ${body}`));
         return;
@@ -100,7 +172,7 @@ export async function uploadFormData<T>(
     };
 
     // Додаткове логування: дамп вмісту FormData (доступно лише через entries в дебаг-режимі)
-    try {
+    if (false && __DEV__) try {
       console.log('[uploadFormData] sending to:', url, 'FormData entries:');
       // @ts-ignore - _parts є внутрішнім полем FormData в React Native
       const parts = (formData as any)._parts || [];
