@@ -14,6 +14,7 @@ interface MediaViewerProps {
 
 export const MediaViewer: React.FC<MediaViewerProps> = ({ visible, url, type, onClose }) => {
   const [saving, setSaving] = useState(false);
+  const [showActionMenu, setShowActionMenu] = useState(false);
 
   const handleOpen = async () => {
     try {
@@ -44,39 +45,45 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({ visible, url, type, on
   return (
     <Modal visible={visible} transparent={true} animationType="fade">
       <View style={styles.container}>
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-          <Text style={styles.closeText}>✕</Text>
-        </TouchableOpacity>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowActionMenu(true)}>
+            <Text style={styles.actionText}>⋯</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <Text style={styles.closeText}>✕</Text>
+          </TouchableOpacity>
+        </View>
 
-        {type === 'image' && (
-          <Image source={{ uri: url }} style={styles.image} resizeMode="contain" />
-        )}
-        {type === 'video' && (
-          <Video
-            source={{ uri: url }}
-            style={styles.image}
-            resizeMode={ResizeMode.CONTAIN}
-            useNativeControls
-            shouldPlay
-          />
-        )}
-        {type === 'document' && (
-          <View style={styles.docPlaceholder}>
-            <Text style={{ fontSize: 60 }}>📄</Text>
-            <TouchableOpacity style={styles.downloadBtn} onPress={handleOpen}>
-              <Text style={styles.downloadText}>Відкрити файл</Text>
+        {showActionMenu && (
+          <View style={styles.actionMenu}>
+            <TouchableOpacity style={styles.actionMenuItem} onPress={handleOpen}>
+              <Text style={styles.actionMenuText}>Відкрити файл</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.downloadBtn, saving && { opacity: 0.5 }]}
-              onPress={handleSaveToDevice}
-              disabled={saving}
-            >
-              <Text style={styles.downloadText}>
-                {saving ? 'Збереження...' : 'Зберегти на пристрій'}
-              </Text>
+            <TouchableOpacity style={styles.actionMenuItem} onPress={handleSaveToDevice}>
+              <Text style={styles.actionMenuText}>Зберегти на пристрій</Text>
             </TouchableOpacity>
           </View>
         )}
+
+        <View style={styles.mediaContainer}>
+          {type === 'image' && (
+            <Image source={{ uri: url }} style={styles.image} resizeMode="contain" />
+          )}
+          {type === 'video' && (
+            <Video
+              source={{ uri: url }}
+              style={styles.image}
+              resizeMode={ResizeMode.CONTAIN}
+              useNativeControls
+              shouldPlay
+            />
+          )}
+          {type === 'document' && (
+            <View style={styles.docPlaceholder}>
+              <Text style={{ fontSize: 60 }}>📄</Text>
+            </View>
+          )}
+        </View>
       </View>
     </Modal>
   );
@@ -118,9 +125,31 @@ export const VideoThumbnail: React.FC<{ uri: string, onPress: () => void }> = ({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },
-  image: { width: '100%', height: '80%' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10 },
+  actionBtn: { padding: 10 },
+  actionText: { color: '#fff', fontSize: 24 },
   closeBtn: { position: 'absolute', top: 50, right: 20, zIndex: 1, padding: 10 },
   closeText: { color: '#fff', fontSize: 30 },
+  actionMenu: { 
+    position: 'absolute', 
+    bottom: 100, 
+    left: 20, 
+    right: 20, 
+    backgroundColor: 'rgba(0,0,0,0.9)', 
+    borderRadius: 10, 
+    overflow: 'hidden' 
+  },
+  actionMenuItem: { 
+    padding: 15, 
+    borderBottomWidth: 1, 
+    borderBottomColor: 'rgba(255,255,255,0.2)' 
+  },
+  actionMenuText: { color: '#fff', fontSize: 16 },
+  mediaContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  image: {
+    width: '100%',
+    height: '100%',
+  },
   thumbContainer: { width: 220, height: 160, borderRadius: 10, marginBottom: 6, backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' },
   thumb: { width: '100%', height: '100%', borderRadius: 10 },
   thumbPlaceholder: { fontSize: 40 },

@@ -907,7 +907,7 @@ const styles = StyleSheet.create({
   attachFileRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },
   attachFileName: { flex: 1, fontSize: 13, color: Colors.text },
-  attachDownloadBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.07)', alignItems: 'center', justifyContent: 'center' },
+  attachDownloadBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   systemMsg: { alignSelf: 'center', backgroundColor: Colors.borderLight, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   systemMsgText: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center' },
   scrollToBottom: {
