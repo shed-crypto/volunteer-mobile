@@ -741,10 +741,16 @@ export default function ChatRoomScreen() {
             sentAt: typeof sent.sentAt === 'string' ? sent.sentAt : new Date(sent.sentAt).toISOString(),
             replyTo: reply || (sent as any).replyTo,
           } as Message;
-          setMessages(prev => dedupMessagesById(prev.map(m => m.id === tempId ? sentMsg : m)));
+          // Використовуємо функцію для оновлення, яка перевіряє наявність tempId
+          // Якщо tempId вже був замінений через WebSocket — не перезаписуємо
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === tempId);
+            if (idx === -1) return prev; // вже замінено через WS
+            return dedupMessagesById(prev.map(m => m.id === tempId ? sentMsg : m));
+          });
           abortSignal.settled = true;
           abortUploadsRef.current.delete(tempId);
-          await saveMessagesToDB([sentMsg]);
+          // Не зберігаємо в БД — onNewMessage вже це зробив
         })
         .catch(async (sendErr: any) => {
           if (abortSignal.aborted) return;
@@ -780,6 +786,9 @@ export default function ChatRoomScreen() {
         // Користувач скасував — нічого не робимо
         return;
       }
+      // Якщо помилка після того як WS замінив tempId — ігноруємо
+      // tempId видаляється з abortUploadsRef коли WS замінює його
+      if (!abortUploadsRef.current.has(tempId)) return;
       const isReachable = await checkServerReachable();
       if (!isReachable || String(e?.message || e).includes('Network request failed')) {
         await syncOfflineAttachment(uri, name, type, tempId, caption, reply?.id);
