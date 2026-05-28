@@ -821,13 +821,25 @@ const MessageBubble = React.memo(({
           }} />
         )}
         {!isImage && !isVideo && hasAttachment && attachUrl && (
-          <TouchableOpacity style={styles.attachFile} onPress={(e) => {
-            e.stopPropagation();
-            onMediaPress?.(attachUrl, 'document');
-          }}>
-            <Text style={styles.attachFileIcon}>📄</Text>
-            <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
-          </TouchableOpacity>
+          <View style={styles.attachFileRow}>
+            <TouchableOpacity style={styles.attachFile} onPress={(e) => {
+              e.stopPropagation();
+              onMediaPress?.(attachUrl, 'document');
+            }}>
+              <Text style={styles.attachFileIcon}>📄</Text>
+              <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.attachDownloadBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                const filename = attachUrl.split('/').pop() || 'file';
+                fileUtils.downloadAndOpenFile(attachUrl, filename, 'application/octet-stream');
+              }}
+            >
+              <Text style={{ fontSize: 16 }}>⬇</Text>
+            </TouchableOpacity>
+          </View>
         )}
         {(message.content && (!hasAttachment || isImage || isVideo)) && (
           <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
@@ -891,9 +903,11 @@ const styles = StyleSheet.create({
   replySender: { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 2 },
   replyText: { fontSize: 12, color: Colors.textSecondary },
   attachImage: { width: 220, height: 160, borderRadius: 10, marginBottom: 6 },
-  attachFile: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 6 },
+  attachFile: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  attachFileRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },
   attachFileName: { flex: 1, fontSize: 13, color: Colors.text },
+  attachDownloadBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.07)', alignItems: 'center', justifyContent: 'center' },
   systemMsg: { alignSelf: 'center', backgroundColor: Colors.borderLight, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   systemMsgText: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center' },
   scrollToBottom: {
