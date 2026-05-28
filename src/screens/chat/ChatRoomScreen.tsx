@@ -1126,6 +1126,8 @@ const MessageBubble = React.memo(({
     : null;
   const isImage = attachUrl ? /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/i.test(attachUrl) : false;
   const isVideo = attachUrl ? /\.(mp4|mov|avi|mkv|m4v)$/i.test(attachUrl) : false;
+  // Витягуємо назву файлу з attachmentUrl якщо content порожній
+  const displayFileName = message.content || (attachUrl ? attachUrl.split('/').pop()?.split('?')[0] || '' : '');
 
   return (
     <TouchableOpacity 
@@ -1185,7 +1187,7 @@ const MessageBubble = React.memo(({
               onMediaPress?.(attachUrl, 'document');
             }}>
               <Text style={styles.attachFileIcon}>📄</Text>
-              <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
+              <Text style={styles.attachFileName} numberOfLines={2}>{displayFileName}</Text>
             </TouchableOpacity>
           </View>
         )}

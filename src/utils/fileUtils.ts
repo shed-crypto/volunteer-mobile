@@ -107,12 +107,38 @@ export const fileUtils = {
     console.log('[openWithSystemApp] downloading:', { url: fullUrl, filename, mimeType });
     try {
       const localUri = await downloadToCache(fullUrl, filename);
+      console.log('[openWithSystemApp] cached at:', localUri);
       if (localUri) {
-        await openWithViewer(localUri, mimeType);
+        // Відкриваємо через системний ACTION_VIEW
+        try {
+          await openWithViewer(localUri, mimeType);
+          console.log('[openWithSystemApp] viewer opened successfully');
+        } catch (viewErr) {
+          console.warn('[openWithSystemApp] openWithViewer failed, trying fallback share:', viewErr);
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(localUri, { mimeType, dialogTitle: 'Відкрити файл' });
+          } else {
+            Alert.alert('Помилка', 'Не вдалося відкрити файл');
+          }
+        }
+      } else {
+        Alert.alert('Помилка', 'Не вдалося завантажити файл');
       }
     } catch (error) {
       console.error('[openWithSystemApp] error:', error);
-      Alert.alert('Помилка', 'Не вдалося відкрити файл');
+      // Fallback: пробуємо Sharing напряму
+      try {
+        const fullUrl2 = normalizeAttachmentUrl(url);
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fullUrl2, {
+            mimeType,
+            dialogTitle: 'Відкрити файл',
+          });
+        }
+      } catch (shareErr) {
+        console.error('[openWithSystemApp] share fallback also failed:', shareErr);
+        Alert.alert('Помилка', 'Не вдалося відкрити файл');
+      }
     }
   },
 

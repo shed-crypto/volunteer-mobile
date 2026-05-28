@@ -101,6 +101,8 @@ export async function uploadFormData<T>(
             reject(new Error(`Upload failed: ${result.status} ${body}`));
             return;
           }
+          // Повідомляємо про 100% коли файл завантажено і отримано відповідь
+          onProgress?.(100);
           try {
             resolve(body ? JSON.parse(body) : ({} as T));
           } catch (err) {
@@ -152,6 +154,8 @@ export async function uploadFormData<T>(
         return;
       }
 
+      // Повідомляємо про 100% коли файл завантажено і отримано відповідь
+      onProgress?.(100);
       try {
         resolve(body ? JSON.parse(body) : ({} as T));
       } catch (err) {
