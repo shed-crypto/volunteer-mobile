@@ -27,6 +27,12 @@ type RouteParams = { ChatRoom: { chatId: string; chatName?: string } };
 const STATIC_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000/api')
   .replace('/api', '');
 
+type UploadAbortSignal = { aborted: boolean; settled?: boolean; onAbort?: () => void };
+
+const isImageMime = (mimeType?: string | null) => !!mimeType?.startsWith('image/');
+const isVideoMime = (mimeType?: string | null) => !!mimeType?.startsWith('video/');
+const shouldUseCaption = (mimeType?: string | null) => isImageMime(mimeType) || isVideoMime(mimeType);
+
 function AdaptiveImage({ uri }: { uri: string }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -77,13 +83,16 @@ export default function ChatRoomScreen() {
   const [text, setText] = useState('');
   const [typing, setTyping] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
   const [mediaViewerVisible, setMediaViewerVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: 'image' | 'video' }>({ url: '', type: 'image' });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
+  const [caption, setCaption] = useState('');
+  const [showCaptionInput, setShowCaptionInput] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<{uri: string, name: string, type: string} | null>(null);
   const TAB_BAR_HEIGHT = 65; 
   const flatRef = useRef<FlatList>(null);
   const typingTimer = useRef<any>(null);
@@ -451,18 +460,44 @@ export default function ChatRoomScreen() {
     
     setMessages(prev => [tempMsg, ...prev]);
 
-    import('../../db/SyncService')
-      .then((module) =>
-        module.SyncService.saveMessageOffline({
+    try {
+      if (getServerReachable()) {
+        const sent = await chatApi.sendMessage(chatId, content, repId);
+        const sentMsg = {
+          ...sent,
+          sentAt: typeof sent.sentAt === 'string' ? sent.sentAt : new Date(sent.sentAt).toISOString(),
+          replyTo: prevReply || (sent as any).replyTo,
+        } as Message;
+        setMessages(prev => prev.map(m => m.id === tempMsg.id ? sentMsg : m));
+        await saveMessagesToDB([sentMsg]);
+      } else {
+        const { SyncService } = await import('../../db/SyncService');
+        await SyncService.saveMessageOffline({
           chatId,
           senderId: user?.id || '',
           senderName: user?.fullName,
           content,
           replyToId: repId,
-        })
-      )
-      .catch((err) => console.warn('[handleSend] saveOffline failed:', err));
-    setSending(false);
+        });
+      }
+    } catch (err: any) {
+      if (!getServerReachable() || String(err?.message || err).includes('Network request failed')) {
+        const { SyncService } = await import('../../db/SyncService');
+        await SyncService.saveMessageOffline({
+          chatId,
+          senderId: user?.id || '',
+          senderName: user?.fullName,
+          content,
+          replyToId: repId,
+        });
+        setMessages(prev => prev.map(m => m.id === tempMsg.id ? { ...m, messageStatus: 'pending' } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === tempMsg.id ? { ...m, messageStatus: 'failed' } : m));
+        Alert.alert('Помилка', 'Не вдалося відправити повідомлення');
+      }
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleCopyMessage = () => {
@@ -493,6 +528,26 @@ export default function ChatRoomScreen() {
     ]);
   };
 
+  const handleDownloadMessage = async () => {
+    if (!selectedMessage) return;
+    setContextMenuVisible(false);
+    const msg = selectedMessage;
+    const attachUrl = msg.attachmentUrl;
+    if (!attachUrl) return;
+    const filename = attachUrl.split('/').pop() || 'file';
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const mimeByExt: Record<string, string> = {
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+      gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
+      doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      mp4: 'video/mp4',
+    };
+    const mimeType = mimeByExt[ext] || 'application/octet-stream';
+    await fileUtils.downloadAndOpenFile(attachUrl, filename, mimeType);
+  };
+
+  const selectedMessageHasAttachment = selectedMessage?.attachmentUrl != null;
+
   const handleReplyMessage = () => {
     if (selectedMessage) {
       setReplyToMessage(selectedMessage);
@@ -512,13 +567,14 @@ export default function ChatRoomScreen() {
     sendTyping(chatId, val.length > 0);
   };
 
-  const savePendingAttachment = async (uri: string, name: string, type: string) => {
+  const savePendingAttachment = async (uri: string, name: string, type: string, captionText = '') => {
     const now = new Date().toISOString();
+    const messageContent = shouldUseCaption(type) ? captionText : (captionText || name);
     const tempMsg: Message = {
       id: `temp-${Date.now()}`,
       chatId,
       senderId: user?.id || '',
-      content: name,
+      content: messageContent,
       sentAt: now,
       readBy: [],
       messageType: 'attachment' as any,
@@ -537,7 +593,7 @@ export default function ChatRoomScreen() {
       chatId,
       senderId: user?.id || '',
       senderName: user?.fullName,
-      content: name,
+      content: messageContent,
       messageType: 'attachment',
       attachmentUrl: uri,
       mimeType: type,
@@ -545,26 +601,165 @@ export default function ChatRoomScreen() {
     });
   };
 
-  const uploadAndSend = async (uri: string, name: string, type: string) => {
-    setUploading(true);
+  // Зберігає refs для скасування завантажень
+  const abortUploadsRef = useRef<Map<string, UploadAbortSignal>>(new Map());
+
+  const uploadAndSend = async (uri: string, name: string, type: string, caption = '', reply?: Message | null) => {
+    setUploadingCount(c => c + 1);
+
+    // Створюємо temp-повідомлення ОДРАЗУ, щоб показати прев'ю
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const now = new Date().toISOString();
+    const tempMsg: Message = {
+      id: tempId,
+      chatId,
+      senderId: user?.id || '',
+      content: name,
+      sentAt: now,
+      readBy: [],
+      messageType: 'attachment' as any,
+      attachmentUrl: uri,
+      messageStatus: 'sending', // показуємо як "завантажується"
+      sender: user as any,
+      replyToId: reply?.id,
+      replyTo: reply || undefined,
+    } as Message;
+    (tempMsg as any).uploadProgress = 0;
+    (tempMsg as any).fileName = name;
+    (tempMsg as any).mimeType = type;
+    setMessages(prev => [tempMsg, ...prev]);
+
+    // Створюємо abort сигнал для можливості скасування
+    const abortSignal: UploadAbortSignal = { aborted: false };
+    abortUploadsRef.current.set(tempId, abortSignal);
+
     try {
       if (!getServerReachable()) {
-        await savePendingAttachment(uri, name, type);
+        await syncOfflineAttachment(uri, name, type, tempId, caption, reply?.id);
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'pending' } : m));
         return;
       }
 
-      const result = await chatApi.sendFile(chatId, { uri, name, type });
-      await emitWhenReady('send_message', { chatId, content: result.name, attachmentUrl: result.url });
+      // Оновлюємо прогрес в temp-повідомленні
+      const result = await chatApi.sendFile(
+        chatId,
+        { uri, name, type },
+        (progress) => {
+          setMessages(prev => prev.map(m =>
+            m.id === tempId
+              ? { ...m, messageStatus: 'sending', ...({ uploadProgress: progress } as any) }
+              : m
+          ));
+        },
+        abortSignal,
+      );
+
+      // Видаляємо temp-повідомлення
+      const messageContent = shouldUseCaption(type) ? caption : (caption || result.name);
+      const sent = await chatApi.sendMessage(chatId, messageContent, reply?.id, result.url);
+      const sentMsg = {
+        ...sent,
+        sentAt: typeof sent.sentAt === 'string' ? sent.sentAt : new Date(sent.sentAt).toISOString(),
+        replyTo: reply || (sent as any).replyTo,
+      } as Message;
+      setMessages(prev => prev.map(m => m.id === tempId ? sentMsg : m));
+      abortSignal.settled = true;
+      abortUploadsRef.current.delete(tempId);
+      await saveMessagesToDB([sentMsg]);
+
+      // Відправляємо повідомлення через API з attachmentUrl
+      /*
+      await chatApi.sendMessage(chatId, result.name, undefined, result.url).then(() => {
+        // Оновлюємо список повідомлень через API
+      }).catch((sendErr) => {
+        console.warn('[uploadAndSend] sendMessage after upload failed:', sendErr);
+        // Якщо не вдалося — зберігаємо офлайн
+        syncOfflineAttachment(result.url, result.name, type, tempId + '-retry');
+      });
+      */
     } catch (e: any) {
+      // Видаляємо temp-повідомлення при помилці
+      abortUploadsRef.current.delete(tempId);
+
+      if (e?.message === 'Upload cancelled') {
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        // Користувач скасував — нічого не робимо
+        return;
+      }
       if (!getServerReachable() || String(e?.message || e).includes('Network request failed')) {
-        await savePendingAttachment(uri, name, type);
+        await syncOfflineAttachment(uri, name, type, tempId, caption, reply?.id);
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, messageStatus: 'pending' } : m));
         Alert.alert('Офлайн', 'Файл додано в чергу і буде відправлено після відновлення звʼязку');
         return;
       }
       Alert.alert('Помилка', 'Не вдалося відправити файл: ' + (e.message || e));
     } finally {
-      setUploading(false);
+      if (!abortSignal.aborted || abortSignal.settled) {
+        setUploadingCount(c => Math.max(0, c - 1));
+      }
     }
+  };
+
+  // Збереження для офлайн синхронізації
+  const syncOfflineAttachment = async (uri: string, name: string, type: string, msgId: string, captionText = '', replyToId?: string) => {
+    // Якщо є temp-повідомлення в БД — оновлюємо його замість створення дубля
+    try {
+      const localMsgs = await collections.chatMessages.query(
+        Q.where('chat_id', chatId)
+      ).fetch();
+      const existingTemp = (localMsgs as any[]).find((m: any) => m.id === msgId || m.serverId === msgId);
+      if (existingTemp) {
+        await safeWrite(async () => {
+          await existingTemp.update((m: any) => {
+            m.pendingAction = null;
+            m.messageStatus = 'pending';
+            m.content = shouldUseCaption(type) ? captionText : (captionText || name);
+          });
+        });
+        return;
+      }
+    } catch (_) { /* fallback до SyncService */ }
+
+    // Якщо temp не знайдено — створюємо новий offline запис
+    const { SyncService } = await import('../../db/SyncService');
+    await SyncService.saveMessageOffline({
+      chatId,
+      senderId: user?.id || '',
+      senderName: user?.fullName,
+      content: shouldUseCaption(type) ? captionText : (captionText || name),
+      messageType: 'attachment',
+      attachmentUrl: uri,
+      mimeType: type,
+      replyToId: replyToId || undefined,
+    }).catch((err: any) => console.warn('[syncOfflineAttachment] error:', err));
+  };
+
+  /** Скасувати завантаження за tempId */
+  const cancelUpload = (tempId: string) => {
+    const signal = abortUploadsRef.current.get(tempId);
+    if (signal && !signal.aborted) {
+      signal.aborted = true;
+      if (signal.onAbort) signal.onAbort();
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      abortUploadsRef.current.delete(tempId);
+      setUploadingCount(c => Math.max(0, c - 1));
+    }
+  };
+
+  /** Показати діалог для введення підпису до медіа */
+  const openCaptionDialog = (uri: string, name: string, type: string) => {
+    setPendingMedia({ uri, name, type });
+    setCaption('');
+    setShowCaptionInput(true);
+  };
+
+  /** Підтвердити відправку медіа з підписом */
+  const confirmSendWithCaption = () => {
+    if (!pendingMedia) return;
+    uploadAndSend(pendingMedia.uri, pendingMedia.name, pendingMedia.type, caption, replyToMessage);
+    setShowCaptionInput(false);
+    setPendingMedia(null);
+    setCaption('');
   };
 
   const handlePickMedia = async () => {
@@ -582,7 +777,8 @@ export default function ChatRoomScreen() {
       const asset = result.assets[0];
       const fileName = asset.fileName || asset.uri.split('/').pop() || `media_${Date.now()}`;
       const normalized = await fileUtils.normalizeImagePickerAsset(asset.uri, fileName, asset.mimeType);
-      await uploadAndSend(normalized.uri, normalized.name, normalized.mimeType);
+      // Показуємо діалог для введення підпису (для image/video)
+      openCaptionDialog(normalized.uri, normalized.name, normalized.mimeType);
     } catch (err: any) {
       Alert.alert('Помилка', 'Не вдалося відкрити галерею: ' + err.message);
     }
@@ -593,7 +789,10 @@ export default function ChatRoomScreen() {
       const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
-      await uploadAndSend(asset.uri, asset.name, asset.mimeType ?? 'application/octet-stream');
+      // Нормалізуємо URI документа (Android content:// → file://) перед відправкою
+      const normalized = await fileUtils.normalizeFileUri(asset.uri, asset.name, asset.mimeType);
+      // Для документів caption не показуємо — відправляємо одразу з reply
+      await uploadAndSend(normalized.uri, normalized.name, normalized.mimeType, '', replyToMessage);
     } catch {
       Alert.alert('Помилка', 'Не вдалося відкрити документ');
     }
@@ -615,7 +814,11 @@ export default function ChatRoomScreen() {
       <FlatList
         ref={flatRef}
         data={messages}
-        keyExtractor={(m) => m.id || `msg_${m.sentAt}_${m.senderId}`}
+        keyExtractor={(m) => {
+          const base = m.id || `msg_${m.sentAt}_${m.senderId}`;
+          // Гарантуємо унікальність: якщо id починається з temp- — додаємо random suffix
+          return base.startsWith('temp-') ? `${base}_${Math.random().toString(36).slice(2, 7)}` : base;
+        }}
         inverted={true}
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
@@ -645,10 +848,28 @@ export default function ChatRoomScreen() {
             }}
             onAvatarPress={(userId) => navigation.navigate('UserProfile', { userId })}
             onMediaPress={(url, type = 'image') => {
+              if (type === 'document') {
+                // Відкриваємо документи системним діалогом (як Telegram)
+                const filename = url.split('/').pop() || 'file';
+                const ext = filename.split('.').pop()?.toLowerCase() || '';
+                const mimeByExt: Record<string, string> = {
+                  pdf: 'application/pdf', doc: 'application/msword',
+                  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  xls: 'application/vnd.ms-excel',
+                  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  txt: 'text/plain', zip: 'application/zip',
+                };
+                fileUtils.openWithSystemApp(url, filename, mimeByExt[ext] || 'application/octet-stream');
+                return;
+              }
               setSelectedMedia({ url, type: type as 'image' | 'video' });
               setMediaViewerVisible(true);
             }}
             onLongPress={(message: Message) => {
+              if (message.messageStatus === 'sending') {
+                cancelUpload(message.id);
+                return;
+              }
               setSelectedMessage(message);
               setContextMenuVisible(true);
             }}
@@ -673,6 +894,8 @@ export default function ChatRoomScreen() {
         onForward={handleForwardMessage}
         onCopy={handleCopyMessage}
         onDelete={handleDeleteMessage}
+        onDownload={handleDownloadMessage}
+        showDownload={selectedMessageHasAttachment}
       />
 
       {replyToMessage && (
@@ -687,10 +910,10 @@ export default function ChatRoomScreen() {
         </View>
       )}
       <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: Math.max(10, keyboardHeight - TAB_BAR_HEIGHT) }]}>
-        <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploading}>
+        <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploadingCount > 0}>
           <Text style={{ fontSize: 20 }}>🖼</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument} disabled={uploading}>
+        <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument} disabled={uploadingCount > 0}>
           <Text style={{ fontSize: 20 }}>📎</Text>
         </TouchableOpacity>
         <TextInput
@@ -704,8 +927,10 @@ export default function ChatRoomScreen() {
           returnKeyType="send"
           onSubmitEditing={handleSend}
         />
-        {uploading ? (
-          <ActivityIndicator color={Colors.primary} style={styles.sendBtn} />
+        {uploadingCount > 0 ? (
+          <View style={[styles.sendBtn, { backgroundColor: Colors.primary }]}>
+            <ActivityIndicator color="#fff" />
+          </View>
         ) : (
           <TouchableOpacity
             style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
@@ -716,6 +941,40 @@ export default function ChatRoomScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {showCaptionInput && pendingMedia && (
+        <View style={styles.captionOverlay}>
+          <View style={styles.captionBox}>
+            <Text style={{ fontWeight: '700', marginBottom: 8 }}>Додати підпис</Text>
+            {isImageMime(pendingMedia.type) && (
+              <Image source={{ uri: pendingMedia.uri }} style={{ width: 120, height: 120, borderRadius: 8, marginBottom: 8 }} />
+            )}
+            <TextInput
+              style={styles.captionInput}
+              value={caption}
+              onChangeText={setCaption}
+              placeholder="Введіть підпис..."
+              placeholderTextColor={Colors.textMuted}
+              autoFocus
+              maxLength={500}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <TouchableOpacity
+                style={[styles.captionBtn, { backgroundColor: Colors.borderLight }]}
+                onPress={() => { setShowCaptionInput(false); setPendingMedia(null); }}
+              >
+                <Text>Скасувати</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.captionBtn, { backgroundColor: Colors.primary }]}
+                onPress={confirmSendWithCaption}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Відправити</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 
@@ -829,20 +1088,18 @@ const MessageBubble = React.memo(({
               <Text style={styles.attachFileIcon}>📄</Text>
               <Text style={styles.attachFileName} numberOfLines={2}>{message.content}</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.attachDownloadBtn}
-              onPress={(e) => {
-                e.stopPropagation();
-                const filename = attachUrl.split('/').pop() || 'file';
-                fileUtils.downloadAndOpenFile(attachUrl, filename, 'application/octet-stream');
-              }}
-            >
-              <Text style={{ fontSize: 16 }}>⬇</Text>
-            </TouchableOpacity>
           </View>
         )}
         {(message.content && (!hasAttachment || isImage || isVideo)) && (
           <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{message.content}</Text>
+        )}
+        {(message as any).messageStatus === 'sending' && (
+          <View style={styles.uploadProgressRow}>
+            <ActivityIndicator size="small" color={isMine ? 'rgba(255,255,255,0.7)' : Colors.primary} />
+            <Text style={[styles.uploadProgressText, isMine && styles.uploadProgressTextMine]}>
+              {(message as any).uploadProgress > 0 ? `${(message as any).uploadProgress}%` : 'Завантаження...'}
+            </Text>
+          </View>
         )}
         <Text style={[styles.bubbleTime, isMine && { color: 'rgba(255,255,255,0.65)' }]}>{time}</Text>
         {isMine && (message.messageStatus || message.readBy || message.deliveredTo) && (
@@ -861,6 +1118,31 @@ const styles = StyleSheet.create({
   replyPreview: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     padding: 8, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.borderLight,
+  },
+  captionOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 100,
+  },
+  captionBox: {
+    backgroundColor: Colors.surface, borderRadius: 16, padding: 20,
+    width: '85%', alignItems: 'center',
+  },
+  captionInput: {
+    width: '100%', borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 15, backgroundColor: Colors.background, color: '#000000',
+  },
+  captionBtn: {
+    flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+  },
+  uploadProgressRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4,
+  },
+  uploadProgressText: {
+    fontSize: 11, color: Colors.textMuted,
+  },
+  uploadProgressTextMine: {
+    color: 'rgba(255,255,255,0.7)',
   },
   inputRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 6,
@@ -903,11 +1185,11 @@ const styles = StyleSheet.create({
   replySender: { fontSize: 11, fontWeight: '700', color: Colors.primary, marginBottom: 2 },
   replyText: { fontSize: 12, color: Colors.textSecondary },
   attachImage: { width: 220, height: 160, borderRadius: 10, marginBottom: 6 },
-  attachFile: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  attachFile: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, paddingRight: 36 },
   attachFileRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
   attachFileIcon: { fontSize: 24 },
   attachFileName: { flex: 1, fontSize: 13, color: Colors.text },
-  attachDownloadBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  attachDownloadBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   systemMsg: { alignSelf: 'center', backgroundColor: Colors.borderLight, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   systemMsgText: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center' },
   scrollToBottom: {

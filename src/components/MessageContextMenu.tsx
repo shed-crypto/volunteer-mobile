@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Colors } from '../utils/theme';
 
 interface MessageContextMenuProps {
@@ -9,10 +9,12 @@ interface MessageContextMenuProps {
   onForward?: () => void;
   onCopy?: () => void;
   onDelete?: () => void;
+  onDownload?: () => void;
+  showDownload?: boolean;
 }
 
 export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
-  visible, onClose, onReply, onForward, onCopy, onDelete
+  visible, onClose, onReply, onForward, onCopy, onDelete, onDownload, showDownload
 }) => {
   return (
     <Modal
@@ -36,6 +38,11 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
           {onCopy && (
             <TouchableOpacity style={styles.menuItem} onPress={onCopy}>
               <Text style={styles.menuItemText}>Копіювати</Text>
+            </TouchableOpacity>
+          )}
+          {showDownload && onDownload && (
+            <TouchableOpacity style={styles.menuItem} onPress={onDownload}>
+              <Text style={styles.menuItemText}>Завантажити</Text>
             </TouchableOpacity>
           )}
           {onDelete && (
