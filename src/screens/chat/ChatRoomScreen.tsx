@@ -620,6 +620,14 @@ export default function ChatRoomScreen() {
   const uploadAndSend = async (uri: string, name: string, type: string, caption = '', reply?: Message | null) => {
     setUploadingCount(c => c + 1);
 
+    // Логуємо розмір файлу для діагностики швидкості
+    (async () => {
+      try {
+        const info = await (await import('expo-file-system/legacy')).documentDirectory;
+        console.log(`[uploadAndSend] Starting upload: ${name}, type=${type}`);
+      } catch (_) {}
+    })();
+
     // Створюємо temp-повідомлення ОДРАЗУ, щоб показати прев'ю
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     const now = new Date().toISOString();
@@ -886,6 +894,7 @@ export default function ChatRoomScreen() {
               setSelectedMessage(message);
               setContextMenuVisible(true);
             }}
+            onCancelUpload={(tempId) => cancelUpload(tempId)}
           />
         )}
       />
@@ -923,10 +932,15 @@ export default function ChatRoomScreen() {
         </View>
       )}
       <View style={[styles.inputRow, Platform.OS === 'android' && { paddingBottom: Math.max(10, keyboardHeight - TAB_BAR_HEIGHT) }]}>
-        <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia} disabled={uploadingCount > 0}>
+        <TouchableOpacity style={styles.attachBtn} onPress={handlePickMedia}>
           <Text style={{ fontSize: 20 }}>🖼</Text>
+          {uploadingCount > 0 && (
+            <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: Colors.primary, borderRadius: 8, width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{uploadingCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
-        <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument} disabled={uploadingCount > 0}>
+        <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument}>
           <Text style={{ fontSize: 20 }}>📎</Text>
         </TouchableOpacity>
         <TextInput
@@ -1012,7 +1026,7 @@ export default function ChatRoomScreen() {
 }
 
 const MessageBubble = React.memo(({
-  message, isMine, staticBase, onAvatarPress, onMediaPress, onLongPress, onReplyPress,
+  message, isMine, staticBase, onAvatarPress, onMediaPress, onLongPress, onReplyPress, onCancelUpload,
 }: {
   message: Message;
   isMine: boolean;
@@ -1021,6 +1035,7 @@ const MessageBubble = React.memo(({
   onMediaPress?: (url: string, type?: 'image' | 'video' | 'document') => void;
   onLongPress?: (message: Message) => void;
   onReplyPress?: (replyToId: string) => void;
+  onCancelUpload?: (tempId: string) => void;
 }) => {
   const isSystem = message.messageType === 'system';
   if (isSystem) {
@@ -1112,6 +1127,14 @@ const MessageBubble = React.memo(({
             <Text style={[styles.uploadProgressText, isMine && styles.uploadProgressTextMine]}>
               {(message as any).uploadProgress > 0 ? `${(message as any).uploadProgress}%` : 'Завантаження...'}
             </Text>
+            {onCancelUpload && (
+              <TouchableOpacity
+                style={{ marginLeft: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(255,0,0,0.6)', alignItems: 'center', justifyContent: 'center' }}
+                onPress={(e) => { e.stopPropagation(); onCancelUpload(message.id); }}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', lineHeight: 14 }}>✕</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
         <Text style={[styles.bubbleTime, isMine && { color: 'rgba(255,255,255,0.65)' }]}>{time}</Text>
