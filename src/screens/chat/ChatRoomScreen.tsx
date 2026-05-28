@@ -614,7 +614,7 @@ export default function ChatRoomScreen() {
       mp4: 'video/mp4',
     };
     const mimeType = mimeByExt[ext] || 'application/octet-stream';
-    await fileUtils.downloadAndOpenFile(attachUrl, filename, mimeType);
+    await fileUtils.openWithSystemApp(attachUrl, filename, mimeType);
   };
 
   const selectedMessageHasAttachment = selectedMessage?.attachmentUrl != null;

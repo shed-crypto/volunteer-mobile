@@ -81,19 +81,30 @@ async function downloadToCache(url: string, filename: string): Promise<string | 
  * Працює для PDF, DOCX, зображень тощо.
  */
 async function openWithViewer(uri: string, mimeType: string): Promise<void> {
+  // Спершу пробуємо Sharing (діалог "Відкрити за допомогою")
+  // На Android це показує список програм, які можуть обробити файл
+  if (await Sharing.isAvailableAsync()) {
+    try {
+      await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Відкрити файл' });
+      return;
+    } catch (shareErr) {
+      console.warn('[openWithViewer] shareAsync failed:', shareErr);
+    }
+  }
+  // Fallback на Android: content:// URI через Linking
   if (Platform.OS === 'android') {
-    // На Android використовуємо content:// URI для доступу інших програм до файлу
     try {
       const contentUri = await FileSystem.getContentUriAsync(uri);
       await Linking.openURL(contentUri);
-      return;
     } catch (err) {
-      console.warn('[openWithViewer] getContentUri failed, fallback to share:', err);
+      console.warn('[openWithViewer] getContentUri + Linking failed:', err);
+      // Останній fallback: просто відкрити URI
+      try {
+        await Linking.openURL(uri);
+      } catch (e) {
+        throw new Error('Не вдалося відкрити файл жодним способом');
+      }
     }
-  }
-  // Fallback: відкрити через системний діалог "Поділитися"
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Відкрити файл' });
   }
 }
 
