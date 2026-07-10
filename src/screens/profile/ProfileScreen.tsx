@@ -409,17 +409,17 @@ export default function ProfileScreen() {
 
         {/* Navigation */}
         <View style={{ marginHorizontal: 16, gap: 10 }}>
-          <Button title="✏️ Редагувати профіль" variant="outline"
+          <Button title="Редагувати профіль" variant="outline"
             onPress={() => navigation.navigate('EditProfile')} />
-          <Button title="🚗 Мій транспорт" variant="outline"
+          <Button title="Мій транспорт" variant="outline"
             onPress={() => navigation.navigate('Vehicles')} />
-          <Button title="🏢 Організації" variant="outline"
+          <Button title="Організації" variant="outline"
             onPress={() => navigation.navigate('Organizations')} />
           {user?.systemRole === SystemRole.ADMIN && (
-            <Button title="🛡 Адмін-панель" variant="outline"
+            <Button title="Адмін-панель" variant="outline"
               onPress={() => navigation.navigate('Admin')} />
           )}
-          <Button title="🔑 Змінити пароль" variant="outline"
+          <Button title="Змінити пароль" variant="outline"
             onPress={() => navigation.navigate('ChangePassword')} />
           <Button title="Вийти з системи" variant="danger" onPress={handleLogout} />
         </View>

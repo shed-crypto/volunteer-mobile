@@ -359,7 +359,7 @@ export default function RequestsListScreen() {
       };
                if (search) params.search = search;
                if (statusFilter === 'my') params.creatorId = user?.id;
-               else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my_tasks') params.status = statusFilter;
+               else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my_tasks' && statusFilter !== 'active') params.status = statusFilter;
               if (urgencyFilter) params.urgency = urgencyFilter;
               if (categoryFilter) params.category = categoryFilter;
 
@@ -406,7 +406,7 @@ export default function RequestsListScreen() {
       };
       if (search) params.search = search;
       if (statusFilter === 'my') params.creatorId = user?.id;
-      else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my_tasks') params.status = statusFilter;
+      else if (statusFilter && statusFilter !== 'all' && statusFilter !== 'my_tasks' && statusFilter !== 'active') params.status = statusFilter;
       if (urgencyFilter) params.urgency = urgencyFilter;
       if (categoryFilter) params.category = categoryFilter;
 
@@ -441,7 +441,7 @@ export default function RequestsListScreen() {
     }
 
     // "Активні" — hide completed and cancelled
-    if (statusFilter === 'active' || (!statusFilter && hideDoneCancelled)) {
+    if (statusFilter === 'active' || ((statusFilter === 'all' || !statusFilter) && hideDoneCancelled)) {
       filtered = filtered.filter(r => r.status !== RequestStatus.COMPLETED && r.status !== RequestStatus.CANCELLED);
     }
 
