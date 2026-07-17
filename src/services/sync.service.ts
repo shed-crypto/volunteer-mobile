@@ -13,7 +13,7 @@ import { synchronize } from '@nozbe/watermelondb/sync';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { database } from '../db';
-import { axiosInstance } from '../api/axios';
+import api from '../api/axios';
 
 const LAST_PULLED_KEY = 'db_last_pulled_at';
 
@@ -40,7 +40,7 @@ export class SyncService {
 
         // ─── PULL: отримати зміни з сервера ─────────────────────────────────
         pullChanges: async ({ lastPulledAt: lastPulled }) => {
-          const response = await axiosInstance.get('/sync/pull', {
+          const response = await api.get('/sync/pull', {
             params: { lastPulledAt: lastPulled },
           });
           // Сервер повертає: { changes: { requests: {created,updated,deleted}, tasks: {...} }, timestamp }
@@ -49,7 +49,7 @@ export class SyncService {
 
         // ─── PUSH: відправити локальні зміни на сервер ───────────────────────
         pushChanges: async ({ changes, lastPulledAt: lastPulled }) => {
-          await axiosInstance.post('/sync/push', { changes, lastPulledAt: lastPulled });
+          await api.post('/sync/push', { changes, lastPulledAt: lastPulled });
         },
 
         migrationsEnabledAtVersion: 1,

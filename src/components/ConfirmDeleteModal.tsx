@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, View, Text, TextInput, StyleSheet, TouchableOpacity } from 'react-native';
-import { Colors } from '../../utils/theme';
+import { Colors } from '../utils/theme';
 
 interface Props {
   visible: boolean;

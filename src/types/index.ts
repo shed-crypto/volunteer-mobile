@@ -88,6 +88,7 @@ export interface User {
   trustScore: number;
   avatarUrl?: string;
   telegramChatId?: string;
+  isActiveVolunteer?: boolean;
   isBlocked: boolean;
   createdAt: string;
 }
@@ -206,7 +207,7 @@ export interface Organization {
   id: string;
   name: string;
   description?: string;
-  logoUrl?: string;
+  logoUrl?: string | null;
   parentOrgId?: string;
   tags?: string[];
   parentOrg?: Organization;
@@ -214,7 +215,7 @@ export interface Organization {
   members?: OrganizationMember[];
   hubs?: Hub[];
   isPublic: boolean;
-  bannerUrl?: string;
+  bannerUrl?: string | null;
   settings?: OrganizationSettings;
   joinRequests?: OrganizationJoinRequest[];
 }

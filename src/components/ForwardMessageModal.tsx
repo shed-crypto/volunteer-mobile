@@ -61,7 +61,6 @@ export const ForwardMessageModal: React.FC<ForwardMessageModalProps> = ({
       await chatApi.forwardMessage(
         targetChat.id,
         message.content,
-        message.attachmentUrl,
         message.id,
       );
       onForwarded?.();

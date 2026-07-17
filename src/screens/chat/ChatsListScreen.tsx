@@ -135,7 +135,7 @@ export default function ChatsListScreen() {
       const operations: any[] = [];
 
       // 1. Видалити локальні чати, яких немає на сервері (синхронізація видалених)
-      for (const localChat of existing) {
+      for (const localChat of existing as any[]) {
         if (!serverIds.has(localChat.serverId)) {
           operations.push(localChat.prepareMarkAsDeleted());
         }

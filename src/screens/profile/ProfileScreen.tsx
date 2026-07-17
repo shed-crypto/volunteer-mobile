@@ -18,6 +18,7 @@ import { getServerReachable } from '../../api/axios';
 import { uploadFormData } from '../../api/upload';
 import { API_BASE_URL } from '../../api/axios';
 import api from '../../api/axios';
+import { locationHelper } from '../../utils/locationHelper';
 import { collections, safeWrite } from '../../db/index';
 import { SyncService } from '../../db/SyncService';
 
@@ -236,6 +237,28 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleActiveToggle = async (value: boolean) => {
+    try {
+      await usersApi.updateOwnVolunteerActivity(value);
+      await refreshUser();
+      Alert.alert('Статус оновлено', value ? 'Ви тепер активний волонтер' : 'Ви більше не активний волонтер');
+    } catch (e: any) {
+      Alert.alert('Помилка', e?.response?.data?.message || 'Не вдалося оновити статус');
+    }
+  };
+
+  const handleUpdateRegion = async () => {
+    try {
+      const loc = await locationHelper.getCurrentLocation(true);
+      if (loc) {
+        await usersApi.updateRegion(loc.latitude, loc.longitude);
+        Alert.alert('✅ Регіон оновлено', 'Ваша базова локація збережена.');
+      }
+    } catch (e: any) {
+      Alert.alert('Помилка', 'Не вдалося оновити регіон');
+    }
+  };
+
   if (loading) return <LoadingScreen />;
 
   const clearanceLabel = clearanceLabels[user?.clearanceLevel ?? ''] ?? user?.clearanceLevel;
@@ -370,6 +393,32 @@ export default function ProfileScreen() {
             </View>
           )}
         </Card>
+
+        {/* Volunteer Status */}
+        {user?.systemRole === SystemRole.VOLUNTEER || user?.systemRole === SystemRole.COORDINATOR ? (
+          <Card>
+            <Text style={styles.cardTitle}>Статус чергування</Text>
+            <View style={styles.settingRow}>
+              <View style={styles.settingInfo}>
+                <Text style={styles.settingLabel}>Я активний волонтер</Text>
+                <Text style={styles.settingDesc}>Увімкніть, щоб вас бачили на радарі</Text>
+              </View>
+              <Switch
+                value={user?.isActiveVolunteer ?? false}
+                onValueChange={handleActiveToggle}
+                trackColor={{ false: Colors.border, true: Colors.primary }}
+                thumbColor={user?.isActiveVolunteer ? '#fff' : Colors.textMuted}
+              />
+            </View>
+            <Button 
+              title="📍 Оновити мій регіон" 
+              variant="outline" 
+              size="sm" 
+              onPress={handleUpdateRegion}
+              style={{ marginTop: 12 }}
+            />
+          </Card>
+        ) : null}
 
         {/* Account info */}
         <Card>

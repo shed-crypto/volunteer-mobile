@@ -16,5 +16,5 @@ export class TaskAssignmentModel extends Model {
   @field('last_synced_at') lastSyncedAt!: number | null;
 
   // Relations
-  task: TaskModel;
+  task!: TaskModel;
 }

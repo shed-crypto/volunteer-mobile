@@ -175,21 +175,25 @@ api.interceptors.response.use(
         processQueue(null, accessToken);
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
         return api(originalRequest);
-      } catch (refreshError: unknown) {
+      } catch (refreshError: any) {
         processQueue(refreshError, null);
 
-        // 🔄 ОФЛАЙН-РЕЖИМ: Якщо сервер недоступний — не видаляємо токени,
-        // щоб клієнт міг продовжити роботу з локальною БД.
-        // Повне очищення токенів відбувається тільки якщо сервер ДОСТУПНИЙ
-        // і підтвердив що токени недійсні (юзер заблокований / пароль змінено).
-        const err = refreshError as { response?: unknown };
-        if (!err?.response) {
-          // Сервер недоступний — залишаємо токени для офлайн-режиму
-          OfflineLogger.auth('Refresh failed — server unreachable, keeping tokens for offline mode');
+        // Якщо помилка не містить response (наприклад, Network Error або No refresh token)
+        if (!refreshError?.response) {
+          if (refreshError?.message === 'No refresh token') {
+            OfflineLogger.auth('No refresh token — forcing logout');
+            await SecureStore.deleteItemAsync('accessToken');
+            await SecureStore.deleteItemAsync('refreshToken');
+            return Promise.reject(refreshError);
+          }
+          
+          // Сервер недоступний або мережева помилка — залишаємо токени для офлайн-режиму
+          OfflineLogger.auth('Refresh failed — server unreachable or network error, keeping tokens for offline mode');
           return Promise.reject(Object.assign(new Error('Offline'), { _isOffline: true }));
         }
 
-        // Сервер доступний, але відхилив refresh — токени дійсно невалідні
+        // Сервер доступний, але відхилив refresh (наприклад, 401) — токени дійсно невалідні
+        OfflineLogger.auth(`Refresh rejected by server (status: ${refreshError.response.status}) — deleting tokens`);
         await SecureStore.deleteItemAsync('accessToken');
         await SecureStore.deleteItemAsync('refreshToken');
         return Promise.reject(refreshError as Error);

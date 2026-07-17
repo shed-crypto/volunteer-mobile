@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { Colors } from '../../utils/theme';
-import { axiosInstance } from '../../api/axios';
+import api from '../../api/axios';
 
 type TaskStatus = 'TO_DO' | 'IN_PROGRESS' | 'EN_ROUTE' | 'ON_SITE' | 'DONE';
 
@@ -43,7 +43,7 @@ export default function KanbanScreen() {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const { data } = await axiosInstance.get<TaskItem[]>(`/requests/${requestId}/tasks`);
+      const { data } = await api.get<TaskItem[]>(`/requests/${requestId}/tasks`);
       setTasks(data);
     } catch {
       Alert.alert('Помилка', 'Не вдалося завантажити задачі');
@@ -61,7 +61,7 @@ export default function KanbanScreen() {
       { text: 'Підтвердити', onPress: async () => {
         setUpdatingId(task.id);
         try {
-          await axiosInstance.patch(`/tasks/${task.id}/status`, { status: nextStatus });
+          await api.patch(`/tasks/${task.id}/status`, { status: nextStatus });
           setTasks((prev) => prev.map((t) => t.id === task.id ? { ...t, status: nextStatus } : t));
         } catch { Alert.alert('Помилка', 'Не вдалося оновити статус'); }
         finally { setUpdatingId(null); }

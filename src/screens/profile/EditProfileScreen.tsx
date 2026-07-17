@@ -24,7 +24,7 @@ export default function EditProfileScreen() {
 
   const [fullName, setFullName]       = useState(user?.fullName ?? '');
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber ?? '');
-  const [telegramId, setTelegramId]   = useState(user?.telegramId ?? '');
+  const [telegramChatId, setTelegramChatId] = useState(user?.telegramChatId || '');
   const [localAvatarUri, setLocalAvatarUri] = useState<string | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [loading, setLoading]         = useState(false);
@@ -97,7 +97,7 @@ export default function EditProfileScreen() {
           data: {
             fullName: fullName.trim(),
             phoneNumber: phoneNumber.trim() || null,
-            telegramId: telegramId.trim() || null,
+            telegramChatId: telegramChatId.trim() || null,
           },
           localAvatarUri,
         });
@@ -129,7 +129,7 @@ export default function EditProfileScreen() {
           await api.patch(`/users/${user.id}`, {
             fullName: fullName.trim(),
             phoneNumber: phoneNumber.trim() || null,
-            telegramId: telegramId.trim() || null,
+            telegramChatId: telegramChatId.trim() || null,
           });
         }
         await refreshUser();
@@ -217,8 +217,8 @@ export default function EditProfileScreen() {
 
           <Input
             label="Telegram ID"
-            value={telegramId}
-            onChangeText={setTelegramId}
+            value={telegramChatId}
+            onChangeText={setTelegramChatId}
             autoCapitalize="none"
             placeholder="@username"
           />

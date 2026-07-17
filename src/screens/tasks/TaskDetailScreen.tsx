@@ -23,6 +23,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { tasksApi } from '../../api/tasks.api';
 import { orgsApi } from '../../api/orgs.api';
+import { requestsApi } from '../../api/requests.api';
+import { usersApi } from '../../api/users.api';
+import { locationHelper } from '../../utils/locationHelper';
 import { API_BASE_URL } from '../../api/axios';
 import { Task, TaskStatus, AssignmentStatus, SystemRole, Organization, TaskOrigin } from '../../types';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -34,6 +37,7 @@ import { OfflineLogger } from '../../utils/offlineLogger';
 import { collections, database, safeWrite } from '../../db/index';
 import { DBLock } from '../../db/DBLock';
 import { TaskReportModal } from '../../components/TaskReportModal';
+import SosModal from '../../components/SosModal';
 import { fileUtils } from '../../utils/fileUtils';
 import { MediaViewer } from '../../components/MediaViewer';
 import { usePendingActions, refreshAllPendingActions, setPendingActionImmediate, removePendingActionImmediate, hasPendingActionImmediate } from '../../hooks/usePendingActions';
@@ -61,6 +65,7 @@ export default function TaskDetailScreen() {
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(!isNew);
   const [actioning, setActioning] = useState(false);
+  const [showSosModal, setShowSosModal] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [delegating, setDelegating] = useState(false);
@@ -609,8 +614,63 @@ export default function TaskDetailScreen() {
     const labels: Record<string, string> = { assigned: 'Призначено', applied: 'Подано заявку', accepted: 'Прийнято', rejected: 'Відхилено', withdrawn: 'Відкликав', completed: 'Виконав', en_route: 'В дорозі', on_site: 'На місці' };
     Alert.alert('Оновити статус?', labels[newStatus] ?? newStatus, [
       { text: 'Ні' },
-      { text: 'Так', onPress: async () => { try { setActioning(true); await tasksApi.updateAssignmentStatus(task.id, newStatus); await load(); } catch (e: any) { Alert.alert('Помилка', e?.response?.data?.message ?? ''); } finally { setActioning(false); } } },
+      { text: 'Так', onPress: async () => { 
+        try { 
+          setActioning(true);
+          let lat, lng;
+          if (newStatus === AssignmentStatus.EN_ROUTE || newStatus === AssignmentStatus.ON_SITE) {
+            const loc = await locationHelper.getCurrentLocation(false);
+            if (loc) {
+              lat = loc.latitude;
+              lng = loc.longitude;
+            }
+          }
+          await tasksApi.updateAssignmentStatus(task.id, newStatus, lat, lng); 
+          await load(); 
+        } catch (e: any) { 
+          Alert.alert('Помилка', e?.response?.data?.message ?? ''); 
+        } finally { 
+          setActioning(false); 
+        } 
+      }},
     ]);
+  };
+
+  const handleStandardSos = async () => {
+    setShowSosModal(false);
+    try {
+      setActioning(true);
+      const loc = await locationHelper.getCurrentLocation(false);
+      
+      const sosData = {
+        title: 'SOS Допомога!',
+        description: `Автоматичний SOS виклик від волонтера під час виконання задачі #${task?.id.slice(0, 8)}`,
+        category: 'Інше', 
+        urgency: 'critical', 
+        tags: ['#SOS'],
+        isLocationHidden: true,
+        latitude: loc?.latitude,
+        longitude: loc?.longitude,
+      };
+      
+      await requestsApi.create(sosData as any);
+      Alert.alert('SOS відправлено', 'Ваш сигнал успішно надіслано в систему.');
+    } catch (e) {
+      Alert.alert('Помилка', 'Не вдалося створити SOS заявку');
+    } finally {
+      setActioning(false);
+    }
+  };
+
+  const handleEditedSos = () => {
+    setShowSosModal(false);
+    navigation.navigate('Main' as never, { 
+      screen: 'Requests', 
+      params: { 
+        screen: 'CreateRequest', 
+        params: { isSos: true } 
+      } 
+    } as never);
   };
 
   const handleOpenAttachment = async (a: { url: string; name: string; type: string }) => {
@@ -786,6 +846,12 @@ export default function TaskDetailScreen() {
           {/* Complete task + Add Report */}
           {isMe && task.status === TaskStatus.IN_PROGRESS && (
             <>
+              <Button 
+                title="🚨 SOS / Мені потрібна допомога" 
+                variant="danger" 
+                onPress={() => setShowSosModal(true)} 
+                style={{ marginBottom: 16, backgroundColor: '#d32f2f' }} 
+              />
               {pendingComplete
                 ? renderPendingAction('TASK_COMPLETE', 'Завершення задачі в черзі')
                 : <Button title="✅ Позначити як виконану" variant="primary" onPress={handleComplete} loading={actioning} style={{ marginBottom: 8 }} />
@@ -1007,6 +1073,14 @@ export default function TaskDetailScreen() {
           />
         </View>
       </Modal>
+
+      <SosModal
+        visible={showSosModal}
+        onClose={() => setShowSosModal(false)}
+        onStandardSos={handleStandardSos}
+        onEditedSos={handleEditedSos}
+        timeoutSeconds={30}
+      />
 
       {/* Report modal — create */}
       <TaskReportModal visible={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={handleReportSubmit} loading={uploading} mode="create" />

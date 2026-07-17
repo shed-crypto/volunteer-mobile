@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
@@ -34,6 +34,8 @@ declare global {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
 export default function RootNavigator() {
   const { isLoading, isAuthenticated } = useAuth();
 
@@ -47,7 +49,7 @@ export default function RootNavigator() {
 
   return (
     <NetworkProvider>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           {isAuthenticated ? (
             <Stack.Screen name="Main" component={MainNavigator} />

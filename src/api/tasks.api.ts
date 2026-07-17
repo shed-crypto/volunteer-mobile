@@ -1,5 +1,5 @@
-import api from './axios';
-import { Task, TaskAssignment, CreateTaskDto } from '../types';
+import api from "./axios";
+import { Task, TaskAssignment, CreateTaskDto } from "../types";
 
 export const tasksApi = {
   getByRequest: (requestId: string): Promise<Task[]> =>
@@ -37,17 +37,38 @@ export const tasksApi = {
     api.patch(`/tasks/${taskId}/reject`, { reason }).then((r) => r.data),
 
   // FR-06e: оновлення статусу виконавця (EN_ROUTE / ON_SITE)
-  updateAssignmentStatus: (taskId: string, status: string): Promise<TaskAssignment> =>
-    api.patch(`/tasks/${taskId}/assignment-status`, { status }).then((r) => r.data),
+  updateAssignmentStatus: (
+    taskId: string,
+    status: string,
+    latitude?: number,
+    longitude?: number,
+  ): Promise<TaskAssignment> =>
+    api
+      .patch(`/tasks/${taskId}/assignment-status`, {
+        status,
+        latitude,
+        longitude,
+      })
+      .then((r) => r.data),
 
-  delegate: (taskId: string, organizationId: string, message?: string): Promise<any> =>
-    api.post(`/tasks/${taskId}/delegate`, { organizationId, message }).then((r) => r.data),
+  delegate: (
+    taskId: string,
+    organizationId: string,
+    message?: string,
+  ): Promise<any> =>
+    api
+      .post(`/tasks/${taskId}/delegate`, { organizationId, message })
+      .then((r) => r.data),
 
   acceptDelegation: (taskId: string, organizationId: string): Promise<any> =>
-    api.post(`/tasks/${taskId}/delegation/accept`, { organizationId }).then((r) => r.data),
+    api
+      .post(`/tasks/${taskId}/delegation/accept`, { organizationId })
+      .then((r) => r.data),
 
   declineDelegation: (taskId: string, organizationId: string): Promise<any> =>
-    api.post(`/tasks/${taskId}/delegation/decline`, { organizationId }).then((r) => r.data),
+    api
+      .post(`/tasks/${taskId}/delegation/decline`, { organizationId })
+      .then((r) => r.data),
 
   cancel: (taskId: string): Promise<Task> =>
     api.patch(`/tasks/${taskId}/cancel`).then((r) => r.data),
@@ -55,4 +76,3 @@ export const tasksApi = {
   renew: (taskId: string): Promise<Task> =>
     api.patch(`/tasks/${taskId}/renew`).then((r) => r.data),
 };
-
