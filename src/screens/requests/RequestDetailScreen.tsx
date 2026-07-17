@@ -24,6 +24,8 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { OfflineLogger } from '../../utils/offlineLogger';
+import { locationHelper } from '../../utils/locationHelper';
+import { calculateDistance, formatDistance } from '../../utils/distance';
 import { collections, safeWrite } from '../../db/index';
 import { database } from '../../db/index';
 import { DBLock } from '../../db/DBLock';
@@ -81,6 +83,15 @@ export default function RequestDetailScreen() {
   const [savingInfo, setSavingInfo] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [bookmarkLoading, setBookmarkLoading] = useState(false);
+
+  // User location for distance calculation
+  const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
+
+  useEffect(() => {
+    locationHelper.getCurrentLocation(false).then(loc => {
+      if (loc) setUserLocation(loc);
+    });
+  }, []);
 
   // ─── Check saved status from local DB (fallback only) ───────────────────
   const checkSavedLocal = useCallback(async (): Promise<boolean> => {
@@ -1134,7 +1145,7 @@ export default function RequestDetailScreen() {
               <MetaRow icon="⏰" label="Дедлайн" value={new Date(request.deadline).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' })} />
             )}
             {request.latitude ? (
-              <LocationDisplay request={request} />
+              <LocationDisplay request={request} userLocation={userLocation} onOpenRadar={() => navigation.navigate('VolunteerRadar', { nearLat: request.latitude, nearLng: request.longitude, nearLabel: request.title })} />
             ) : null}
             {request.isLocationHidden && (
               <View style={{ marginTop: 8, padding: 8, backgroundColor: Colors.warningLight, borderRadius: 8 }}>
@@ -1483,9 +1494,12 @@ export default function RequestDetailScreen() {
   );
 }
 
-function LocationDisplay({ request }: { request: Request }) {
+function LocationDisplay({ request, userLocation, onOpenRadar }: { request: Request; userLocation?: {latitude: number, longitude: number} | null; onOpenRadar: () => void }) {
   const [address, setAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  
+  const canSeeRadar = user?.systemRole === SystemRole.ADMIN || user?.systemRole === SystemRole.COORDINATOR;
 
   useEffect(() => {
     (async () => {
@@ -1526,15 +1540,37 @@ function LocationDisplay({ request }: { request: Request }) {
     ? `maps:0,0?q=${label}@${lat},${lng}`
     : `geo:${lat},${lng}?q=${lat},${lng}(${label})`;
 
+  const distanceStr = userLocation 
+    ? ` • ${formatDistance(calculateDistance(userLocation.latitude, userLocation.longitude, request.latitude, request.longitude))}` 
+    : '';
+
   return (
-    <TouchableOpacity onPress={() => Linking.openURL(url).catch(() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`))}>
-      <MetaRow
-        icon="📍"
-        label="Місце"
-        value={`${address || ''} (${lat.toFixed(4)}, ${lng.toFixed(4)}) → відкрити в картах`}
-        highlight
-      />
-    </TouchableOpacity>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <TouchableOpacity style={{ flex: 1 }} onPress={() => Linking.openURL(url).catch(() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`))}>
+        <MetaRow
+          icon="📍"
+          label="Місце"
+          value={`${address || ''}${distanceStr} → відкрити в картах`}
+          highlight
+        />
+      </TouchableOpacity>
+      {canSeeRadar && (
+        <TouchableOpacity 
+          onPress={onOpenRadar}
+          style={{
+            marginLeft: 8,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 16,
+            backgroundColor: Colors.primaryLight,
+            borderWidth: 1,
+            borderColor: Colors.primary
+          }}
+        >
+          <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.primary }}>🔍 Радар</Text>
+        </TouchableOpacity>
+      )}
+    </View>
   );
 }
 

@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput,
-  RefreshControl, StyleSheet, Modal, ScrollView,
+  RefreshControl, StyleSheet, Modal, ScrollView, Alert,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { requestsApi } from '../../api/requests.api';
@@ -20,6 +20,10 @@ import api, { getServerReachable } from '../../api/axios';
 import { SyncService } from '../../db/SyncService';
 import { checkServerReachable } from '../../api/axios';
 import { collections, database, safeWrite } from '../../db/index';
+import SosModal from '../../components/SosModal';
+import { locationHelper } from '../../utils/locationHelper';
+import { usersApi } from '../../api/users.api';
+import { calculateDistance, formatDistance } from '../../utils/distance';
 
 const STATUS_FILTERS = [
   { value: 'all',                      label: 'Всі' },
@@ -80,6 +84,20 @@ export default function RequestsListScreen() {
   const [locationName, setLocationName] = useState<string | null>(null);
   const [geocodingLoading, setGeocodingLoading] = useState(false);
   const [geocodingError, setGeocodingError]   = useState<string | null>(null);
+
+  // SOS state
+  const [showSosModal, setShowSosModal] = useState(false);
+  const [checkedIn, setCheckedIn] = useState(false);
+
+  // User location for distance calculation
+  const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
+
+  useEffect(() => {
+    // Тихо отримуємо локацію без показу попередження (showErrorAlert = false)
+    locationHelper.getCurrentLocation(false).then(loc => {
+      if (loc) setUserLocation(loc);
+    });
+  }, []);
 
   const activeFiltersCount = [urgencyFilter, categoryFilter, regionSearch].filter(Boolean).length;
 
@@ -565,6 +583,51 @@ export default function RequestsListScreen() {
     }
   }, []);
 
+  // ─── SOS та Чекін ────────────────────────────────────────────────────────
+  const handleStandardSos = async () => {
+    setShowSosModal(false);
+    try {
+      const loc = await locationHelper.getCurrentLocation(true);
+      if (!loc) return; // User denied or error
+      const sosData = {
+        title: 'SOS Допомога!',
+        description: 'Автоматичний SOS виклик від волонтера.',
+        category: RequestCategory.MEDICAL,
+        urgency: RequestUrgency.CRITICAL,
+        tags: ['#SOS'],
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        isLocationHidden: true,
+      };
+      await requestsApi.create(sosData as any);
+      Alert.alert('SOS відправлено', 'Ваш сигнал успішно надіслано в систему.');
+      load();
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Помилка', 'Не вдалося створити SOS заявку');
+    }
+  };
+
+  const handleEditedSos = () => {
+    setShowSosModal(false);
+    navigation.navigate('CreateRequest', { isSos: true });
+  };
+
+  const handleCheckIn = async () => {
+    try {
+      const loc = await locationHelper.getCurrentLocation(true);
+      if (!loc) return;
+      await usersApi.checkin(loc.latitude, loc.longitude);
+      setCheckedIn(true);
+      Alert.alert('✅ Чекін успішний', 'Ваша безпека підтверджена, поточну локацію оновлено.');
+      // Через 60 секунд знову показати кнопку
+      setTimeout(() => setCheckedIn(false), 60000);
+    } catch (e) {
+      console.error('Checkin error:', e);
+      Alert.alert('Помилка', 'Не вдалося виконати чекін');
+    }
+  };
+
   if (loading && requests.length === 0) return <LoadingScreen />;
 
   const canCreate = [
@@ -693,6 +756,7 @@ export default function RequestsListScreen() {
               serverId: (item as any).serverId || item.id,
             })}
             initialSaved={(item as any).isSaved}
+            userLocation={userLocation}
           />
         )}
       />
@@ -789,11 +853,37 @@ export default function RequestsListScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Floating Action Buttons — в різних кутках */}
+      <TouchableOpacity style={styles.sosFab} onPress={() => setShowSosModal(true)}>
+        <Text style={styles.sosFabIcon}>🚨</Text>
+        <Text style={styles.sosFabText}>SOS</Text>
+      </TouchableOpacity>
+
+      {!checkedIn ? (
+        <TouchableOpacity style={styles.safeFab} onPress={handleCheckIn}>
+          <Text style={styles.safeFabIcon}>🛡️</Text>
+          <Text style={styles.safeFabText}>Безпека</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={[styles.safeFab, styles.safeFabConfirmed]}>
+          <Text style={styles.safeFabIcon}>✅</Text>
+          <Text style={styles.safeFabText}>OK</Text>
+        </View>
+      )}
+
+      <SosModal
+        visible={showSosModal}
+        onClose={() => setShowSosModal(false)}
+        onStandardSos={handleStandardSos}
+        onEditedSos={handleEditedSos}
+        timeoutSeconds={30}
+      />
     </View>
   );
 }
 
-export function RequestCard({ request, onPress, initialSaved }: { request: Request; onPress: () => void; initialSaved?: boolean }) {
+export function RequestCard({ request, onPress, initialSaved, userLocation }: { request: Request; onPress: () => void; initialSaved?: boolean; userLocation?: {latitude: number, longitude: number} | null }) {
   const { user } = useAuth();
   const isMy = request.creatorId === user?.id;
   const urgency = urgencyColors[request.urgency];
@@ -973,9 +1063,15 @@ export function RequestCard({ request, onPress, initialSaved }: { request: Reque
                 ) : requestGeocodingError ? (
                   <Text style={styles.metaText}>📍 {requestGeocodingError}</Text>
                 ) : requestLocationName ? (
-                  <Text style={styles.metaText}>📍 {requestLocationName}{request.isLocationHidden ? ' (приблизно)' : ''}</Text>
+                  <Text style={styles.metaText}>
+                    📍 {requestLocationName}{request.isLocationHidden ? ' (приблизно)' : ''}
+                    {userLocation ? ` • ${formatDistance(calculateDistance(userLocation.latitude, userLocation.longitude, request.latitude, request.longitude))}` : ''}
+                  </Text>
                 ) : (request.latitude && request.longitude) ? ( // Fallback to coordinates if name is not available but coordinates exist
-                  <Text style={styles.metaText}>📍 {Number(request.latitude).toFixed(3)}, {Number(request.longitude).toFixed(3)}{request.isLocationHidden ? ' (приблизно)' : ''}</Text>
+                  <Text style={styles.metaText}>
+                    📍 {Number(request.latitude).toFixed(3)}, {Number(request.longitude).toFixed(3)}{request.isLocationHidden ? ' (приблизно)' : ''}
+                    {userLocation ? ` • ${formatDistance(calculateDistance(userLocation.latitude, userLocation.longitude, request.latitude, request.longitude))}` : ''}
+                  </Text>
                 ) : (
                   <Text style={styles.metaText}>📍 Місце не вказано</Text>
                 )}
@@ -1114,5 +1210,69 @@ const styles = StyleSheet.create({
     color: Colors.text,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  fabContainer: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    alignItems: 'flex-end',
+    gap: 16,
+  },
+  sosFab: {
+    position: 'absolute',
+    left: 16,
+    bottom: 20,
+    backgroundColor: Colors.danger,
+    borderRadius: 28,
+    height: 48,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: Colors.danger,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 8,
+    gap: 6,
+  },
+  sosFabIcon: {
+    fontSize: 18,
+  },
+  sosFabText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  safeFab: {
+    position: 'absolute',
+    right: 16,
+    bottom: 20,
+    backgroundColor: Colors.secondary,
+    borderRadius: 28,
+    height: 48,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: Colors.secondary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 6,
+    gap: 6,
+  },
+  safeFabConfirmed: {
+    backgroundColor: Colors.success,
+    opacity: 0.7,
+  },
+  safeFabIcon: {
+    fontSize: 16,
+  },
+  safeFabText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

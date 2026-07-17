@@ -361,6 +361,20 @@ export default function CreateRequestScreen() {
   const isAdditionalMode = route.params?.requestId && route.params?.mode === 'additional';
 
   useEffect(() => {
+    if (route.params?.isSos && !isEditMode && !isAdditionalMode && !initialDataLoaded) {
+      setTitle('SOS Допомога!');
+      setCategory(RequestCategory.OTHER);
+      setUrgency(RequestUrgency.CRITICAL);
+      setIsHidden(true);
+      setTags(['#SOS']);
+      setInitialDataLoaded(true);
+      
+      // Auto-fetch GPS on SOS open
+      handleDetectGPS();
+    }
+  }, [route.params?.isSos, isEditMode, isAdditionalMode, initialDataLoaded]);
+
+  useEffect(() => {
     if (isEditMode && !initialDataLoaded && route.params?.requestId) {
       const loadRequest = async () => {
         try {
