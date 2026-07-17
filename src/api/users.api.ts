@@ -13,9 +13,30 @@ export const usersApi = {
 
   updateProfile: (
     id: string,
-    data: { fullName?: string; phoneNumber?: string; telegramChatId?: string },
+    data: { fullName?: string; phoneNumber?: string; telegramChatId?: string; isActiveVolunteer?: boolean },
   ): Promise<User> =>
     api.patch(`/users/${id}`, data).then((r) => r.data),
+
+  updateOwnVolunteerActivity: (isActiveVolunteer: boolean): Promise<User> =>
+    api.patch('/users/me', { isActiveVolunteer }).then((r) => r.data),
+
+  checkin: (latitude: number, longitude: number, message?: string): Promise<void> =>
+    api.post('/users/checkin', { latitude, longitude, message }).then(() => undefined),
+
+  updateRegion: (latitude: number, longitude: number): Promise<void> =>
+    api.post('/users/update-region', { latitude, longitude }).then(() => undefined),
+
+  getRadar: (params?: {
+    organizationId?: string;
+    clearance?: string;
+    nearLat?: number;
+    nearLng?: number;
+    limit?: number;
+  }): Promise<any[]> =>
+    api.get('/users/volunteers/radar', { params }).then((r) => r.data),
+
+  getHeatmap: (): Promise<any[]> =>
+    api.get('/users/volunteers/heatmap').then((r) => r.data),
 
   vouch: (userId: string): Promise<TrustVouch> =>
     api.post(`/users/${userId}/vouch`).then((r) => r.data),

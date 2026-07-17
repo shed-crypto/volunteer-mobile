@@ -428,6 +428,9 @@ export default function OrgDetailScreen() {
                 <TouchableOpacity onPress={() => navigation.navigate('OrgJoinRequests', { orgId })}>
                   <Ionicons name="mail-outline" size={24} color="#fff" />
                 </TouchableOpacity>
+                <TouchableOpacity onPress={() => navigation.navigate('VolunteerRadar', { orgId })}>
+                  <Ionicons name="map-outline" size={24} color="#fff" />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={() => navigation.navigate('OrgSettings', { orgId })}>
                   <Ionicons name="settings-outline" size={24} color="#fff" />
                 </TouchableOpacity>

@@ -31,6 +31,7 @@ import OrgSettingsScreen    from '../screens/organizations/OrganizationSettingsS
 import JoinRequestsScreen   from '../screens/organizations/JoinRequestsScreen';
 import AddHubScreen         from '../screens/organizations/AddHubScreen';
 import HubDetailScreen      from '../screens/organizations/HubDetailScreen';
+import VolunteerRadarScreen from '../screens/organizations/VolunteerRadarScreen';
 import AdminScreen          from '../screens/admin/AdminScreen';
 import AdminCreateUserScreen from '../screens/admin/AdminCreateUserScreen';
 import DevDBInspector       from '../screens/admin/DevDBInspector';
@@ -60,6 +61,7 @@ function RequestsStackNavigator() {
       <RequestsStack.Screen name="Kanban"         component={KanbanScreen} />
       <RequestsStack.Screen name="CreateTask"     component={TaskDetailScreen} />
       <RequestsStack.Screen name="SelectLocation" component={SelectLocationScreen} />
+      <RequestsStack.Screen name="VolunteerRadar" component={VolunteerRadarScreen} />
     </RequestsStack.Navigator>
   );
 }
@@ -72,6 +74,8 @@ function MapStackNavigator() {
       <MapStack.Screen name="SelectLocation"   component={SelectLocationScreen} />
       <MapStack.Screen name="RequestDetail"    component={RequestDetailScreen} />
       <MapStack.Screen name="TaskDetail"       component={TaskDetailScreen} />
+      <MapStack.Screen name="VolunteerRadar"   component={VolunteerRadarScreen} />
+      <MapStack.Screen name="UserProfile"      component={UserProfileScreen} />
     </MapStack.Navigator>
   );
 }
@@ -109,6 +113,7 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen name="TaskDetail"    component={TaskDetailScreen} />
       <ProfileStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
       <ProfileStack.Screen name="NotificationHistory" component={NotificationHistoryScreen} />
+      <ProfileStack.Screen name="VolunteerRadar" component={VolunteerRadarScreen} />
     </ProfileStack.Navigator>
   );
 }

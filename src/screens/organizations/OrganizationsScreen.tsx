@@ -127,6 +127,16 @@ export default function OrganizationsScreen() {
             >
               <Ionicons name="search" size={20} color="#fff" />
             </TouchableOpacity>
+            
+            {user?.systemRole === SystemRole.ADMIN && (
+              <TouchableOpacity
+                style={styles.addBtn}
+                onPress={() => navigation.navigate('VolunteerRadar')}
+              >
+                <Ionicons name="map" size={20} color="#fff" />
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={styles.addBtn}
               onPress={() => setShowCreate(!showCreate)}
