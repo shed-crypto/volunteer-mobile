@@ -64,9 +64,13 @@ export default function VolunteerRadarScreen() {
           setOrgMap(map2);
         } else {
           const members = await collections.organizationMembers.query().fetch();
-          const myRoles = members.filter(
+                    const myRoles = members.filter(
             (m: any) => m.userId === user?.id && m.isActive !== false && (m.orgRole === 'leader' || m.orgRole === 'coordinator')
           );
+          const myOrgIds = myRoles.map((m: any) => m.organizationId);
+          if (myOrgIds.length > 0 && selectedOrgIds.length === 0) {
+            setSelectedOrgIds(myOrgIds);
+          }
           const loadedOrgs = myRoles.map((m: any) => ({
             id: m.organizationId,
             name: map.get(m.organizationId) || 'Організація',
@@ -85,6 +89,10 @@ export default function VolunteerRadarScreen() {
   }, [selectedClearances, selectedOrgIds, selectedLocation]);
 
   const loadRadar = async () => {
+    if (!isAdmin && selectedOrgIds.length === 0) {
+      // Don't fire until we have at least one orgId for coordinators
+      return;
+    }
     setLoading(true);
     try {
       const clearanceParam = selectedClearances.length > 0 ? selectedClearances.join(',') : undefined;
@@ -207,11 +215,12 @@ export default function VolunteerRadarScreen() {
     let internationalCount = 0;
     let frontlineCount = 0;
 
-    const superCluster = superClusterRef.current;
+          const superCluster = superClusterRef.current;
     if (superCluster && id) {
       try {
         const leaves = superCluster.getLeaves(id, Infinity);
         leaves.forEach((leaf: any) => {
+          // In some versions properties might not be mapped correctly without extra config
           const cLevel = leaf.properties?.clearanceLevel;
           if (cLevel === 'local') localCount++;
           else if (cLevel === 'international') internationalCount++;
@@ -221,6 +230,9 @@ export default function VolunteerRadarScreen() {
         console.error('Failed to get cluster leaves:', e);
       }
     }
+
+    const pointCount = cluster.properties?.point_count || 0;
+    const isUnmapped = localCount === 0 && internationalCount === 0 && frontlineCount === 0;
 
     return (
       <Marker
@@ -232,20 +244,28 @@ export default function VolunteerRadarScreen() {
         onPress={onPress}
       >
         <View style={styles.clusterBadge}>
-          {localCount > 0 && (
-            <View style={[styles.clusterSubBadge, { backgroundColor: Colors.successLight }]}>
-              <Text style={[styles.clusterSubBadgeText, { color: Colors.success }]}>{localCount}</Text>
+          {isUnmapped ? (
+            <View style={[styles.clusterSubBadge, { backgroundColor: Colors.border }]}>
+              <Text style={[styles.clusterSubBadgeText, { color: Colors.text }]}>{pointCount}</Text>
             </View>
-          )}
-          {internationalCount > 0 && (
-            <View style={[styles.clusterSubBadge, { backgroundColor: Colors.primaryLight }]}>
-              <Text style={[styles.clusterSubBadgeText, { color: Colors.primary }]}>{internationalCount}</Text>
-            </View>
-          )}
-          {frontlineCount > 0 && (
-            <View style={[styles.clusterSubBadge, { backgroundColor: Colors.dangerLight }]}>
-              <Text style={[styles.clusterSubBadgeText, { color: Colors.danger }]}>{frontlineCount}</Text>
-            </View>
+          ) : (
+            <>
+              {localCount > 0 && (
+                <View style={[styles.clusterSubBadge, { backgroundColor: Colors.successLight }]}>
+                  <Text style={[styles.clusterSubBadgeText, { color: Colors.success }]}>{localCount}</Text>
+                </View>
+              )}
+              {internationalCount > 0 && (
+                <View style={[styles.clusterSubBadge, { backgroundColor: Colors.primaryLight }]}>
+                  <Text style={[styles.clusterSubBadgeText, { color: Colors.primary }]}>{internationalCount}</Text>
+                </View>
+              )}
+              {frontlineCount > 0 && (
+                <View style={[styles.clusterSubBadge, { backgroundColor: Colors.dangerLight }]}>
+                  <Text style={[styles.clusterSubBadgeText, { color: Colors.danger }]}>{frontlineCount}</Text>
+                </View>
+              )}
+            </>
           )}
         </View>
       </Marker>
@@ -411,10 +431,12 @@ export default function VolunteerRadarScreen() {
               if (!v.latitude || !v.longitude) return null;
               const markerColor = getClearanceColor(v.clearanceLevel);
               return (
-                <Marker
-                  key={v.id}
-                  coordinate={{ latitude: Number(v.latitude), longitude: Number(v.longitude) }}
-                >
+                  <Marker
+                    key={v.id}
+                    // @ts-expect-error custom prop for supercluster leaves
+                    clearanceLevel={v.clearanceLevel}
+                    coordinate={{ latitude: Number(v.latitude), longitude: Number(v.longitude) }}
+                  >
                   <View style={[styles.markerPoint, { borderColor: markerColor }]}>
                     <Ionicons name="person-circle" size={24} color={markerColor} />
                   </View>

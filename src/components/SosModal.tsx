@@ -16,7 +16,7 @@ export default function SosModal({
   onClose,
   onStandardSos,
   onEditedSos,
-  timeoutSeconds = 5,
+  timeoutSeconds = 30,
 }: SosModalProps) {
   const [timeLeft, setTimeLeft] = useState(timeoutSeconds);
 

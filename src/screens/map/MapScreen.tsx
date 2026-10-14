@@ -1,16 +1,6 @@
 /**
  * MapScreen.tsx
  *
- * БАГ-ФІКси:
- * 1. Slider не відображається / не працює при першому рендері на Android —
- *    причина: `onSlidingComplete` не завжди спрацьовує. Замінено на
- *    `onValueChange` + debounce (500ms) щоб не спамити API при перетягуванні.
- * 2. Коло не показувалось бо userLocation був null при першому рендері —
- *    тепер circle показується від DEFAULT_REGION якщо GPS ще не визначено.
- * 3. Піни не завантажувались — основний баг: exactLocation не встановлювалось
- *    при створенні заявки (виправлено в requests.service.ts бекенду).
- *    Також: urgency у бекенді lowercase ('low','high'), але urgencyColor/Label
- *    використовував UPPERCASE ключі — виправлено.
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
@@ -111,7 +101,6 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
 
-  // region у ref щоб не тригерити useCallback при кожному русі карти
   const regionRef = useRef<Region>(DEFAULT_REGION);
   const [mapBounds, setMapBounds] = useState<Region | null>(null);
 
