@@ -1,5 +1,11 @@
 # Волонтерська допомога — Mobile App (Frontend)
 
+[![Mobile Frontend CI](https://github.com/shed-crypto/volunteer-mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/shed-crypto/volunteer-mobile/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.md)
+[![React Native](https://img.shields.io/badge/React_Native-0.81-61DAFB?logo=react&logoColor=black)](https://reactnative.dev/)
+[![Expo](https://img.shields.io/badge/Expo-54-000020?logo=expo&logoColor=white)](https://expo.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+
 React Native / Expo застосунок для волонтерів та координаторів.  
 Стек: **Expo SDK 54 · React Native 0.81 · TypeScript · WatermelonDB · Socket.IO**
 
@@ -201,3 +207,12 @@ eas secret:create --scope project --name GOOGLE_MAPS_API_KEY_IOS     --value "AI
 | **WebSocket** | Чати працюють у реальному часі через Socket.IO. При offline — повідомлення не надходять |
 | **KanbanScreen** | Доступний з деталей заявки. Дозволяє переміщати задачі між статусами одним дотиком |
 | **Карта** | Потребує Google Maps API ключ. Показує заявки поруч з поточним місцезнаходженням |
+
+---
+
+## Тестування
+
+```bash
+# Запуск unit-тестів (Jest)
+npm test
+```
